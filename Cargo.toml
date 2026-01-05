@@ -17,6 +17,7 @@ serde_json = "1"
 # Async
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # Proc macros
 syn = { version = "2", features = ["full", "parsing", "extra-traits"] }

@@ -32,6 +32,7 @@ tokio = { version = "1", features = ["full"] }
 "#;
 
 const MAIN_RS_TEMPLATE: &str = r#"use sidereal_sdk::prelude::*;
+use std::time::Duration;
 
 // HTTP trigger types
 #[derive(Serialize, Deserialize)]
@@ -76,6 +77,26 @@ pub async fn process_greeting(
     );
 
     // Process the event...
+
+    Ok(())
+}
+
+/// Background service - runs continuously until shutdown
+#[sidereal_sdk::service]
+pub async fn heartbeat(ctx: Context, cancel: CancellationToken) -> Result<(), ServiceError> {
+    ctx.log().info("Heartbeat service started", &[]);
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                ctx.log().info("Heartbeat service stopping", &[]);
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                ctx.log().info("Heartbeat", &[]);
+            }
+        }
+    }
 
     Ok(())
 }
