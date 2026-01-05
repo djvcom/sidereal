@@ -21,16 +21,17 @@ name = "{{name}}"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-crate-type = ["cdylib"]
+[[bin]]
+name = "{{name}}"
+path = "src/main.rs"
 
 [dependencies]
 sidereal-sdk = "0.1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+tokio = { version = "1", features = ["full"] }
 "#;
 
-const LIB_RS_TEMPLATE: &str = r#"use sidereal_sdk::prelude::*;
+const MAIN_RS_TEMPLATE: &str = r#"use sidereal_sdk::prelude::*;
 
 #[derive(Serialize, Deserialize)]
 pub struct GreetRequest {
@@ -43,10 +44,21 @@ pub struct GreetResponse {
 }
 
 #[sidereal_sdk::function]
-pub async fn greet(request: GreetRequest) -> GreetResponse {
-    GreetResponse {
-        message: format!("Hello, {}!", request.name),
-    }
+pub async fn greet(
+    req: HttpRequest<GreetRequest>,
+    ctx: Context,
+) -> HttpResponse<GreetResponse> {
+    ctx.log().info("Processing greet request", &[("name", &req.body.name)]);
+
+    HttpResponse::ok(GreetResponse {
+        message: format!("Hello, {}!", req.body.name),
+    })
+}
+
+#[tokio::main]
+async fn main() {
+    let config = sidereal_sdk::ServerConfig::default();
+    sidereal_sdk::run(config).await;
 }
 "#;
 
@@ -54,11 +66,15 @@ const SIDEREAL_TOML_TEMPLATE: &str = r#"[project]
 name = "{{name}}"
 version = "0.1.0"
 
-[build]
-target = "wasm32-wasip1"
-
 [dev]
-port = 3000
+port = 7850
+
+# Resource definitions (future use)
+# [resources.queue.example-queue]
+# retention = "7d"
+#
+# [resources.postgres.main]
+# # Connection from environment variable
 "#;
 
 /// Validate a project name is a valid Rust crate name.
@@ -112,10 +128,10 @@ pub async fn run(name: &str, path: Option<PathBuf>) -> Result<(), InitError> {
         render_template(CARGO_TOML_TEMPLATE, name),
     )?;
 
-    // Write src/lib.rs
+    // Write src/main.rs
     fs::write(
-        project_dir.join("src/lib.rs"),
-        render_template(LIB_RS_TEMPLATE, name),
+        project_dir.join("src/main.rs"),
+        render_template(MAIN_RS_TEMPLATE, name),
     )?;
 
     // Write sidereal.toml
@@ -128,7 +144,11 @@ pub async fn run(name: &str, path: Option<PathBuf>) -> Result<(), InitError> {
     println!();
     println!("Next steps:");
     println!("  cd {}", project_dir.display());
-    println!("  sidereal dev");
+    println!("  cargo run");
+    println!();
+    println!("Or for hot reload:");
+    println!("  cargo install cargo-watch");
+    println!("  cargo watch -x run");
 
     Ok(())
 }

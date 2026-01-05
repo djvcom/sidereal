@@ -1,6 +1,6 @@
-//! Sidereal SDK for building serverless functions.
+//! Sidereal SDK for building serverless functions and services.
 //!
-//! This crate provides the user-facing API for writing Sidereal functions.
+//! This crate provides the user-facing API for writing Sidereal applications.
 //!
 //! # Example
 //!
@@ -17,16 +17,34 @@
 //!     pub message: String,
 //! }
 //!
-//! #[sidereal::function]
-//! async fn greet(request: GreetRequest) -> GreetResponse {
-//!     GreetResponse {
-//!         message: format!("Hello, {}!", request.name),
-//!     }
+//! #[sidereal_sdk::function]
+//! async fn greet(
+//!     req: HttpRequest<GreetRequest>,
+//!     ctx: Context,
+//! ) -> HttpResponse<GreetResponse> {
+//!     HttpResponse::ok(GreetResponse {
+//!         message: format!("Hello, {}!", req.body.name),
+//!     })
 //! }
 //! ```
 
+pub mod context;
 pub mod prelude;
-pub mod runtime;
+pub mod registry;
+pub mod server;
+pub mod triggers;
 
 // Re-export the proc macro
 pub use sidereal_macros::function;
+
+#[doc(hidden)]
+pub mod __internal {
+    pub use inventory;
+    pub use serde_json;
+}
+
+// Re-export key types at the crate root
+pub use context::Context;
+pub use registry::{FunctionMetadata, FunctionResult};
+pub use server::{run, ServerConfig};
+pub use triggers::{HttpRequest, HttpResponse, TriggerKind};

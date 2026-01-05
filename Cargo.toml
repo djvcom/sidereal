@@ -26,8 +26,12 @@ proc-macro2 = "1"
 # CLI
 clap = { version = "4", features = ["derive"] }
 axum = "0.8"
-wasmtime = "31"
-wasmtime-wasi = "31"
+
+# Function registration
+inventory = "0.3"
+
+# HTTP types
+http = "1"
 
 # Utilities
 thiserror = "2"
