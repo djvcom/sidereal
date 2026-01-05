@@ -33,6 +33,7 @@ tokio = { version = "1", features = ["full"] }
 
 const MAIN_RS_TEMPLATE: &str = r#"use sidereal_sdk::prelude::*;
 
+// HTTP trigger types
 #[derive(Serialize, Deserialize)]
 pub struct GreetRequest {
     pub name: String,
@@ -43,6 +44,14 @@ pub struct GreetResponse {
     pub message: String,
 }
 
+// Queue message type (queue name derived: "greeting-event")
+#[derive(Serialize, Deserialize)]
+pub struct GreetingEvent {
+    pub name: String,
+    pub greeting: String,
+}
+
+/// HTTP-triggered function (POST /greet)
 #[sidereal_sdk::function]
 pub async fn greet(
     req: HttpRequest<GreetRequest>,
@@ -53,6 +62,22 @@ pub async fn greet(
     HttpResponse::ok(GreetResponse {
         message: format!("Hello, {}!", req.body.name),
     })
+}
+
+/// Queue-triggered function (consumes from "greeting-event" queue)
+#[sidereal_sdk::function]
+pub async fn process_greeting(
+    msg: QueueMessage<GreetingEvent>,
+    ctx: Context,
+) -> Result<(), String> {
+    ctx.log().info(
+        "Processing greeting event",
+        &[("name", &msg.body.name), ("greeting", &msg.body.greeting)],
+    );
+
+    // Process the event...
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -69,12 +94,10 @@ version = "0.1.0"
 [dev]
 port = 7850
 
-# Resource definitions (future use)
-# [resources.queue.example-queue]
-# retention = "7d"
-#
-# [resources.postgres.main]
-# # Connection from environment variable
+# Queue resource for the process_greeting function
+[resources.queue.greeting-event]
+retention = "7d"
+dead_letter = true
 "#;
 
 /// Validate a project name is a valid Rust crate name.

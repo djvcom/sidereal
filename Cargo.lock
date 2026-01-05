@@ -655,6 +655,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sidereal-build"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "sidereal-cli"
 version = "0.1.0"
 dependencies = [
@@ -690,6 +699,7 @@ dependencies = [
  "sidereal-macros",
  "thiserror",
  "tokio",
+ "toml",
 ]
 
 [[package]]

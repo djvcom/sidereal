@@ -182,10 +182,102 @@ impl<T> Trigger for HttpRequest<T> {
     const KIND: TriggerKind = TriggerKind::Http;
 }
 
-// Future: QueueMessage and Schedule triggers
-//
-// pub struct QueueMessage<T> { ... }
-// impl<T> Trigger for QueueMessage<T> { const KIND: TriggerKind = TriggerKind::Queue; }
+/// Queue message trigger.
+///
+/// Functions with this as their first parameter are triggered when messages
+/// arrive on a queue. The queue name is derived from the message type name
+/// by convention (e.g., `OrderCreated` → `order-created`).
+///
+/// # Example
+///
+/// ```ignore
+/// #[sidereal_sdk::function]
+/// async fn process_order(
+///     msg: QueueMessage<OrderCreated>,
+///     ctx: Context,
+/// ) -> Result<(), ProcessError> {
+///     // Process the message...
+///     Ok(())
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct QueueMessage<T> {
+    /// The deserialised message body.
+    pub body: T,
+    /// The name of the queue this message came from.
+    pub queue_name: String,
+    /// Unique identifier for this message.
+    pub message_id: String,
+    /// Unix timestamp (milliseconds) when the message was published.
+    pub timestamp: u64,
+    /// Number of times this message has been delivered (starts at 1).
+    pub delivery_count: u32,
+}
+
+impl<T: DeserializeOwned> QueueMessage<T> {
+    /// Create a new queue message with the given body.
+    pub fn new(body: T, queue_name: impl Into<String>) -> Self {
+        Self {
+            body,
+            queue_name: queue_name.into(),
+            message_id: String::new(),
+            timestamp: 0,
+            delivery_count: 1,
+        }
+    }
+
+    /// Create a message with full metadata.
+    pub fn with_metadata(
+        body: T,
+        queue_name: impl Into<String>,
+        message_id: impl Into<String>,
+        timestamp: u64,
+        delivery_count: u32,
+    ) -> Self {
+        Self {
+            body,
+            queue_name: queue_name.into(),
+            message_id: message_id.into(),
+            timestamp,
+            delivery_count,
+        }
+    }
+}
+
+impl<T> Trigger for QueueMessage<T> {
+    const KIND: TriggerKind = TriggerKind::Queue;
+}
+
+/// Convert a type name to a queue name using kebab-case convention.
+///
+/// Examples:
+/// - `OrderCreated` → `order-created`
+/// - `UserNotification` → `user-notification`
+/// - `HTTPRequest` → `http-request`
+pub fn type_name_to_queue_name(type_name: &str) -> String {
+    let mut result = String::with_capacity(type_name.len() + 4);
+    let mut chars = type_name.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c.is_uppercase() {
+            if !result.is_empty() {
+                // Check if next char is lowercase (start of new word)
+                // or if previous was lowercase (end of acronym)
+                let next_is_lower = chars.peek().is_some_and(|n| n.is_lowercase());
+                if next_is_lower || result.chars().last().is_some_and(|p| p.is_lowercase()) {
+                    result.push('-');
+                }
+            }
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
+}
+
+// Future: Schedule trigger
 //
 // pub struct Schedule<const CRON: &'static str> { ... }
 // impl<const CRON: &'static str> Trigger for Schedule<CRON> { const KIND: TriggerKind = TriggerKind::Schedule; }

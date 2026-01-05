@@ -43,3 +43,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Internal crates
 sidereal-sdk = { path = "crates/sidereal-sdk" }
 sidereal-macros = { path = "crates/sidereal-macros" }
+sidereal-build = { path = "crates/sidereal-build" }

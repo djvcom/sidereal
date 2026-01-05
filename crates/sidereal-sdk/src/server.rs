@@ -2,8 +2,9 @@
 //!
 //! This module provides the HTTP server that routes requests to registered functions.
 
+use crate::config::SiderealConfig;
 use crate::context::Context;
-use crate::registry::{get_http_functions, FunctionResult};
+use crate::registry::{get_http_functions, get_queue_functions, FunctionResult};
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -12,6 +13,7 @@ use axum::{
     routing::post,
     Router,
 };
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -56,20 +58,38 @@ struct AppState {}
 /// }
 /// ```
 pub async fn run(config: ServerConfig) {
-    // Discover all registered HTTP functions
-    let functions: Vec<_> = get_http_functions().collect();
+    // Discover all registered functions
+    let http_functions: Vec<_> = get_http_functions().collect();
+    let queue_functions: Vec<_> = get_queue_functions().collect();
 
-    if functions.is_empty() {
+    if http_functions.is_empty() && queue_functions.is_empty() {
         eprintln!("Warning: No functions registered. Make sure your functions are annotated with #[sidereal_sdk::function]");
+    }
+
+    // Load and validate configuration
+    let sidereal_config = SiderealConfig::load();
+    if let Some(ref cfg) = sidereal_config {
+        validate_queue_configuration(cfg, &queue_functions);
     }
 
     println!("Sidereal development server starting...");
     println!();
-    println!("Functions available:");
-    for func in &functions {
-        println!("  POST /{}", func.name);
+
+    if !http_functions.is_empty() {
+        println!("HTTP functions:");
+        for func in &http_functions {
+            println!("  POST /{}", func.name);
+        }
+        println!();
     }
-    println!();
+
+    if !queue_functions.is_empty() {
+        println!("Queue functions:");
+        for func in &queue_functions {
+            println!("  {} (queue consumer)", func.name);
+        }
+        println!();
+    }
 
     // Build the router
     let app = Router::new()
@@ -124,4 +144,45 @@ async fn handle_function(
         result.body,
     )
         .into_response()
+}
+
+/// Validate that queue functions match declared queue resources.
+fn validate_queue_configuration(
+    config: &SiderealConfig,
+    queue_functions: &[&crate::registry::FunctionMetadata],
+) {
+    let declared_queues: HashSet<&str> = config.declared_queues().into_iter().collect();
+
+    // Collect queue names from function metadata
+    let mut consumer_queues: HashSet<&str> = HashSet::new();
+
+    for func in queue_functions {
+        if let Some(queue_name) = func.queue_name {
+            consumer_queues.insert(queue_name);
+        }
+    }
+
+    // Warn about queue consumers without declared queues
+    for queue_name in &consumer_queues {
+        if !declared_queues.contains(queue_name) {
+            eprintln!(
+                "Warning: Queue consumer for '{}' has no matching queue in sidereal.toml",
+                queue_name
+            );
+            eprintln!(
+                "  Add [resources.queue.{}] to your sidereal.toml",
+                queue_name
+            );
+        }
+    }
+
+    // Warn about declared queues without consumers
+    for queue_name in &declared_queues {
+        if !consumer_queues.contains(queue_name) {
+            eprintln!(
+                "Warning: Queue '{}' is declared but has no consumer function",
+                queue_name
+            );
+        }
+    }
 }

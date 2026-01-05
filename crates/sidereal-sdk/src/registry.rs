@@ -16,6 +16,10 @@ pub struct FunctionMetadata {
     /// The kind of trigger for this function.
     pub trigger_kind: TriggerKind,
 
+    /// For queue triggers, the name of the queue this function consumes from.
+    /// Derived from the message type name (e.g., `OrderCreated` → `order-created`).
+    pub queue_name: Option<&'static str>,
+
     /// The handler function.
     pub handler: FunctionHandler,
 }
@@ -68,6 +72,11 @@ pub fn find_function(name: &str) -> Option<&'static FunctionMetadata> {
 /// Get all HTTP-triggered functions.
 pub fn get_http_functions() -> impl Iterator<Item = &'static FunctionMetadata> {
     get_functions().filter(|f| f.trigger_kind == TriggerKind::Http)
+}
+
+/// Get all queue-triggered functions.
+pub fn get_queue_functions() -> impl Iterator<Item = &'static FunctionMetadata> {
+    get_functions().filter(|f| f.trigger_kind == TriggerKind::Queue)
 }
 
 #[cfg(test)]

@@ -28,6 +28,7 @@
 //! }
 //! ```
 
+pub mod config;
 pub mod context;
 pub mod prelude;
 pub mod registry;
@@ -47,4 +48,4 @@ pub mod __internal {
 pub use context::Context;
 pub use registry::{FunctionMetadata, FunctionResult};
 pub use server::{run, ServerConfig};
-pub use triggers::{HttpRequest, HttpResponse, TriggerKind};
+pub use triggers::{HttpRequest, HttpResponse, QueueMessage, TriggerKind};

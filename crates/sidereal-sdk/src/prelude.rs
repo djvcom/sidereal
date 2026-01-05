@@ -10,7 +10,7 @@
 pub use crate::function;
 
 // Re-export trigger types
-pub use crate::triggers::{ErrorResponse, HttpRequest, HttpResponse};
+pub use crate::triggers::{ErrorResponse, HttpRequest, HttpResponse, QueueMessage};
 
 // Re-export context
 pub use crate::context::Context;

@@ -9,6 +9,7 @@ description = "SDK for building Sidereal functions and services"
 sidereal-macros.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 inventory.workspace = true
 thiserror.workspace = true
 axum.workspace = true
