@@ -1,0 +1,9 @@
+[project]
+name = "hello-world"
+version = "0.1.0"
+
+[build]
+target = "wasm32-wasip1"
+
+[dev]
+port = 3333
