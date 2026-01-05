@@ -15,6 +15,9 @@ pub use crate::triggers::{ErrorResponse, HttpRequest, HttpResponse, QueueMessage
 // Re-export context
 pub use crate::context::Context;
 
+// Re-export config types
+pub use crate::config::{ConfigError, ConfigManager};
+
 // Re-export service types
 pub use crate::service_registry::{ServiceError, ServiceKind};
 

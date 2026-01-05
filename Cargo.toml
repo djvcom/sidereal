@@ -34,6 +34,9 @@ inventory = "0.3"
 # HTTP types
 http = "1"
 
+# Configuration
+figment = { version = "0.10", features = ["toml", "env"] }
+
 # Utilities
 thiserror = "2"
 anyhow = "1"

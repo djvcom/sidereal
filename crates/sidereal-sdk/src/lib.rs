@@ -98,6 +98,7 @@ pub mod __internal {
 }
 
 // Re-export key types at the crate root
+pub use config::{ConfigError, ConfigManager};
 pub use context::Context;
 pub use registry::{FunctionMetadata, FunctionResult};
 pub use server::{run, ServerConfig};

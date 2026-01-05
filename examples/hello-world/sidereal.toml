@@ -2,8 +2,15 @@
 name = "hello-world"
 version = "0.1.0"
 
-[build]
-target = "wasm32-wasip1"
-
 [dev]
 port = 3333
+
+[app.greeting]
+default_name = "${GREETING_DEFAULT_NAME}"
+max_length = 50
+
+[app.features]
+enabled = true
+
+[env.production]
+app.greeting.default_name = "Valued Customer"

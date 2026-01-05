@@ -1,8 +1,10 @@
 //! Runtime context provided to functions.
 //!
 //! The `Context` provides access to platform services like KV storage,
-//! queues, secrets, and logging.
+//! queues, secrets, logging, and typed configuration.
 
+use crate::config::{ConfigError, ConfigManager};
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -41,6 +43,7 @@ struct ContextInner {
     deadline: Option<Instant>,
     kv: KvClient,
     secrets: SecretsClient,
+    config: Option<ConfigManager>,
 }
 
 impl Context {
@@ -54,6 +57,23 @@ impl Context {
                 deadline: None,
                 kv: KvClient::new_in_memory(),
                 secrets: SecretsClient::new_env(),
+                config: None,
+            }),
+        }
+    }
+
+    /// Create a new context with a configuration manager.
+    pub fn with_config(function_name: impl Into<String>, config: ConfigManager) -> Self {
+        let environment = config.active_environment().to_string();
+        Self {
+            inner: Arc::new(ContextInner {
+                environment,
+                function_name: function_name.into(),
+                request_id: generate_request_id(),
+                deadline: None,
+                kv: KvClient::new_in_memory(),
+                secrets: SecretsClient::new_env(),
+                config: Some(config),
             }),
         }
     }
@@ -96,6 +116,38 @@ impl Context {
             request_id: self.inner.request_id.clone(),
             function_name: self.inner.function_name.clone(),
         }
+    }
+
+    /// Access typed configuration from the `[app.*]` sections in sidereal.toml.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// #[derive(Deserialize)]
+    /// struct StripeConfig {
+    ///     api_key: String,
+    ///     webhook_secret: String,
+    /// }
+    ///
+    /// #[sidereal_sdk::function]
+    /// async fn process_payment(req: HttpRequest<PaymentRequest>, ctx: Context) -> HttpResponse<()> {
+    ///     let stripe: StripeConfig = ctx.config("stripe")?;
+    ///     // Use stripe.api_key...
+    /// }
+    /// ```
+    pub fn config<T: DeserializeOwned>(&self, section: &str) -> Result<T, ConfigError> {
+        match &self.inner.config {
+            Some(config_manager) => config_manager.section(section),
+            None => Err(ConfigError::SectionNotFound(format!(
+                "{} (no configuration loaded)",
+                section
+            ))),
+        }
+    }
+
+    /// Access the underlying ConfigManager if available.
+    pub fn config_manager(&self) -> Option<&ConfigManager> {
+        self.inner.config.as_ref()
     }
 }
 

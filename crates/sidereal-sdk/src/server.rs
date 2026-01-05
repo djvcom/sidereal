@@ -3,7 +3,7 @@
 //! This module provides the HTTP server that routes requests to registered functions
 //! and manages the lifecycle of background and router services.
 
-use crate::config::SiderealConfig;
+use crate::config::{ConfigManager, SiderealConfig};
 use crate::context::Context;
 use crate::registry::{get_http_functions, get_queue_functions, FunctionMetadata, FunctionResult};
 use crate::service_registry::{
@@ -57,7 +57,9 @@ impl ServerConfig {
     }
 }
 
-struct AppState {}
+struct AppState {
+    config: Option<ConfigManager>,
+}
 
 /// Run the development server.
 ///
@@ -96,10 +98,25 @@ pub async fn run(config: ServerConfig) {
         eprintln!("  Use #[sidereal_sdk::service] for services");
     }
 
-    // Load and validate configuration
-    let sidereal_config = SiderealConfig::load();
-    if let Some(ref cfg) = sidereal_config {
-        validate_queue_configuration(cfg, &queue_functions);
+    // Load configuration
+    let config_manager = match ConfigManager::load() {
+        Ok(cm) => {
+            eprintln!("Loaded configuration (env: {})", cm.active_environment());
+            Some(cm)
+        }
+        Err(e) => {
+            eprintln!("Warning: Could not load configuration: {}", e);
+            eprintln!("  Continuing without config support");
+            None
+        }
+    };
+
+    // Validate queue configuration if config is loaded
+    if config_manager.is_some() {
+        let sidereal_config = SiderealConfig::load();
+        if let Some(ref cfg) = sidereal_config {
+            validate_queue_configuration(cfg, &queue_functions);
+        }
     }
 
     // Print startup info
@@ -113,7 +130,7 @@ pub async fn run(config: ServerConfig) {
     // Spawn background services
     let mut background_tasks = JoinSet::new();
     for service in &background_services {
-        let ctx = Context::new_dev(service.name);
+        let ctx = create_context(service.name, config_manager.clone());
         let cancel = cancel_token.clone();
 
         if let ServiceFactory::Background(factory) = service.factory {
@@ -131,14 +148,17 @@ pub async fn run(config: ServerConfig) {
     }
 
     // Build the router with function routes
+    let state = Arc::new(AppState {
+        config: config_manager.clone(),
+    });
     let mut app = Router::new()
         .route("/{function}", post(handle_function))
-        .with_state(Arc::new(AppState {}));
+        .with_state(state);
 
     // Mount router services
     for service in &router_services {
         if let ServiceFactory::Router(factory) = service.factory {
-            let ctx = Context::new_dev(service.name);
+            let ctx = create_context(service.name, config_manager.clone());
             let router = factory(ctx);
             let prefix = service.path_prefix.unwrap_or("/");
             eprintln!("Mounting router service '{}' at {}", service.name, prefix);
@@ -246,7 +266,7 @@ fn print_startup_info(
 }
 
 async fn handle_function(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(function_name): Path<String>,
     body: Bytes,
 ) -> impl IntoResponse {
@@ -263,7 +283,7 @@ async fn handle_function(
     };
 
     // Create a context for this invocation
-    let ctx = Context::new_dev(&function_name);
+    let ctx = create_context(&function_name, state.config.clone());
 
     // Call the handler
     let result: FunctionResult = (func.handler)(&body, ctx).await;
@@ -277,6 +297,13 @@ async fn handle_function(
         result.body,
     )
         .into_response()
+}
+
+fn create_context(name: impl Into<String>, config: Option<ConfigManager>) -> Context {
+    match config {
+        Some(cm) => Context::with_config(name, cm),
+        None => Context::new_dev(name),
+    }
 }
 
 /// Validate that queue functions match declared queue resources.
