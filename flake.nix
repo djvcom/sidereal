@@ -35,7 +35,10 @@
             "rust-src"
             "rust-analyzer"
           ];
-          targets = [ "wasm32-wasip1" ];
+          targets = [
+            "wasm32-wasip1"
+            "x86_64-unknown-linux-musl"
+          ];
         };
     in
     {
@@ -48,6 +51,12 @@
             pkgs.just
             pkgs.wasmtime
 
+            # Firecracker for local VM deployment
+            pkgs.firecracker
+
+            # musl for static cross-compilation
+            pkgs.musl
+
             # Nix tooling
             pkgs.nixfmt-rfc-style
             pkgs.statix
@@ -55,6 +64,9 @@
           ];
 
           RUST_BACKTRACE = "1";
+
+          # Configure cargo for musl cross-compilation
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl}/bin/musl-gcc";
         };
       });
     };

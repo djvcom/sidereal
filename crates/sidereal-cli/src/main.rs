@@ -32,22 +32,48 @@ enum Commands {
         #[arg(short, long)]
         port: Option<u16>,
     },
+
+    /// Deploy to local Firecracker VM or remote environment
+    Deploy {
+        /// Deploy to local Firecracker VM
+        #[arg(long, default_value = "true")]
+        local: bool,
+
+        /// Keep VM running after deployment (for debugging)
+        #[arg(long)]
+        keep_alive: bool,
+
+        /// Skip building the project
+        #[arg(long)]
+        skip_build: bool,
+    },
 }
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .init();
+    let _otel_guard = opentelemetry_configuration::OtelSdkBuilder::new()
+        .with_standard_env()
+        .service_name(env!("CARGO_PKG_NAME"))
+        .build()
+        .ok();
 
     let cli = Cli::parse();
 
     let result: Result<(), anyhow::Error> = match cli.command {
         Commands::Init { name, path } => commands::init::run(&name, path).await.map_err(Into::into),
         Commands::Dev { port } => commands::dev::run(port).await.map_err(Into::into),
+        Commands::Deploy {
+            local,
+            keep_alive,
+            skip_build,
+        } => {
+            let args = commands::deploy::DeployArgs {
+                local,
+                keep_alive,
+                skip_build,
+            };
+            commands::deploy::run(args).await.map_err(Into::into)
+        }
     };
 
     if let Err(e) = result {

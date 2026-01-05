@@ -1,0 +1,24 @@
+[package]
+name = "sidereal-firecracker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Firecracker VM management for Sidereal"
+
+[dependencies]
+tokio = { workspace = true, features = ["process", "io-util", "fs", "sync", "time", "net"] }
+tokio-vsock.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+tempfile.workspace = true
+nix.workspace = true
+libc.workspace = true
+which.workspace = true
+shellexpand.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+hyperlocal.workspace = true
+http-body-util.workspace = true

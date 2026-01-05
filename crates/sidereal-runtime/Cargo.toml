@@ -1,0 +1,23 @@
+[package]
+name = "sidereal-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sidereal runtime for Firecracker VMs (guest binary)"
+
+[[bin]]
+name = "sidereal-runtime"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true, features = ["rt", "io-util", "sync", "macros", "signal", "time"] }
+tokio-vsock.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+nix = { workspace = true, features = ["mount", "fs"] }
+libc.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Re-use protocol types from firecracker crate
+sidereal-firecracker.workspace = true

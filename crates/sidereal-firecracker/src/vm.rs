@@ -1,0 +1,349 @@
+//! Firecracker VM lifecycle management.
+
+use crate::config::{api, VmConfig};
+use crate::error::{FirecrackerError, Result};
+use crate::protocol::VSOCK_PORT;
+use crate::vsock::VsockClient;
+use http_body_util::{BodyExt, Full};
+use hyper::body::Bytes;
+use hyper::{Method, Request};
+use hyper_util::client::legacy::Client;
+use hyperlocal::{UnixClientExt, UnixConnector, Uri};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
+use tracing::{debug, info, warn};
+
+const PROCESS_START_DELAY: Duration = Duration::from_millis(100);
+const API_SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const API_SOCKET_POLL_ATTEMPTS: usize = 50;
+const VM_READY_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_millis(500);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Manages Firecracker VM instances.
+pub struct VmManager {
+    firecracker_bin: PathBuf,
+    work_dir: PathBuf,
+}
+
+/// A running Firecracker VM instance.
+pub struct VmInstance {
+    process: Child,
+    api_socket: PathBuf,
+    vsock_uds_path: PathBuf,
+    config: VmConfig,
+}
+
+impl VmManager {
+    /// Create a new VM manager.
+    pub fn new(work_dir: impl Into<PathBuf>) -> Result<Self> {
+        let firecracker_bin = Self::find_firecracker()?;
+        let work_dir = work_dir.into();
+
+        std::fs::create_dir_all(&work_dir)?;
+
+        Ok(Self {
+            firecracker_bin,
+            work_dir,
+        })
+    }
+
+    /// Find the Firecracker binary in PATH or common locations.
+    fn find_firecracker() -> Result<PathBuf> {
+        if let Ok(path) = which::which("firecracker") {
+            return Ok(path);
+        }
+
+        let common_paths = [
+            "/usr/bin/firecracker",
+            "/usr/local/bin/firecracker",
+            "~/.local/bin/firecracker",
+        ];
+
+        for path in common_paths {
+            let expanded = shellexpand::tilde(path);
+            let path = PathBuf::from(expanded.as_ref());
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+
+        Err(FirecrackerError::BinaryNotFound(PathBuf::from(
+            "firecracker",
+        )))
+    }
+
+    /// Check if KVM is available.
+    pub fn check_kvm() -> Result<()> {
+        let kvm_path = Path::new("/dev/kvm");
+        if !kvm_path.exists() {
+            return Err(FirecrackerError::KvmNotAvailable(
+                "/dev/kvm does not exist".to_string(),
+            ));
+        }
+
+        match std::fs::metadata(kvm_path) {
+            Ok(meta) => {
+                use std::os::unix::fs::MetadataExt;
+                let mode = meta.mode();
+                if mode & 0o006 == 0 {
+                    return Err(FirecrackerError::KvmNotAvailable(
+                        "/dev/kvm is not accessible (check permissions)".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            Err(e) => Err(FirecrackerError::KvmNotAvailable(format!(
+                "Cannot access /dev/kvm: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Start a new VM with the given configuration.
+    pub async fn start(&self, config: VmConfig) -> Result<VmInstance> {
+        Self::check_kvm()?;
+
+        if !config.kernel_path.exists() {
+            return Err(FirecrackerError::KernelNotFound(config.kernel_path.clone()));
+        }
+        if !config.rootfs_path.exists() {
+            return Err(FirecrackerError::RootfsNotFound(config.rootfs_path.clone()));
+        }
+
+        let vm_id = uuid::Uuid::new_v4().to_string();
+        let api_socket = self.work_dir.join(format!("{}.sock", vm_id));
+        let vsock_uds_path = self.work_dir.join(format!("{}_vsock.sock", vm_id));
+
+        info!(vm_id = %vm_id, "Starting Firecracker VM");
+
+        let mut process = Command::new(&self.firecracker_bin)
+            .arg("--api-sock")
+            .arg(&api_socket)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| FirecrackerError::VmStartFailed(e.to_string()))?;
+
+        tokio::time::sleep(PROCESS_START_DELAY).await;
+
+        if let Ok(Some(status)) = process.try_wait() {
+            let stderr = if let Some(stderr) = process.stderr.take() {
+                let mut reader = BufReader::new(stderr);
+                let mut output = String::new();
+                let _ = reader.read_line(&mut output).await;
+                output
+            } else {
+                String::new()
+            };
+            return Err(FirecrackerError::VmStartFailed(format!(
+                "Process exited immediately with status {}: {}",
+                status, stderr
+            )));
+        }
+
+        for _ in 0..API_SOCKET_POLL_ATTEMPTS {
+            if api_socket.exists() {
+                break;
+            }
+            tokio::time::sleep(API_SOCKET_POLL_INTERVAL).await;
+        }
+
+        if !api_socket.exists() {
+            let _ = process.kill().await;
+            return Err(FirecrackerError::VmStartFailed(
+                "API socket not created".to_string(),
+            ));
+        }
+
+        let mut instance = VmInstance {
+            process,
+            api_socket,
+            vsock_uds_path,
+            config,
+        };
+
+        instance.configure().await?;
+        instance.boot().await?;
+
+        Ok(instance)
+    }
+}
+
+impl VmInstance {
+    /// Send a request to the Firecracker API.
+    async fn api_request(&self, method: &str, path: &str, body: Option<&str>) -> Result<()> {
+        let client: Client<UnixConnector, Full<Bytes>> = Client::unix();
+        let url: hyper::Uri = Uri::new(&self.api_socket, path).into();
+
+        let method = method.parse::<Method>().map_err(|e| {
+            FirecrackerError::VmConfigFailed(format!("Invalid HTTP method: {}", e))
+        })?;
+
+        let req_body = body.unwrap_or("").to_string();
+        let request = Request::builder()
+            .method(method)
+            .uri(url)
+            .header("Content-Type", "application/json")
+            .body(Full::new(Bytes::from(req_body)))
+            .map_err(|e| FirecrackerError::VmConfigFailed(format!("Failed to build request: {}", e)))?;
+
+        debug!("Sending {} {}", request.method(), path);
+
+        let response = client.request(request).await.map_err(|e| {
+            FirecrackerError::VmConfigFailed(format!("API request failed: {}", e))
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.collect().await.map_err(|e| {
+                FirecrackerError::VmConfigFailed(format!("Failed to read response: {}", e))
+            })?;
+            let body_bytes = body.to_bytes();
+            let message = String::from_utf8_lossy(&body_bytes).to_string();
+            return Err(FirecrackerError::ApiError {
+                status: status.as_u16(),
+                message,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Configure the VM (kernel, drives, vsock, etc.).
+    async fn configure(&mut self) -> Result<()> {
+        debug!("Configuring VM");
+
+        let boot_source = api::BootSource {
+            kernel_image_path: self.config.kernel_path.display().to_string(),
+            boot_args: self.config.boot_args.clone(),
+        };
+        self.api_request("PUT", "/boot-source", Some(&serde_json::to_string(&boot_source)?))
+            .await?;
+
+        let drive = api::Drive {
+            drive_id: "rootfs".to_string(),
+            path_on_host: self.config.rootfs_path.display().to_string(),
+            is_root_device: true,
+            is_read_only: false,
+        };
+        self.api_request("PUT", "/drives/rootfs", Some(&serde_json::to_string(&drive)?))
+            .await?;
+
+        let machine = api::MachineConfig {
+            vcpu_count: self.config.vcpu_count,
+            mem_size_mib: self.config.mem_size_mib,
+        };
+        self.api_request("PUT", "/machine-config", Some(&serde_json::to_string(&machine)?))
+            .await?;
+
+        let vsock = api::Vsock {
+            vsock_id: "vsock0".to_string(),
+            guest_cid: self.config.vsock_cid,
+            uds_path: self.vsock_uds_path.display().to_string(),
+        };
+        self.api_request("PUT", "/vsock", Some(&serde_json::to_string(&vsock)?))
+            .await?;
+
+        debug!("VM configured");
+        Ok(())
+    }
+
+    /// Boot the VM.
+    async fn boot(&self) -> Result<()> {
+        let action = api::InstanceActionInfo {
+            action_type: "InstanceStart".to_string(),
+        };
+        self.api_request("PUT", "/actions", Some(&serde_json::to_string(&action)?))
+            .await?;
+
+        info!("VM booted");
+        Ok(())
+    }
+
+    /// Get the vsock CID for this VM.
+    pub fn cid(&self) -> u32 {
+        self.config.vsock_cid
+    }
+
+    /// Get the vsock UDS path for host-side connections.
+    pub fn vsock_uds_path(&self) -> &Path {
+        &self.vsock_uds_path
+    }
+
+    /// Create a vsock client for this VM.
+    pub fn vsock_client(&self) -> VsockClient {
+        VsockClient::new(self.vsock_uds_path.clone(), VSOCK_PORT)
+    }
+
+    /// Wait for the VM to be ready (responds to ping).
+    pub async fn wait_ready(&self, timeout: Duration) -> Result<()> {
+        let client = self.vsock_client();
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        while tokio::time::Instant::now() < deadline {
+            match client.ping().await {
+                Ok(_) => {
+                    info!("VM is ready");
+                    return Ok(());
+                }
+                Err(e) => {
+                    debug!("VM not ready yet: {}", e);
+                    tokio::time::sleep(VM_READY_POLL_INTERVAL).await;
+                }
+            }
+        }
+
+        Err(FirecrackerError::VmNotReady(timeout.as_secs()))
+    }
+
+    /// Request graceful shutdown.
+    pub async fn shutdown(&mut self) -> Result<()> {
+        info!("Requesting VM shutdown");
+
+        let client = self.vsock_client();
+        match client.shutdown().await {
+            Ok(_) => {
+                tokio::time::sleep(SHUTDOWN_GRACE_PERIOD).await;
+            }
+            Err(e) => {
+                warn!("Graceful shutdown failed: {}", e);
+            }
+        }
+
+        match tokio::time::timeout(SHUTDOWN_TIMEOUT, self.process.wait()).await {
+            Ok(Ok(status)) => {
+                info!("VM exited with status: {}", status);
+            }
+            Ok(Err(e)) => {
+                warn!("Error waiting for VM: {}", e);
+            }
+            Err(_) => {
+                warn!("VM did not exit in time, killing");
+                let _ = self.process.kill().await;
+            }
+        }
+
+        let _ = std::fs::remove_file(&self.api_socket);
+        let _ = std::fs::remove_file(&self.vsock_uds_path);
+
+        Ok(())
+    }
+
+    /// Check if the VM process is still running.
+    pub fn is_running(&mut self) -> bool {
+        matches!(self.process.try_wait(), Ok(None))
+    }
+}
+
+impl Drop for VmInstance {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.api_socket);
+        let _ = std::fs::remove_file(&self.vsock_uds_path);
+    }
+}
