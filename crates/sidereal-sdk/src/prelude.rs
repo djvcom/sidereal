@@ -14,7 +14,12 @@ pub use crate::{function, service};
 pub use crate::triggers::{ErrorResponse, HttpRequest, HttpResponse, QueueMessage};
 
 // Re-export extractors
-pub use crate::extractors::{AppState, Config, InvocationMeta, Kv, KvClient, Secrets};
+pub use crate::extractors::{
+    AppState, Config, InvocationMeta, Kv, KvClient, Lock, LockClient, Queue, QueueClient, Secrets,
+};
+
+// Re-export state types
+pub use sidereal_state::LockGuard;
 
 // Re-export config types
 pub use crate::config::{ConfigError, ConfigManager};

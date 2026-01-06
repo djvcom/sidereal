@@ -43,6 +43,9 @@ tokio-vsock = "0.5"
 nix = { version = "0.29", features = ["mount", "fs", "signal"] }
 libc = "0.2"
 
+# Async traits
+async-trait = "0.1"
+
 # Utilities
 thiserror = "2"
 anyhow = "1"
@@ -71,3 +74,4 @@ sidereal-macros = { path = "crates/sidereal-macros" }
 sidereal-build = { path = "crates/sidereal-build" }
 sidereal-firecracker = { path = "crates/sidereal-firecracker" }
 sidereal-runtime = { path = "crates/sidereal-runtime" }
+sidereal-state = { path = "crates/sidereal-state" }

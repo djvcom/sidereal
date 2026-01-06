@@ -35,8 +35,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use sidereal_state::{KvBackend, LockBackend, LockGuard, QueueBackend, StateProvider};
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::config::{ConfigError, ConfigManager};
 
@@ -44,16 +45,13 @@ use crate::config::{ConfigError, ConfigManager};
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) config: Option<ConfigManager>,
-    pub(crate) kv: KvClient,
+    pub(crate) state: StateProvider,
 }
 
 impl AppState {
-    /// Create a new AppState with optional configuration.
-    pub fn new(config: Option<ConfigManager>) -> Self {
-        Self {
-            config,
-            kv: KvClient::new_in_memory(),
-        }
+    /// Create a new AppState with optional configuration and state provider.
+    pub fn new(config: Option<ConfigManager>, state: StateProvider) -> Self {
+        Self { config, state }
     }
 }
 
@@ -251,59 +249,94 @@ where
 /// Key-value store client.
 #[derive(Clone)]
 pub struct KvClient {
-    inner: Arc<KvClientInner>,
-}
-
-enum KvClientInner {
-    InMemory(RwLock<HashMap<String, Vec<u8>>>),
+    backend: Arc<dyn KvBackend>,
 }
 
 impl KvClient {
-    /// Create a new in-memory KV client.
-    pub fn new_in_memory() -> Self {
-        Self {
-            inner: Arc::new(KvClientInner::InMemory(RwLock::new(HashMap::new()))),
-        }
+    /// Create a new KV client from a backend.
+    pub fn new(backend: Arc<dyn KvBackend>) -> Self {
+        Self { backend }
     }
 
     /// Get a value from the KV store.
     pub async fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, KvError> {
-        match &*self.inner {
-            KvClientInner::InMemory(map) => {
-                let map = map.read().map_err(|_| KvError::Internal)?;
-                match map.get(key) {
-                    Some(bytes) => {
-                        let value = serde_json::from_slice(bytes)
-                            .map_err(|e| KvError::Deserialisation(e.to_string()))?;
-                        Ok(Some(value))
-                    }
-                    None => Ok(None),
-                }
+        match self.backend.get(key).await {
+            Ok(Some(bytes)) => {
+                let value = serde_json::from_slice(&bytes)
+                    .map_err(|e| KvError::Deserialisation(e.to_string()))?;
+                Ok(Some(value))
             }
+            Ok(None) => Ok(None),
+            Err(e) => Err(KvError::Backend(e.to_string())),
         }
+    }
+
+    /// Get a raw byte value from the KV store.
+    pub async fn get_raw(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+        self.backend
+            .get(key)
+            .await
+            .map_err(|e| KvError::Backend(e.to_string()))
     }
 
     /// Put a value into the KV store.
     pub async fn put<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), KvError> {
         let bytes = serde_json::to_vec(value).map_err(|e| KvError::Serialisation(e.to_string()))?;
+        self.backend
+            .put(key, &bytes, None)
+            .await
+            .map_err(|e| KvError::Backend(e.to_string()))
+    }
 
-        match &*self.inner {
-            KvClientInner::InMemory(map) => {
-                let mut map = map.write().map_err(|_| KvError::Internal)?;
-                map.insert(key.to_string(), bytes);
-                Ok(())
-            }
-        }
+    /// Put a value into the KV store with a TTL.
+    pub async fn put_with_ttl<T: serde::Serialize>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl: Duration,
+    ) -> Result<(), KvError> {
+        let bytes = serde_json::to_vec(value).map_err(|e| KvError::Serialisation(e.to_string()))?;
+        self.backend
+            .put(key, &bytes, Some(ttl))
+            .await
+            .map_err(|e| KvError::Backend(e.to_string()))
+    }
+
+    /// Put raw bytes into the KV store.
+    pub async fn put_raw(&self, key: &str, value: &[u8]) -> Result<(), KvError> {
+        self.backend
+            .put(key, value, None)
+            .await
+            .map_err(|e| KvError::Backend(e.to_string()))
     }
 
     /// Delete a key from the KV store.
     pub async fn delete(&self, key: &str) -> Result<bool, KvError> {
-        match &*self.inner {
-            KvClientInner::InMemory(map) => {
-                let mut map = map.write().map_err(|_| KvError::Internal)?;
-                Ok(map.remove(key).is_some())
-            }
-        }
+        self.backend
+            .delete(key)
+            .await
+            .map_err(|e| KvError::Backend(e.to_string()))
+    }
+
+    /// Check if a key exists in the KV store.
+    pub async fn exists(&self, key: &str) -> Result<bool, KvError> {
+        self.backend
+            .exists(key)
+            .await
+            .map_err(|e| KvError::Backend(e.to_string()))
+    }
+
+    /// List keys with a given prefix.
+    pub async fn list(
+        &self,
+        prefix: &str,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<String>, Option<String>), KvError> {
+        self.backend
+            .list(prefix, limit, cursor)
+            .await
+            .map_err(|e| KvError::Backend(e.to_string()))
     }
 }
 
@@ -316,8 +349,11 @@ pub enum KvError {
     #[error("deserialisation error: {0}")]
     Deserialisation(String),
 
-    #[error("internal error")]
-    Internal,
+    #[error("backend error: {0}")]
+    Backend(String),
+
+    #[error("kv not configured")]
+    NotConfigured,
 }
 
 /// Extract the KV store client.
@@ -347,11 +383,18 @@ pub struct Kv(pub KvClient);
 
 /// Rejection type for Kv extractor failures.
 #[derive(Debug)]
-pub struct KvRejection;
+pub enum KvRejection {
+    NotAvailable,
+    NotConfigured,
+}
 
 impl IntoResponse for KvRejection {
     fn into_response(self) -> Response {
-        (StatusCode::INTERNAL_SERVER_ERROR, "KV store not available").into_response()
+        let message = match self {
+            KvRejection::NotAvailable => "KV store not available",
+            KvRejection::NotConfigured => "KV store not configured",
+        };
+        (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
     }
 }
 
@@ -365,9 +408,14 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let app_state = Arc::<AppState>::from_request_parts(parts, state)
             .await
-            .map_err(|_| KvRejection)?;
+            .map_err(|_| KvRejection::NotAvailable)?;
 
-        Ok(Kv(app_state.kv.clone()))
+        let backend = app_state
+            .state
+            .kv()
+            .map_err(|_| KvRejection::NotConfigured)?;
+
+        Ok(Kv(KvClient::new(backend)))
     }
 }
 
@@ -439,6 +487,271 @@ fn generate_request_id() -> String {
         .as_millis();
     let random: u32 = RandomState::new().build_hasher().finish() as u32;
     format!("{:x}-{:08x}", timestamp, random)
+}
+
+// ============================================================================
+// Queue extractor
+// ============================================================================
+
+/// Queue client for publishing and receiving messages.
+#[derive(Clone)]
+pub struct QueueClient {
+    backend: Arc<dyn QueueBackend>,
+}
+
+impl QueueClient {
+    /// Create a new queue client from a backend.
+    pub fn new(backend: Arc<dyn QueueBackend>) -> Self {
+        Self { backend }
+    }
+
+    /// Publish a message to a queue.
+    pub async fn publish<T: serde::Serialize>(
+        &self,
+        queue: &str,
+        message: &T,
+    ) -> Result<sidereal_state::MessageId, QueueError> {
+        let bytes =
+            serde_json::to_vec(message).map_err(|e| QueueError::Serialisation(e.to_string()))?;
+        self.backend
+            .publish(queue, &bytes)
+            .await
+            .map_err(|e| QueueError::Backend(e.to_string()))
+    }
+
+    /// Publish raw bytes to a queue.
+    pub async fn publish_raw(
+        &self,
+        queue: &str,
+        message: &[u8],
+    ) -> Result<sidereal_state::MessageId, QueueError> {
+        self.backend
+            .publish(queue, message)
+            .await
+            .map_err(|e| QueueError::Backend(e.to_string()))
+    }
+
+    /// Receive a message from a queue with a visibility timeout.
+    pub async fn receive(
+        &self,
+        queue: &str,
+        visibility_timeout: Duration,
+    ) -> Result<Option<sidereal_state::Message>, QueueError> {
+        self.backend
+            .receive(queue, visibility_timeout)
+            .await
+            .map_err(|e| QueueError::Backend(e.to_string()))
+    }
+
+    /// Acknowledge a message as processed.
+    pub async fn ack(
+        &self,
+        queue: &str,
+        message_id: &sidereal_state::MessageId,
+    ) -> Result<(), QueueError> {
+        self.backend
+            .ack(queue, message_id)
+            .await
+            .map_err(|e| QueueError::Backend(e.to_string()))
+    }
+
+    /// Negative-acknowledge a message (return to queue immediately).
+    pub async fn nack(
+        &self,
+        queue: &str,
+        message_id: &sidereal_state::MessageId,
+    ) -> Result<(), QueueError> {
+        self.backend
+            .nack(queue, message_id)
+            .await
+            .map_err(|e| QueueError::Backend(e.to_string()))
+    }
+}
+
+/// Errors from queue operations.
+#[derive(Debug, thiserror::Error)]
+pub enum QueueError {
+    #[error("serialisation error: {0}")]
+    Serialisation(String),
+
+    #[error("deserialisation error: {0}")]
+    Deserialisation(String),
+
+    #[error("backend error: {0}")]
+    Backend(String),
+
+    #[error("queue not configured")]
+    NotConfigured,
+}
+
+/// Extract the queue client.
+///
+/// # Example
+///
+/// ```no_run
+/// use sidereal_sdk::prelude::*;
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct JobPayload { task: String }
+///
+/// #[sidereal_sdk::function]
+/// async fn enqueue_job(
+///     req: HttpRequest<JobPayload>,
+///     Queue(queue): Queue,
+/// ) -> HttpResponse<()> {
+///     queue.publish("jobs", &req.body).await.unwrap();
+///     HttpResponse::ok(())
+/// }
+/// ```
+#[derive(Clone)]
+pub struct Queue(pub QueueClient);
+
+/// Rejection type for Queue extractor failures.
+#[derive(Debug)]
+pub enum QueueRejection {
+    NotAvailable,
+    NotConfigured,
+}
+
+impl IntoResponse for QueueRejection {
+    fn into_response(self) -> Response {
+        let message = match self {
+            QueueRejection::NotAvailable => "Queue not available",
+            QueueRejection::NotConfigured => "Queue not configured",
+        };
+        (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
+    }
+}
+
+impl<S> FromRequestParts<S> for Queue
+where
+    S: Send + Sync,
+    Arc<AppState>: FromRequestParts<S>,
+{
+    type Rejection = QueueRejection;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let app_state = Arc::<AppState>::from_request_parts(parts, state)
+            .await
+            .map_err(|_| QueueRejection::NotAvailable)?;
+
+        let backend = app_state
+            .state
+            .queue()
+            .map_err(|_| QueueRejection::NotConfigured)?;
+
+        Ok(Queue(QueueClient::new(backend)))
+    }
+}
+
+// ============================================================================
+// Lock extractor
+// ============================================================================
+
+/// Lock client for distributed locking.
+#[derive(Clone)]
+pub struct LockClient {
+    backend: Arc<dyn LockBackend>,
+}
+
+impl LockClient {
+    /// Create a new lock client from a backend.
+    pub fn new(backend: Arc<dyn LockBackend>) -> Self {
+        Self { backend }
+    }
+
+    /// Acquire a lock on a resource (blocks until acquired).
+    pub async fn acquire(&self, resource: &str, ttl: Duration) -> Result<LockGuard, LockError> {
+        self.backend
+            .acquire(resource, ttl)
+            .await
+            .map_err(|e| LockError::Backend(e.to_string()))
+    }
+
+    /// Try to acquire a lock on a resource (returns immediately).
+    pub async fn try_acquire(
+        &self,
+        resource: &str,
+        ttl: Duration,
+    ) -> Result<Option<LockGuard>, LockError> {
+        self.backend
+            .try_acquire(resource, ttl)
+            .await
+            .map_err(|e| LockError::Backend(e.to_string()))
+    }
+}
+
+/// Errors from lock operations.
+#[derive(Debug, thiserror::Error)]
+pub enum LockError {
+    #[error("backend error: {0}")]
+    Backend(String),
+
+    #[error("lock not configured")]
+    NotConfigured,
+}
+
+/// Extract the lock client.
+///
+/// # Example
+///
+/// ```no_run
+/// use sidereal_sdk::prelude::*;
+/// use std::time::Duration;
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct ProcessRequest { resource_id: String }
+///
+/// #[sidereal_sdk::function]
+/// async fn process_resource(
+///     req: HttpRequest<ProcessRequest>,
+///     Lock(lock): Lock,
+/// ) -> HttpResponse<()> {
+///     let guard = lock.acquire(&req.body.resource_id, Duration::from_secs(30)).await.unwrap();
+///     // Process the resource...
+///     guard.release().await.unwrap();
+///     HttpResponse::ok(())
+/// }
+/// ```
+#[derive(Clone)]
+pub struct Lock(pub LockClient);
+
+/// Rejection type for Lock extractor failures.
+#[derive(Debug)]
+pub enum LockRejection {
+    NotAvailable,
+    NotConfigured,
+}
+
+impl IntoResponse for LockRejection {
+    fn into_response(self) -> Response {
+        let message = match self {
+            LockRejection::NotAvailable => "Lock service not available",
+            LockRejection::NotConfigured => "Lock service not configured",
+        };
+        (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
+    }
+}
+
+impl<S> FromRequestParts<S> for Lock
+where
+    S: Send + Sync,
+    Arc<AppState>: FromRequestParts<S>,
+{
+    type Rejection = LockRejection;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let app_state = Arc::<AppState>::from_request_parts(parts, state)
+            .await
+            .map_err(|_| LockRejection::NotAvailable)?;
+
+        let backend = app_state
+            .state
+            .lock()
+            .map_err(|_| LockRejection::NotConfigured)?;
+
+        Ok(Lock(LockClient::new(backend)))
+    }
 }
 
 #[cfg(test)]

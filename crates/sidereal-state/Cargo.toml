@@ -1,0 +1,40 @@
+[package]
+name = "sidereal-state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "State primitives for Sidereal (KV, Queue, Lock)"
+
+[dependencies]
+# Core
+async-trait.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+tracing.workspace = true
+serde = { workspace = true, features = ["derive"] }
+figment = { workspace = true, optional = true }
+
+# For lock token generation
+uuid = { workspace = true, features = ["v4"] }
+
+# Valkey/Redis adapter (optional)
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
+deadpool-redis = { version = "0.18", optional = true }
+
+# PostgreSQL adapter (optional)
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono"], optional = true }
+chrono = { version = "0.4.42", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = ["memory"]
+memory = []
+valkey = ["redis", "deadpool-redis"]
+postgres = ["sqlx", "chrono"]
+config = ["figment"]
+full = ["memory", "valkey", "postgres", "config"]
+chrono = ["dep:chrono"]

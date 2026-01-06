@@ -18,6 +18,7 @@ use axum::{
     routing::post,
     Router,
 };
+use sidereal_state::{StateConfig, StateProvider};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -116,6 +117,24 @@ pub async fn run(config: ServerConfig) {
         }
     }
 
+    // Initialise state provider from configuration
+    let state_config = config_manager
+        .as_ref()
+        .and_then(|cm| cm.section::<StateConfig>("state").ok())
+        .unwrap_or_default();
+
+    let state_provider = match StateProvider::from_config(&state_config).await {
+        Ok(sp) => {
+            eprintln!("State provider initialised");
+            sp
+        }
+        Err(e) => {
+            eprintln!("Warning: Could not initialise state provider: {}", e);
+            eprintln!("  State extractors (Kv, Queue, Lock) will not be available");
+            StateProvider::default()
+        }
+    };
+
     // Print startup info
     print_startup_info(
         &http_functions,
@@ -125,7 +144,7 @@ pub async fn run(config: ServerConfig) {
     );
 
     // Build shared state
-    let state = Arc::new(AppState::new(config_manager.clone()));
+    let state = Arc::new(AppState::new(config_manager.clone(), state_provider));
 
     // Spawn background services
     let mut background_tasks = JoinSet::new();
