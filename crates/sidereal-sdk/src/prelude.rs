@@ -2,8 +2,9 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```no_run
 //! use sidereal_sdk::prelude::*;
+//! # fn main() {}
 //! ```
 
 // Re-export the proc macros

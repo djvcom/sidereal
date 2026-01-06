@@ -5,18 +5,27 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use sidereal_sdk::prelude::*;
+//!
+//! #[derive(Deserialize)]
+//! struct StripeConfig { api_key: String }
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct CreateOrderPayload { item_id: String }
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct Order { id: String }
 //!
 //! #[sidereal_sdk::function]
 //! async fn create_order(
 //!     req: HttpRequest<CreateOrderPayload>,
 //!     Config(stripe): Config<StripeConfig>,
-//!     secret: Secret,
+//!     secrets: Secrets,
 //!     Kv(store): Kv,
 //! ) -> HttpResponse<Order> {
-//!     let api_key = secret.get("STRIPE_API_KEY")?;
-//!     // stripe, api_key, store are directly available
+//!     let _api_key = secrets.get("STRIPE_API_KEY");
+//!     HttpResponse::ok(Order { id: "123".into() })
 //! }
 //! ```
 
@@ -55,12 +64,20 @@ impl AppState {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use sidereal_sdk::prelude::*;
+///
 /// #[derive(Deserialize)]
 /// struct StripeConfig {
 ///     api_key: String,
 ///     webhook_secret: String,
 /// }
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct PaymentRequest { amount: u64 }
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct PaymentResponse { success: bool }
 ///
 /// #[sidereal_sdk::function]
 /// async fn process_payment(
@@ -68,6 +85,7 @@ impl AppState {
 ///     Config(stripe): Config<StripeConfig>,
 /// ) -> HttpResponse<PaymentResponse> {
 ///     // Use stripe.api_key...
+///     HttpResponse::ok(PaymentResponse { success: true })
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -163,14 +181,22 @@ fn derive_section_name(type_name: &str) -> String {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use sidereal_sdk::prelude::*;
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct PaymentRequest { amount: u64 }
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct PaymentResponse { success: bool }
+///
 /// #[sidereal_sdk::function]
 /// async fn process_payment(
 ///     req: HttpRequest<PaymentRequest>,
 ///     secrets: Secrets,
 /// ) -> HttpResponse<PaymentResponse> {
-///     let api_key = secrets.get("STRIPE_API_KEY")?;
-///     // Use api_key...
+///     let _api_key = secrets.get("STRIPE_API_KEY");
+///     HttpResponse::ok(PaymentResponse { success: true })
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -298,14 +324,22 @@ pub enum KvError {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use sidereal_sdk::prelude::*;
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct GetUserRequest { user_id: String }
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct User { name: String }
+///
 /// #[sidereal_sdk::function]
 /// async fn get_user(
 ///     req: HttpRequest<GetUserRequest>,
 ///     Kv(store): Kv,
 /// ) -> HttpResponse<User> {
-///     let user: Option<User> = store.get(&req.body.user_id).await?;
-///     // ...
+///     let _user: Option<User> = store.get(&req.body.user_id).await.ok().flatten();
+///     HttpResponse::ok(User { name: "Alice".into() })
 /// }
 /// ```
 #[derive(Clone)]

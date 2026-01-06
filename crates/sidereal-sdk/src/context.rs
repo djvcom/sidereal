@@ -11,26 +11,8 @@ use std::time::{Duration, Instant};
 
 /// Runtime context provided to every function invocation.
 ///
-/// # Example
-///
-/// ```ignore
-/// #[sidereal_sdk::function]
-/// async fn process_order(
-///     req: HttpRequest<Order>,
-///     ctx: Context,
-/// ) -> HttpResponse<Receipt> {
-///     // Access KV store
-///     let item = ctx.kv().get::<Item>(&req.body.item_id).await?;
-///
-///     // Access secrets
-///     let api_key = ctx.secret("STRIPE_API_KEY").await?;
-///
-///     // Logging
-///     ctx.log().info("Processing order", &[("order_id", &req.body.id)]);
-///
-///     // ...
-/// }
-/// ```
+/// Note: Context is deprecated in favour of axum-style extractors.
+/// See [`crate::extractors`] for the recommended approach.
 #[derive(Clone)]
 pub struct Context {
     inner: Arc<ContextInner>,
@@ -120,21 +102,7 @@ impl Context {
 
     /// Access typed configuration from the `[app.*]` sections in sidereal.toml.
     ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// #[derive(Deserialize)]
-    /// struct StripeConfig {
-    ///     api_key: String,
-    ///     webhook_secret: String,
-    /// }
-    ///
-    /// #[sidereal_sdk::function]
-    /// async fn process_payment(req: HttpRequest<PaymentRequest>, ctx: Context) -> HttpResponse<()> {
-    ///     let stripe: StripeConfig = ctx.config("stripe")?;
-    ///     // Use stripe.api_key...
-    /// }
-    /// ```
+    /// Note: Prefer using the [`Config`](crate::extractors::Config) extractor instead.
     pub fn config<T: DeserializeOwned>(&self, section: &str) -> Result<T, ConfigError> {
         match &self.inner.config {
             Some(config_manager) => config_manager.section(section),

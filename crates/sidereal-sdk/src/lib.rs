@@ -4,7 +4,7 @@
 //!
 //! # Functions Example
 //!
-//! ```ignore
+//! ```no_run
 //! use sidereal_sdk::prelude::*;
 //!
 //! #[derive(Serialize, Deserialize)]
@@ -29,8 +29,23 @@
 //!
 //! # Functions with Extractors
 //!
-//! ```ignore
+//! ```no_run
 //! use sidereal_sdk::prelude::*;
+//!
+//! #[derive(Deserialize)]
+//! struct StripeConfig {
+//!     api_key: String,
+//! }
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct CreateOrderPayload {
+//!     item_id: String,
+//! }
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct Order {
+//!     id: String,
+//! }
 //!
 //! #[sidereal_sdk::function]
 //! async fn create_order(
@@ -38,15 +53,16 @@
 //!     Config(stripe): Config<StripeConfig>,
 //!     secrets: Secrets,
 //! ) -> HttpResponse<Order> {
-//!     let api_key = secrets.get("STRIPE_API_KEY")?;
-//!     // Use stripe config and api_key...
+//!     let _api_key = secrets.get("STRIPE_API_KEY");
+//!     HttpResponse::ok(Order { id: "123".into() })
 //! }
 //! ```
 //!
 //! # Services Example
 //!
-//! ```ignore
+//! ```no_run
 //! use sidereal_sdk::prelude::*;
+//! use axum::routing::get;
 //! use std::time::Duration;
 //!
 //! // Background service - runs continuously

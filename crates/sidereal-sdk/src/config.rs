@@ -23,7 +23,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("Configuration error: {0}")]
-    Figment(#[from] FigmentError),
+    Figment(Box<FigmentError>),
 
     #[error("Section not found: {0}")]
     SectionNotFound(String),
@@ -32,11 +32,17 @@ pub enum ConfigError {
     Deserialisation {
         section: String,
         #[source]
-        source: FigmentError,
+        source: Box<FigmentError>,
     },
 
     #[error("Configuration file not found: {0}")]
     FileNotFound(String),
+}
+
+impl From<FigmentError> for ConfigError {
+    fn from(err: FigmentError) -> Self {
+        ConfigError::Figment(Box::new(err))
+    }
 }
 
 struct ConfigManagerInner {
@@ -104,7 +110,7 @@ impl ConfigManager {
                 }
                 _ => ConfigError::Deserialisation {
                     section: name.to_string(),
-                    source: e,
+                    source: Box::new(e),
                 },
             })
     }

@@ -16,13 +16,20 @@ use std::collections::HashMap;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use sidereal_sdk::prelude::*;
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct CreateOrderPayload { item_id: String }
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct Order { id: String }
+///
 /// #[sidereal_sdk::function]
 /// async fn create_order(
 ///     req: HttpRequest<CreateOrderPayload>,
-///     ctx: Context,
 /// ) -> HttpResponse<Order> {
-///     // ...
+///     HttpResponse::ok(Order { id: "123".into() })
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -74,10 +81,15 @@ impl<T: DeserializeOwned> HttpRequest<T> {
 ///
 /// # Example
 ///
-/// ```ignore
-/// HttpResponse::ok(order)
-/// HttpResponse::created(order)
-/// HttpResponse::bad_request("Invalid input")
+/// ```no_run
+/// use sidereal_sdk::prelude::*;
+///
+/// #[derive(Serialize)]
+/// struct Order { id: String }
+///
+/// let order = Order { id: "123".into() };
+/// let _ = HttpResponse::ok(order);
+/// let _ = HttpResponse::bad_request("Invalid input");
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpResponse<T> {
@@ -190,14 +202,21 @@ impl<T> Trigger for HttpRequest<T> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use sidereal_sdk::prelude::*;
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct OrderCreated { order_id: String }
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct ProcessResult { success: bool }
+///
 /// #[sidereal_sdk::function]
 /// async fn process_order(
 ///     msg: QueueMessage<OrderCreated>,
-///     ctx: Context,
-/// ) -> Result<(), ProcessError> {
+/// ) -> HttpResponse<ProcessResult> {
 ///     // Process the message...
-///     Ok(())
+///     HttpResponse::ok(ProcessResult { success: true })
 /// }
 /// ```
 #[derive(Debug, Clone)]

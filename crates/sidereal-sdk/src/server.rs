@@ -68,7 +68,7 @@ impl ServerConfig {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// // In your main.rs
 /// #[tokio::main]
 /// async fn main() {
