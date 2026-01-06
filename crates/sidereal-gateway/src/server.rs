@@ -8,13 +8,14 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::{BackendRegistry, DispatchRequest};
 use crate::config::{GatewayConfig, RoutingConfig};
 use crate::error::GatewayError;
-use crate::middleware::{OtelTraceLayer, SecurityLayer};
+use crate::middleware::{create_rate_limit_layer, OtelTraceLayer, SecurityLayer};
 use crate::resolver::{validate_function_name, FunctionResolver, StaticResolver};
 
 /// Shared gateway state.
@@ -53,8 +54,8 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
     // Create state
     let state = Arc::new(GatewayState { resolver, backends });
 
-    // Build router
-    let app = Router::new()
+    // Build base router
+    let base_router = Router::new()
         .route("/health", get(health_check))
         .route("/ready", get(readiness_check))
         .route("/{function}", post(handle_function))
@@ -65,16 +66,37 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
 
     // Bind and serve
     let addr = config.server.bind_address;
-    tracing::info!(address = %addr, "Gateway listening");
-
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(GatewayError::Io)?;
 
-    axum::serve(listener, app)
+    // Apply rate limiting if configured, then serve
+    // Note: into_make_service_with_connect_info is required for IP-based rate limiting
+    if let Some(rate_limit_config) = &config.middleware.rate_limit {
+        tracing::info!(
+            requests_per_second = rate_limit_config.requests_per_second,
+            burst_size = rate_limit_config.burst_size,
+            "Rate limiting enabled"
+        );
+        let app = base_router.layer(create_rate_limit_layer(rate_limit_config));
+        tracing::info!(address = %addr, "Gateway listening");
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
         .with_graceful_shutdown(async move { cancel.cancelled().await })
         .await
         .map_err(GatewayError::Io)?;
+    } else {
+        tracing::info!(address = %addr, "Gateway listening (rate limiting disabled)");
+        axum::serve(
+            listener,
+            base_router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move { cancel.cancelled().await })
+        .await
+        .map_err(GatewayError::Io)?;
+    }
 
     tracing::info!("Gateway shutdown complete");
     Ok(())

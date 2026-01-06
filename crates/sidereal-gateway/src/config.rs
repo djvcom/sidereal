@@ -425,4 +425,33 @@ mod tests {
         assert_eq!(config.limits.max_body_size, 10 * 1024 * 1024);
         assert_eq!(config.limits.request_timeout, Duration::from_secs(30));
     }
+
+    #[test]
+    fn config_rate_limit() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+
+            [middleware.rate_limit]
+            requests_per_second = 100
+            burst_size = 50
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+
+        let rate_limit = config.middleware.rate_limit.expect("Rate limit should be configured");
+        assert_eq!(rate_limit.requests_per_second, 100);
+        assert_eq!(rate_limit.burst_size, 50);
+    }
+
+    #[test]
+    fn config_rate_limit_disabled_by_default() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        assert!(config.middleware.rate_limit.is_none());
+    }
 }
