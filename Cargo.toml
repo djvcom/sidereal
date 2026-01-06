@@ -75,3 +75,4 @@ sidereal-build = { path = "crates/sidereal-build" }
 sidereal-firecracker = { path = "crates/sidereal-firecracker" }
 sidereal-runtime = { path = "crates/sidereal-runtime" }
 sidereal-state = { path = "crates/sidereal-state" }
+sidereal-gateway = { path = "crates/sidereal-gateway" }
