@@ -1,8 +1,12 @@
 //! Worker backend abstractions for dispatching requests.
 
 mod http;
+#[cfg(feature = "firecracker")]
+mod vsock;
 
 pub use self::http::HttpBackend;
+#[cfg(feature = "firecracker")]
+pub use self::vsock::VsockBackend;
 
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -56,9 +60,21 @@ pub trait WorkerBackend: Send + Sync + std::fmt::Debug {
 }
 
 /// Registry for managing backend instances.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct BackendRegistry {
     http_backends: dashmap::DashMap<String, Arc<dyn WorkerBackend>>,
+    #[cfg(feature = "firecracker")]
+    vsock_backends: dashmap::DashMap<String, Arc<dyn WorkerBackend>>,
+}
+
+impl Default for BackendRegistry {
+    fn default() -> Self {
+        Self {
+            http_backends: dashmap::DashMap::new(),
+            #[cfg(feature = "firecracker")]
+            vsock_backends: dashmap::DashMap::new(),
+        }
+    }
 }
 
 impl BackendRegistry {
@@ -84,9 +100,31 @@ impl BackendRegistry {
     ) -> Result<Arc<dyn WorkerBackend>, GatewayError> {
         match address {
             WorkerAddress::Http { url } => Ok(self.get_or_create_http(url)),
+            #[cfg(feature = "firecracker")]
+            WorkerAddress::Vsock { uds_path, port } => {
+                Ok(self.get_or_create_vsock(uds_path, *port))
+            }
+            #[cfg(not(feature = "firecracker"))]
             WorkerAddress::Vsock { .. } => Err(GatewayError::BackendError(
-                "vsock backend not yet implemented".into(),
+                "vsock backend requires 'firecracker' feature".into(),
             )),
         }
+    }
+
+    /// Get or create a vsock backend for the given UDS path and port.
+    #[cfg(feature = "firecracker")]
+    pub fn get_or_create_vsock(
+        &self,
+        uds_path: &std::path::Path,
+        port: u32,
+    ) -> Arc<dyn WorkerBackend> {
+        let key = format!("{}:{}", uds_path.display(), port);
+        if let Some(backend) = self.vsock_backends.get(&key) {
+            return backend.clone();
+        }
+
+        let backend = Arc::new(VsockBackend::new(uds_path.to_path_buf(), port));
+        self.vsock_backends.insert(key, backend.clone());
+        backend
     }
 }
