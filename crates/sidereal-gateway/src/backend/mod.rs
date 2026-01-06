@@ -1,9 +1,11 @@
 //! Worker backend abstractions for dispatching requests.
 
+mod circuit_breaker;
 mod http;
 #[cfg(feature = "firecracker")]
 mod vsock;
 
+pub use self::circuit_breaker::{CircuitBreaker, CircuitBreakerRegistry, CircuitState};
 pub use self::http::HttpBackend;
 #[cfg(feature = "firecracker")]
 pub use self::vsock::VsockBackend;

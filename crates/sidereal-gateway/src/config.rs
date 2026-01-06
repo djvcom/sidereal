@@ -126,6 +126,9 @@ pub struct MiddlewareConfig {
 
     #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
+
+    #[serde(default)]
+    pub circuit_breaker: Option<CircuitBreakerConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -150,6 +153,43 @@ fn default_true() -> bool {
 pub struct RateLimitConfig {
     pub requests_per_second: u32,
     pub burst_size: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CircuitBreakerConfig {
+    /// Number of consecutive failures before opening the circuit.
+    #[serde(default = "default_failure_threshold")]
+    pub failure_threshold: u32,
+
+    /// Number of successful requests in half-open state before closing.
+    #[serde(default = "default_success_threshold")]
+    pub success_threshold: u32,
+
+    /// Time in milliseconds before attempting recovery (open -> half-open).
+    #[serde(default = "default_reset_timeout_ms")]
+    pub reset_timeout_ms: u32,
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: default_failure_threshold(),
+            success_threshold: default_success_threshold(),
+            reset_timeout_ms: default_reset_timeout_ms(),
+        }
+    }
+}
+
+fn default_failure_threshold() -> u32 {
+    5
+}
+
+fn default_success_threshold() -> u32 {
+    3
+}
+
+fn default_reset_timeout_ms() -> u32 {
+    30_000 // 30 seconds
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -453,5 +493,53 @@ mod tests {
 
         let config = GatewayConfig::parse(config_str).unwrap();
         assert!(config.middleware.rate_limit.is_none());
+    }
+
+    #[test]
+    fn config_circuit_breaker() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+
+            [middleware.circuit_breaker]
+            failure_threshold = 10
+            success_threshold = 5
+            reset_timeout_ms = 60000
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+
+        let cb = config.middleware.circuit_breaker.expect("Circuit breaker should be configured");
+        assert_eq!(cb.failure_threshold, 10);
+        assert_eq!(cb.success_threshold, 5);
+        assert_eq!(cb.reset_timeout_ms, 60000);
+    }
+
+    #[test]
+    fn config_circuit_breaker_defaults() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+
+            [middleware.circuit_breaker]
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+
+        let cb = config.middleware.circuit_breaker.expect("Circuit breaker should be configured");
+        assert_eq!(cb.failure_threshold, 5);
+        assert_eq!(cb.success_threshold, 3);
+        assert_eq!(cb.reset_timeout_ms, 30000);
+    }
+
+    #[test]
+    fn config_circuit_breaker_disabled_by_default() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        assert!(config.middleware.circuit_breaker.is_none());
     }
 }

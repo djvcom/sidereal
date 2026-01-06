@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-use crate::backend::{BackendRegistry, DispatchRequest};
+use crate::backend::{BackendRegistry, CircuitBreakerRegistry, DispatchRequest};
 use crate::config::{GatewayConfig, RoutingConfig};
 use crate::error::GatewayError;
 use crate::middleware::{create_rate_limit_layer, OtelTraceLayer, SecurityLayer};
@@ -22,6 +22,7 @@ use crate::resolver::{validate_function_name, FunctionResolver, StaticResolver};
 pub struct GatewayState {
     resolver: Arc<dyn FunctionResolver>,
     backends: Arc<BackendRegistry>,
+    circuit_breakers: Option<Arc<CircuitBreakerRegistry>>,
 }
 
 impl std::fmt::Debug for GatewayState {
@@ -29,6 +30,7 @@ impl std::fmt::Debug for GatewayState {
         f.debug_struct("GatewayState")
             .field("resolver", &self.resolver)
             .field("backends", &self.backends)
+            .field("circuit_breakers", &self.circuit_breakers.is_some())
             .finish()
     }
 }
@@ -51,8 +53,23 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
     // Create backend registry
     let backends = Arc::new(BackendRegistry::new());
 
+    // Create circuit breaker registry if configured
+    let circuit_breakers = config.middleware.circuit_breaker.as_ref().map(|cb_config| {
+        tracing::info!(
+            failure_threshold = cb_config.failure_threshold,
+            success_threshold = cb_config.success_threshold,
+            reset_timeout_ms = cb_config.reset_timeout_ms,
+            "Circuit breaker enabled"
+        );
+        Arc::new(CircuitBreakerRegistry::new(cb_config.clone()))
+    });
+
     // Create state
-    let state = Arc::new(GatewayState { resolver, backends });
+    let state = Arc::new(GatewayState {
+        resolver,
+        backends,
+        circuit_breakers,
+    });
 
     // Build base router
     let base_router = Router::new()
@@ -167,8 +184,19 @@ async fn dispatch_to_function(
         .ok_or_else(|| GatewayError::FunctionNotFound(function_name.to_string()))?;
 
     // Record backend address in span
+    let backend_key = info.backend_address.to_string();
     opentelemetry_configuration::tracing::Span::current()
-        .record("gateway.backend.address", info.backend_address.to_string());
+        .record("gateway.backend.address", &backend_key);
+
+    // Check circuit breaker if enabled
+    let circuit_breaker = state
+        .circuit_breakers
+        .as_ref()
+        .map(|registry| registry.get_or_create(&backend_key));
+
+    if let Some(ref cb) = circuit_breaker {
+        cb.allow_request().await?;
+    }
 
     // Get backend
     let backend = state.backends.get_backend(&info.backend_address)?;
@@ -188,12 +216,40 @@ async fn dispatch_to_function(
         headers,
     };
 
-    let response = backend.dispatch(req).await?;
+    let response = match backend.dispatch(req).await {
+        Ok(resp) => {
+            // Record success
+            if let Some(cb) = circuit_breaker {
+                cb.record_success().await;
+            }
+            resp
+        }
+        Err(e) => {
+            // Record failure (only for connection/backend errors, not validation errors)
+            if let Some(cb) = circuit_breaker {
+                if is_backend_failure(&e) {
+                    cb.record_failure().await;
+                }
+            }
+            return Err(e);
+        }
+    };
 
     // Build response
     let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
     Ok((status, response.body))
+}
+
+/// Check if an error represents a backend failure that should trip the circuit breaker.
+fn is_backend_failure(error: &GatewayError) -> bool {
+    matches!(
+        error,
+        GatewayError::ConnectionFailed(_)
+            | GatewayError::Timeout
+            | GatewayError::BackendError(_)
+            | GatewayError::VsockError(_)
+    )
 }
 
 #[cfg(test)]
