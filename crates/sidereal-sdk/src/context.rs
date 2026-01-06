@@ -234,8 +234,9 @@ impl SecretsClient {
 
     async fn get(&self, name: &str) -> Result<String, ContextError> {
         match &*self.inner {
-            SecretsClientInner::Env => std::env::var(name)
-                .map_err(|_| ContextError::SecretNotFound(name.to_string())),
+            SecretsClientInner::Env => {
+                std::env::var(name).map_err(|_| ContextError::SecretNotFound(name.to_string()))
+            }
         }
     }
 }

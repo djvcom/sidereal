@@ -59,9 +59,7 @@ fn load_config() -> Result<SiderealConfig, DevError> {
 }
 
 fn check_cargo_watch() -> Result<(), DevError> {
-    let output = Command::new("cargo")
-        .args(["watch", "--version"])
-        .output();
+    let output = Command::new("cargo").args(["watch", "--version"]).output();
 
     match output {
         Ok(output) if output.status.success() => Ok(()),
@@ -77,7 +75,10 @@ pub async fn run(port_override: Option<u16>) -> Result<(), DevError> {
     // Check for cargo-watch
     check_cargo_watch()?;
 
-    println!("Starting development server for '{}'...", config.project.name);
+    println!(
+        "Starting development server for '{}'...",
+        config.project.name
+    );
     println!();
     println!("Using cargo-watch for hot reload.");
     println!("Server will start on http://localhost:{}", port);

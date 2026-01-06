@@ -60,7 +60,11 @@ impl GuestRequest {
         Self::Ping
     }
 
-    pub fn invoke(function_name: impl Into<String>, payload: Vec<u8>, trace_id: impl Into<String>) -> Self {
+    pub fn invoke(
+        function_name: impl Into<String>,
+        payload: Vec<u8>,
+        trace_id: impl Into<String>,
+    ) -> Self {
         Self::Invoke {
             function_name: function_name.into(),
             payload,

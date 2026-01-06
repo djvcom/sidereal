@@ -1,6 +1,7 @@
 //! Hello World example for Sidereal.
 
 use sidereal_sdk::prelude::*;
+use tracing::info;
 
 #[derive(Serialize, Deserialize)]
 pub struct GreetRequest {
@@ -12,33 +13,41 @@ pub struct GreetResponse {
     pub message: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct GreetingConfig {
+    #[serde(default = "default_name")]
     pub default_name: String,
+    #[serde(default = "default_max_length")]
     pub max_length: usize,
 }
 
-#[sidereal_sdk::function]
-pub async fn greet(
-    req: HttpRequest<GreetRequest>,
-    ctx: Context,
-) -> HttpResponse<GreetResponse> {
-    let greeting_config: GreetingConfig = ctx.config("greeting").unwrap_or_else(|e| {
-        ctx.log().warn("Using default greeting config", &[("reason", &e.to_string())]);
-        GreetingConfig {
-            default_name: "World".to_string(),
-            max_length: 100,
-        }
-    });
+fn default_name() -> String {
+    "World".to_string()
+}
 
-    let name = req.body.name.as_deref().unwrap_or(&greeting_config.default_name);
+fn default_max_length() -> usize {
+    100
+}
+
+#[sidereal_sdk::function]
+pub async fn greet(req: HttpRequest<GreetRequest>) -> HttpResponse<GreetResponse> {
+    // For a more complete example with extractors:
+    // Config(greeting_config): Config<GreetingConfig>,
+
+    let greeting_config = GreetingConfig::default();
+
+    let name = req
+        .body
+        .name
+        .as_deref()
+        .unwrap_or(&greeting_config.default_name);
     let truncated_name = if name.len() > greeting_config.max_length {
         &name[..greeting_config.max_length]
     } else {
         name
     };
 
-    ctx.log().info("Processing greet request", &[("name", truncated_name)]);
+    info!(name = %truncated_name, "Processing greet request");
 
     HttpResponse::ok(GreetResponse {
         message: format!("Hello, {}!", truncated_name),

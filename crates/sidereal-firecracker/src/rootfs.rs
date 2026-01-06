@@ -189,19 +189,15 @@ impl RootfsBuilder {
 
 /// Download a pre-built kernel for Firecracker.
 pub async fn download_kernel(dest: &Path) -> Result<()> {
-    const KERNEL_URL: &str = "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin";
+    const KERNEL_URL: &str =
+        "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin";
 
     info!(url = KERNEL_URL, dest = %dest.display(), "Downloading kernel");
 
     std::fs::create_dir_all(dest.parent().unwrap_or(Path::new(".")))?;
 
     let status = Command::new("curl")
-        .args([
-            "-fsSL",
-            "-o",
-            &dest.display().to_string(),
-            KERNEL_URL,
-        ])
+        .args(["-fsSL", "-o", &dest.display().to_string(), KERNEL_URL])
         .status()
         .map_err(|e| FirecrackerError::RootfsFailed(format!("curl failed: {}", e)))?;
 

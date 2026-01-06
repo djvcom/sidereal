@@ -27,24 +27,31 @@ impl VsockClient {
     async fn connect(&self) -> Result<UnixStream> {
         debug!("Connecting to vsock UDS: {}", self.uds_path.display());
 
-        let mut stream = UnixStream::connect(&self.uds_path)
-            .await
-            .map_err(|e| FirecrackerError::VsockConnectionFailed(format!(
+        let mut stream = UnixStream::connect(&self.uds_path).await.map_err(|e| {
+            FirecrackerError::VsockConnectionFailed(format!(
                 "Failed to connect to {}: {}",
-                self.uds_path.display(), e
-            )))?;
+                self.uds_path.display(),
+                e
+            ))
+        })?;
 
         let connect_cmd = format!("CONNECT {}\n", self.port);
         debug!("Sending CONNECT command for port {}", self.port);
 
-        stream.write_all(connect_cmd.as_bytes()).await.map_err(|e| {
-            FirecrackerError::VsockConnectionFailed(format!("Failed to send CONNECT: {}", e))
-        })?;
+        stream
+            .write_all(connect_cmd.as_bytes())
+            .await
+            .map_err(|e| {
+                FirecrackerError::VsockConnectionFailed(format!("Failed to send CONNECT: {}", e))
+            })?;
 
         let mut reader = BufReader::new(&mut stream);
         let mut response = String::new();
         reader.read_line(&mut response).await.map_err(|e| {
-            FirecrackerError::VsockConnectionFailed(format!("Failed to read CONNECT response: {}", e))
+            FirecrackerError::VsockConnectionFailed(format!(
+                "Failed to read CONNECT response: {}",
+                e
+            ))
         })?;
 
         debug!("CONNECT response: {}", response.trim());
@@ -89,9 +96,8 @@ impl VsockClient {
             FirecrackerError::VsockError(format!("Failed to read response body: {}", e))
         })?;
 
-        serde_json::from_slice(&buf).map_err(|e| {
-            FirecrackerError::ProtocolError(format!("Invalid response JSON: {}", e))
-        })
+        serde_json::from_slice(&buf)
+            .map_err(|e| FirecrackerError::ProtocolError(format!("Invalid response JSON: {}", e)))
     }
 
     /// Ping the guest to check if it's ready.

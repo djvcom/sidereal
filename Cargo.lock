@@ -505,6 +505,7 @@ dependencies = [
  "serde",
  "sidereal-sdk",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1001,9 +1002,9 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-configuration"
-version = "0.2.0"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb7e7770ecd0729363fe78aaa7a0924b983c2d91a4b629790c73d6a45828eae3"
+checksum = "d993fdc96d4fd15f012d07d8bec318ca5eb5480443d6124f5e2fb2d4b942d7e7"
 dependencies = [
  "figment",
  "humantime-serde",
@@ -1016,7 +1017,6 @@ dependencies = [
  "opentelemetry_sdk",
  "prost",
  "serde",
- "serde_json",
  "thiserror",
  "tonic",
  "tracing",
@@ -1603,7 +1603,9 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "figment",
+ "http",
  "inventory",
+ "opentelemetry-configuration",
  "serde",
  "serde_json",
  "sidereal-macros",
@@ -1611,6 +1613,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "tower",
+ "tracing",
 ]
 
 [[package]]

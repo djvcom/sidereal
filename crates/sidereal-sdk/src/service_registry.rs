@@ -3,21 +3,22 @@
 //! Services annotated with `#[sidereal_sdk::service]` are automatically
 //! registered using the `inventory` crate's distributed slice pattern.
 
-use crate::context::Context;
+use crate::extractors::AppState;
 use axum::Router;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 /// The kind of service based on return type detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceKind {
-    /// Background service: async fn(Context, CancellationToken) -> Result<(), E>
+    /// Background service: async fn(Arc<AppState>, CancellationToken) -> Result<(), E>
     /// Spawned as a tokio task, runs continuously until cancelled.
     Background,
-    /// Router service: fn(Context) -> Router
-    /// Mounted at a path prefix on the main HTTP server.
+    /// Router service: fn() -> Router
+    /// Mounted at a path prefix on the main HTTP server. Route handlers use axum extractors.
     Router,
 }
 
@@ -35,15 +36,16 @@ pub enum ServiceError {
 }
 
 /// Type alias for background service startup.
-/// Takes a Context and CancellationToken, returns a future that runs until cancelled.
-pub type BackgroundServiceFn = fn(
-    ctx: Context,
-    cancel: CancellationToken,
-) -> Pin<Box<dyn Future<Output = Result<(), ServiceError>> + Send + 'static>>;
+/// Takes AppState and CancellationToken, returns a future that runs until cancelled.
+pub type BackgroundServiceFn =
+    fn(
+        state: Arc<AppState>,
+        cancel: CancellationToken,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ServiceError>> + Send + 'static>>;
 
 /// Type alias for router service factory.
-/// Takes a Context, returns an axum Router to be mounted.
-pub type RouterServiceFn = fn(ctx: Context) -> Router;
+/// Returns an axum Router to be mounted. Route handlers use extractors for state access.
+pub type RouterServiceFn = fn() -> Router;
 
 /// Union type for service factories.
 pub enum ServiceFactory {

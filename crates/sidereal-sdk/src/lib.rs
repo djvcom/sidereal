@@ -20,11 +20,26 @@
 //! #[sidereal_sdk::function]
 //! async fn greet(
 //!     req: HttpRequest<GreetRequest>,
-//!     ctx: Context,
 //! ) -> HttpResponse<GreetResponse> {
 //!     HttpResponse::ok(GreetResponse {
 //!         message: format!("Hello, {}!", req.body.name),
 //!     })
+//! }
+//! ```
+//!
+//! # Functions with Extractors
+//!
+//! ```ignore
+//! use sidereal_sdk::prelude::*;
+//!
+//! #[sidereal_sdk::function]
+//! async fn create_order(
+//!     req: HttpRequest<CreateOrderPayload>,
+//!     Config(stripe): Config<StripeConfig>,
+//!     secrets: Secrets,
+//! ) -> HttpResponse<Order> {
+//!     let api_key = secrets.get("STRIPE_API_KEY")?;
+//!     // Use stripe config and api_key...
 //! }
 //! ```
 //!
@@ -36,7 +51,7 @@
 //!
 //! // Background service - runs continuously
 //! #[sidereal_sdk::service]
-//! async fn background_worker(ctx: Context, cancel: CancellationToken) -> Result<(), Error> {
+//! async fn background_worker(cancel: CancellationToken) -> Result<(), ServiceError> {
 //!     loop {
 //!         tokio::select! {
 //!             _ = cancel.cancelled() => break,
@@ -50,7 +65,7 @@
 //!
 //! // Router service - mounted at a path prefix
 //! #[sidereal_sdk::service(path = "/api")]
-//! fn api_service(ctx: Context) -> Router {
+//! fn api_service() -> Router {
 //!     Router::new()
 //!         .route("/health", get(|| async { "OK" }))
 //! }
@@ -58,10 +73,12 @@
 
 pub mod config;
 pub mod context;
+pub mod extractors;
 pub mod prelude;
 pub mod registry;
 pub mod server;
 pub mod service_registry;
+pub mod tracing_layer;
 pub mod triggers;
 
 // Re-export the proc macros
@@ -69,6 +86,7 @@ pub use sidereal_macros::{function, service};
 
 #[doc(hidden)]
 pub mod __internal {
+    pub use axum;
     pub use inventory;
     pub use serde_json;
     pub use tokio_util;
@@ -99,11 +117,15 @@ pub mod __internal {
 
 // Re-export key types at the crate root
 pub use config::{ConfigError, ConfigManager};
-pub use context::Context;
+pub use extractors::{
+    AppState, Config, ConfigRejection, InvocationMeta, InvocationMetaRejection, Kv, KvClient,
+    KvError, KvRejection, SecretError, Secrets, SecretsRejection,
+};
 pub use registry::{FunctionMetadata, FunctionResult};
 pub use server::{run, ServerConfig};
 pub use service_registry::{
     get_background_services, get_router_services, get_services, ServiceError, ServiceFactory,
     ServiceKind, ServiceMetadata,
 };
+pub use tracing_layer::{OtelTraceLayer, OtelTraceService};
 pub use triggers::{HttpRequest, HttpResponse, QueueMessage, TriggerKind};

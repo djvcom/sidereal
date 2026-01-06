@@ -162,8 +162,7 @@ impl EnvVarInterpolator {
                 Value::Dict(tag, new_dict)
             }
             Value::Array(tag, arr) => {
-                let new_arr: Vec<Value> =
-                    arr.into_iter().map(Self::interpolate_value).collect();
+                let new_arr: Vec<Value> = arr.into_iter().map(Self::interpolate_value).collect();
                 Value::Array(tag, new_arr)
             }
             other => other,

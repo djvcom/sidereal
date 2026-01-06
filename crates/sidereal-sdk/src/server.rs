@@ -4,11 +4,12 @@
 //! and manages the lifecycle of background and router services.
 
 use crate::config::{ConfigManager, SiderealConfig};
-use crate::context::Context;
+use crate::extractors::AppState;
 use crate::registry::{get_http_functions, get_queue_functions, FunctionMetadata, FunctionResult};
 use crate::service_registry::{
     get_background_services, get_router_services, ServiceFactory, ServiceMetadata,
 };
+use crate::tracing_layer::OtelTraceLayer;
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -55,10 +56,6 @@ impl ServerConfig {
         self.shutdown_timeout = timeout;
         self
     }
-}
-
-struct AppState {
-    config: Option<ConfigManager>,
 }
 
 /// Run the development server.
@@ -127,17 +124,20 @@ pub async fn run(config: ServerConfig) {
         &router_services,
     );
 
+    // Build shared state
+    let state = Arc::new(AppState::new(config_manager.clone()));
+
     // Spawn background services
     let mut background_tasks = JoinSet::new();
     for service in &background_services {
-        let ctx = create_context(service.name, config_manager.clone());
+        let state_clone = state.clone();
         let cancel = cancel_token.clone();
 
         if let ServiceFactory::Background(factory) = service.factory {
             let name = service.name.to_string();
             background_tasks.spawn(async move {
                 eprintln!("Starting background service: {}", name);
-                let result = factory(ctx, cancel).await;
+                let result = factory(state_clone, cancel).await;
                 match &result {
                     Ok(()) => eprintln!("Background service '{}' completed", name),
                     Err(e) => eprintln!("Background service '{}' failed: {}", name, e),
@@ -148,18 +148,15 @@ pub async fn run(config: ServerConfig) {
     }
 
     // Build the router with function routes
-    let state = Arc::new(AppState {
-        config: config_manager.clone(),
-    });
     let mut app = Router::new()
         .route("/{function}", post(handle_function))
+        .layer(OtelTraceLayer::new())
         .with_state(state);
 
     // Mount router services
     for service in &router_services {
         if let ServiceFactory::Router(factory) = service.factory {
-            let ctx = create_context(service.name, config_manager.clone());
-            let router = factory(ctx);
+            let router = factory();
             let prefix = service.path_prefix.unwrap_or("/");
             eprintln!("Mounting router service '{}' at {}", service.name, prefix);
             app = app.nest(prefix, router);
@@ -266,7 +263,7 @@ fn print_startup_info(
 }
 
 async fn handle_function(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Path(function_name): Path<String>,
     body: Bytes,
 ) -> impl IntoResponse {
@@ -282,28 +279,13 @@ async fn handle_function(
         }
     };
 
-    // Create a context for this invocation
-    let ctx = create_context(&function_name, state.config.clone());
-
-    // Call the handler
-    let result: FunctionResult = (func.handler)(&body, ctx).await;
+    // Call the legacy handler (eventually this will be replaced with axum handler mounting)
+    let result: FunctionResult = (func.handler)(&body, ()).await;
 
     // Return the response
     let status = StatusCode::from_u16(result.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
-    (
-        status,
-        [("content-type", "application/json")],
-        result.body,
-    )
-        .into_response()
-}
-
-fn create_context(name: impl Into<String>, config: Option<ConfigManager>) -> Context {
-    match config {
-        Some(cm) => Context::with_config(name, cm),
-        None => Context::new_dev(name),
-    }
+    (status, [("content-type", "application/json")], result.body).into_response()
 }
 
 /// Validate that queue functions match declared queue resources.

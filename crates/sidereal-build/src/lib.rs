@@ -17,9 +17,7 @@
 
 mod config;
 
-pub use config::{
-    DevConfig, ProjectConfig, QueueConfig, ResourcesConfig, SiderealConfig,
-};
+pub use config::{DevConfig, ProjectConfig, QueueConfig, ResourcesConfig, SiderealConfig};
 
 use std::path::PathBuf;
 use thiserror::Error;

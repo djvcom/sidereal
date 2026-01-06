@@ -181,9 +181,9 @@ impl VmInstance {
         let client: Client<UnixConnector, Full<Bytes>> = Client::unix();
         let url: hyper::Uri = Uri::new(&self.api_socket, path).into();
 
-        let method = method.parse::<Method>().map_err(|e| {
-            FirecrackerError::VmConfigFailed(format!("Invalid HTTP method: {}", e))
-        })?;
+        let method = method
+            .parse::<Method>()
+            .map_err(|e| FirecrackerError::VmConfigFailed(format!("Invalid HTTP method: {}", e)))?;
 
         let req_body = body.unwrap_or("").to_string();
         let request = Request::builder()
@@ -191,13 +191,16 @@ impl VmInstance {
             .uri(url)
             .header("Content-Type", "application/json")
             .body(Full::new(Bytes::from(req_body)))
-            .map_err(|e| FirecrackerError::VmConfigFailed(format!("Failed to build request: {}", e)))?;
+            .map_err(|e| {
+                FirecrackerError::VmConfigFailed(format!("Failed to build request: {}", e))
+            })?;
 
         debug!("Sending {} {}", request.method(), path);
 
-        let response = client.request(request).await.map_err(|e| {
-            FirecrackerError::VmConfigFailed(format!("API request failed: {}", e))
-        })?;
+        let response = client
+            .request(request)
+            .await
+            .map_err(|e| FirecrackerError::VmConfigFailed(format!("API request failed: {}", e)))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -223,8 +226,12 @@ impl VmInstance {
             kernel_image_path: self.config.kernel_path.display().to_string(),
             boot_args: self.config.boot_args.clone(),
         };
-        self.api_request("PUT", "/boot-source", Some(&serde_json::to_string(&boot_source)?))
-            .await?;
+        self.api_request(
+            "PUT",
+            "/boot-source",
+            Some(&serde_json::to_string(&boot_source)?),
+        )
+        .await?;
 
         let drive = api::Drive {
             drive_id: "rootfs".to_string(),
@@ -232,15 +239,23 @@ impl VmInstance {
             is_root_device: true,
             is_read_only: false,
         };
-        self.api_request("PUT", "/drives/rootfs", Some(&serde_json::to_string(&drive)?))
-            .await?;
+        self.api_request(
+            "PUT",
+            "/drives/rootfs",
+            Some(&serde_json::to_string(&drive)?),
+        )
+        .await?;
 
         let machine = api::MachineConfig {
             vcpu_count: self.config.vcpu_count,
             mem_size_mib: self.config.mem_size_mib,
         };
-        self.api_request("PUT", "/machine-config", Some(&serde_json::to_string(&machine)?))
-            .await?;
+        self.api_request(
+            "PUT",
+            "/machine-config",
+            Some(&serde_json::to_string(&machine)?),
+        )
+        .await?;
 
         let vsock = api::Vsock {
             vsock_id: "vsock0".to_string(),

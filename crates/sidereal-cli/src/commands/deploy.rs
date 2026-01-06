@@ -183,8 +183,7 @@ async fn build_for_firecracker() -> Result<(), DeployError> {
 
 fn find_runtime_binary() -> Result<PathBuf, DeployError> {
     // Try relative path first (when running from workspace root)
-    let binary_path =
-        PathBuf::from("target/x86_64-unknown-linux-musl/release/sidereal-runtime");
+    let binary_path = PathBuf::from("target/x86_64-unknown-linux-musl/release/sidereal-runtime");
 
     if binary_path.exists() {
         return Ok(binary_path);

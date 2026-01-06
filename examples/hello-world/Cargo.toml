@@ -11,3 +11,4 @@ path = "src/main.rs"
 sidereal-sdk = { path = "../../crates/sidereal-sdk" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
+tracing.workspace = true

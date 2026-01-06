@@ -124,9 +124,7 @@ dead_letter = true
 /// Validate a project name is a valid Rust crate name.
 fn validate_name(name: &str) -> Result<(), InitError> {
     if name.is_empty() {
-        return Err(InitError::InvalidName(
-            "name cannot be empty".to_string(),
-        ));
+        return Err(InitError::InvalidName("name cannot be empty".to_string()));
     }
 
     // Must start with a letter or underscore

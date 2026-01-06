@@ -31,6 +31,16 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
     }
 }
 
+/// Check if a type is CancellationToken.
+fn is_cancellation_token(ty: &Type) -> bool {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            return segment.ident == "CancellationToken";
+        }
+    }
+    false
+}
+
 fn parse_attributes(attr: TokenStream) -> Result<ServiceAttributes> {
     let mut attrs = ServiceAttributes { path: None };
 
@@ -50,7 +60,10 @@ fn parse_attributes(attr: TokenStream) -> Result<ServiceAttributes> {
             {
                 attrs.path = Some(lit_str.value());
             } else {
-                return Err(Error::new_spanned(&nv.value, "path must be a string literal"));
+                return Err(Error::new_spanned(
+                    &nv.value,
+                    "path must be a string literal",
+                ));
             }
         }
         _ => {
@@ -100,34 +113,43 @@ fn expand_background_service(
 
     // Background services must be async
     if asyncness.is_none() {
-        return Err(Error::new_spanned(
-            sig,
-            "Background services must be async",
-        ));
+        return Err(Error::new_spanned(sig, "Background services must be async"));
     }
 
-    // Validate parameters - expect (ctx, cancel) or just (ctx)
+    // Validate parameters - look for CancellationToken as special parameter
     let inputs = &sig.inputs;
-    if inputs.is_empty() || inputs.len() > 2 {
+    if inputs.is_empty() {
         return Err(Error::new_spanned(
             inputs,
-            "Background service must have 1 or 2 parameters: (ctx) or (ctx, cancel)",
+            "Background service must have at least a CancellationToken parameter",
         ));
     }
 
-    // First parameter is Context
-    let ctx_arg = inputs.first().unwrap();
-    let (ctx_pat, _ctx_ty) = extract_typed_arg(ctx_arg)?;
+    // Find CancellationToken parameter (should be last)
+    let mut cancel_pat = None;
+    let mut other_params = Vec::new();
 
-    // Second parameter (optional) is CancellationToken
-    let has_cancel = inputs.len() == 2;
-    let cancel_pat = if has_cancel {
-        let cancel_arg = inputs.iter().nth(1).unwrap();
-        let (pat, _ty) = extract_typed_arg(cancel_arg)?;
-        Some(pat)
-    } else {
-        None
-    };
+    for (idx, arg) in inputs.iter().enumerate() {
+        let (pat, ty) = extract_typed_arg(arg)?;
+        if is_cancellation_token(ty) {
+            if idx != inputs.len() - 1 {
+                return Err(Error::new_spanned(
+                    arg,
+                    "CancellationToken must be the last parameter",
+                ));
+            }
+            cancel_pat = Some(pat.clone());
+        } else {
+            other_params.push((pat.clone(), ty.clone()));
+        }
+    }
+
+    let cancel_pat = cancel_pat.ok_or_else(|| {
+        Error::new_spanned(
+            inputs,
+            "Background service must have a CancellationToken parameter",
+        )
+    })?;
 
     let impl_fn_name = format_ident!("__sidereal_service_impl_{}", fn_name);
     let factory_fn_name = format_ident!("__sidereal_service_factory_{}", fn_name);
@@ -138,35 +160,58 @@ fn expand_background_service(
         ReturnType::Type(_, ty) => quote! { #ty },
     };
 
-    // Generate the cancel binding if not present
-    let cancel_binding = if has_cancel {
-        quote! { let #cancel_pat = cancel; }
+    // Build the original function's parameter list
+    let orig_params: Vec<_> = inputs.iter().map(|arg| quote! { #arg }).collect();
+
+    // Build extractor patterns and types for the impl function call
+    let extractor_patterns: Vec<_> = other_params
+        .iter()
+        .map(|(pat, _)| quote! { #pat })
+        .collect();
+
+    // Generate state extraction for each non-cancel parameter
+    // For now, we just pass the state as a single Arc<AppState> and let the user destructure
+    let has_state_param = !other_params.is_empty();
+
+    let (impl_state_param, factory_state_extraction, impl_call_args) = if has_state_param {
+        // User has additional parameters - first must be state
+        if other_params.len() != 1 {
+            return Err(Error::new_spanned(
+                inputs,
+                "Background service should have at most (state: Arc<AppState>, cancel: CancellationToken)",
+            ));
+        }
+        let (state_pat, state_ty) = &other_params[0];
+        (
+            quote! { #state_pat: #state_ty, },
+            quote! {},
+            quote! { state, },
+        )
     } else {
-        quote! { let _ = cancel; }
+        (quote! {}, quote! { let _ = state; }, quote! {})
     };
 
     let expanded = quote! {
-        // Original async function (renamed)
+        // Original async function (renamed) - preserves user's signature
         #[doc(hidden)]
         #vis async fn #impl_fn_name(
-            #ctx_pat: ::sidereal_sdk::Context,
-            cancel: ::sidereal_sdk::__internal::tokio_util::sync::CancellationToken,
-        ) -> #output_ty {
-            #cancel_binding
-            #block
-        }
+            #impl_state_param
+            #cancel_pat: ::sidereal_sdk::__internal::tokio_util::sync::CancellationToken,
+        ) -> #output_ty
+        #block
 
         // Factory function for inventory registration
         #[doc(hidden)]
         fn #factory_fn_name(
-            ctx: ::sidereal_sdk::Context,
+            state: ::std::sync::Arc<::sidereal_sdk::AppState>,
             cancel: ::sidereal_sdk::__internal::tokio_util::sync::CancellationToken,
         ) -> ::std::pin::Pin<::std::boxed::Box<
             dyn ::std::future::Future<Output = ::std::result::Result<(), ::sidereal_sdk::ServiceError>>
             + ::std::marker::Send + 'static
         >> {
             ::std::boxed::Box::pin(async move {
-                let result = #impl_fn_name(ctx, cancel).await;
+                #factory_state_extraction
+                let result = #impl_fn_name(#impl_call_args cancel).await;
                 ::sidereal_sdk::__internal::convert_service_result(result)
             })
         }
@@ -182,11 +227,8 @@ fn expand_background_service(
         }
 
         // Public wrapper for direct calls (useful for testing)
-        #vis async fn #fn_name(
-            ctx: ::sidereal_sdk::Context,
-            cancel: ::sidereal_sdk::__internal::tokio_util::sync::CancellationToken,
-        ) -> #output_ty {
-            #impl_fn_name(ctx, cancel).await
+        #vis async fn #fn_name(#(#orig_params),*) -> #output_ty {
+            #impl_fn_name(#(#extractor_patterns,)* #cancel_pat).await
         }
     };
 
@@ -211,18 +253,14 @@ fn expand_router_service(
         ));
     }
 
-    // Validate parameters - expect just (ctx)
+    // Router services should have no parameters - handlers use axum extractors
     let inputs = &sig.inputs;
-    if inputs.len() != 1 {
+    if !inputs.is_empty() {
         return Err(Error::new_spanned(
             inputs,
-            "Router service must have exactly 1 parameter: (ctx: Context)",
+            "Router service should have no parameters. Use axum extractors in route handlers.",
         ));
     }
-
-    // First parameter is Context
-    let ctx_arg = inputs.first().unwrap();
-    let (ctx_pat, _ctx_ty) = extract_typed_arg(ctx_arg)?;
 
     let impl_fn_name = format_ident!("__sidereal_service_impl_{}", fn_name);
     let factory_fn_name = format_ident!("__sidereal_service_factory_{}", fn_name);
@@ -238,13 +276,13 @@ fn expand_router_service(
     let expanded = quote! {
         // Original function (renamed)
         #[doc(hidden)]
-        #vis fn #impl_fn_name(#ctx_pat: ::sidereal_sdk::Context) -> ::axum::Router
+        #vis fn #impl_fn_name() -> ::sidereal_sdk::__internal::axum::Router
         #block
 
         // Factory function for inventory registration
         #[doc(hidden)]
-        fn #factory_fn_name(ctx: ::sidereal_sdk::Context) -> ::axum::Router {
-            #impl_fn_name(ctx)
+        fn #factory_fn_name() -> ::sidereal_sdk::__internal::axum::Router {
+            #impl_fn_name()
         }
 
         // Register the service with inventory
@@ -258,8 +296,8 @@ fn expand_router_service(
         }
 
         // Public wrapper for direct calls
-        #vis fn #fn_name(ctx: ::sidereal_sdk::Context) -> ::axum::Router {
-            #impl_fn_name(ctx)
+        #vis fn #fn_name() -> ::sidereal_sdk::__internal::axum::Router {
+            #impl_fn_name()
         }
     };
 

@@ -3,7 +3,6 @@
 //! Functions annotated with `#[sidereal_sdk::function]` are automatically
 //! registered using the `inventory` crate's distributed slice pattern.
 
-use crate::context::Context;
 use crate::triggers::TriggerKind;
 use std::future::Future;
 use std::pin::Pin;
@@ -20,17 +19,16 @@ pub struct FunctionMetadata {
     /// Derived from the message type name (e.g., `OrderCreated` → `order-created`).
     pub queue_name: Option<&'static str>,
 
-    /// The handler function.
+    /// The legacy handler function (deprecated - use axum handlers instead).
     pub handler: FunctionHandler,
 }
 
-/// Type alias for the async function handler.
+/// Type alias for the legacy async function handler.
 ///
 /// Takes JSON bytes as input, returns JSON bytes as output.
-pub type FunctionHandler = fn(
-    bytes: &[u8],
-    ctx: Context,
-) -> Pin<Box<dyn Future<Output = FunctionResult> + Send + '_>>;
+/// Note: This is deprecated in favour of axum handlers with extractors.
+pub type FunctionHandler =
+    fn(bytes: &[u8], _ctx: ()) -> Pin<Box<dyn Future<Output = FunctionResult> + Send + '_>>;
 
 /// Result of invoking a function.
 pub struct FunctionResult {

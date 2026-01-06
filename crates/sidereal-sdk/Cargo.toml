@@ -16,3 +16,7 @@ thiserror.workspace = true
 axum.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+opentelemetry-configuration.workspace = true
+http.workspace = true
+tower.workspace = true
+tracing.workspace = true
