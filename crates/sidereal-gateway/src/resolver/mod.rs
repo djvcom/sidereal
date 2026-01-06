@@ -22,7 +22,15 @@ static FUNCTION_NAME_PATTERN: LazyLock<Regex> =
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
     pub name: String,
-    pub backend_address: WorkerAddress,
+    /// Backend addresses for this function (supports load balancing).
+    pub backend_addresses: Vec<WorkerAddress>,
+}
+
+impl FunctionInfo {
+    /// Get the first backend address (for backwards compatibility).
+    pub fn primary_backend(&self) -> Option<&WorkerAddress> {
+        self.backend_addresses.first()
+    }
 }
 
 /// Resolves function names to backend addresses.

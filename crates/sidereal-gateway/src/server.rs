@@ -12,8 +12,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-use crate::backend::{BackendRegistry, CircuitBreakerRegistry, DispatchRequest};
-use crate::config::{GatewayConfig, RoutingConfig};
+use crate::backend::{
+    BackendRegistry, CircuitBreakerRegistry, DispatchRequest, LoadBalanceStrategy, LoadBalancer,
+};
+use crate::config::{GatewayConfig, LoadBalanceStrategyConfig, RoutingConfig};
 use crate::error::GatewayError;
 use crate::middleware::{create_rate_limit_layer, OtelTraceLayer, SecurityLayer};
 use crate::resolver::{validate_function_name, FunctionResolver, StaticResolver};
@@ -23,6 +25,7 @@ pub struct GatewayState {
     resolver: Arc<dyn FunctionResolver>,
     backends: Arc<BackendRegistry>,
     circuit_breakers: Option<Arc<CircuitBreakerRegistry>>,
+    load_balancer: LoadBalancer,
 }
 
 impl std::fmt::Debug for GatewayState {
@@ -31,6 +34,7 @@ impl std::fmt::Debug for GatewayState {
             .field("resolver", &self.resolver)
             .field("backends", &self.backends)
             .field("circuit_breakers", &self.circuit_breakers.is_some())
+            .field("load_balancer", &self.load_balancer)
             .finish()
     }
 }
@@ -64,11 +68,23 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         Arc::new(CircuitBreakerRegistry::new(cb_config.clone()))
     });
 
+    // Create load balancer with strategy from config
+    let load_balance_strategy = match &config.routing {
+        RoutingConfig::Static { load_balance, .. } => match load_balance {
+            LoadBalanceStrategyConfig::RoundRobin => LoadBalanceStrategy::RoundRobin,
+            LoadBalanceStrategyConfig::Random => LoadBalanceStrategy::Random,
+        },
+        RoutingConfig::Discovery { .. } => LoadBalanceStrategy::RoundRobin,
+    };
+    let load_balancer = LoadBalancer::new(load_balance_strategy);
+    tracing::info!(strategy = ?load_balance_strategy, "Load balancer configured");
+
     // Create state
     let state = Arc::new(GatewayState {
         resolver,
         backends,
         circuit_breakers,
+        load_balancer,
     });
 
     // Build base router
@@ -183,8 +199,19 @@ async fn dispatch_to_function(
         .await?
         .ok_or_else(|| GatewayError::FunctionNotFound(function_name.to_string()))?;
 
+    // Select backend using load balancer
+    let selected_address = state
+        .load_balancer
+        .select(&info.backend_addresses)
+        .ok_or_else(|| {
+            GatewayError::BackendError(format!(
+                "No backends available for function '{}'",
+                function_name
+            ))
+        })?;
+
     // Record backend address in span
-    let backend_key = info.backend_address.to_string();
+    let backend_key = selected_address.to_string();
     opentelemetry_configuration::tracing::Span::current()
         .record("gateway.backend.address", &backend_key);
 
@@ -199,7 +226,7 @@ async fn dispatch_to_function(
     }
 
     // Get backend
-    let backend = state.backends.get_backend(&info.backend_address)?;
+    let backend = state.backends.get_backend(selected_address)?;
 
     // Extract or generate trace ID
     let trace_id = headers
@@ -255,21 +282,27 @@ fn is_backend_failure(error: &GatewayError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BackendAddress;
+    use crate::config::{BackendAddress, FunctionBackendConfig};
     use std::collections::HashMap;
 
     fn test_config() -> GatewayConfig {
         let mut functions = HashMap::new();
         functions.insert(
             "hello".to_string(),
-            BackendAddress::Http {
-                url: "http://127.0.0.1:7850".to_string(),
+            FunctionBackendConfig {
+                addresses: vec![BackendAddress::Http {
+                    url: "http://127.0.0.1:7850".to_string(),
+                }],
+                load_balance: None,
             },
         );
 
         GatewayConfig {
             server: Default::default(),
-            routing: RoutingConfig::Static { functions },
+            routing: RoutingConfig::Static {
+                functions,
+                load_balance: Default::default(),
+            },
             middleware: Default::default(),
             limits: Default::default(),
         }

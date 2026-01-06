@@ -2,11 +2,13 @@
 
 mod circuit_breaker;
 mod http;
+mod load_balancer;
 #[cfg(feature = "firecracker")]
 mod vsock;
 
 pub use self::circuit_breaker::{CircuitBreaker, CircuitBreakerRegistry, CircuitState};
 pub use self::http::HttpBackend;
+pub use self::load_balancer::{LoadBalanceStrategy, LoadBalancer};
 #[cfg(feature = "firecracker")]
 pub use self::vsock::VsockBackend;
 

@@ -105,11 +105,37 @@ fn default_shutdown_timeout() -> Duration {
 pub enum RoutingConfig {
     Static {
         #[serde(default)]
-        functions: HashMap<String, BackendAddress>,
+        functions: HashMap<String, FunctionBackendConfig>,
+
+        /// Default load balancing strategy for all functions.
+        #[serde(default)]
+        load_balance: LoadBalanceStrategyConfig,
     },
     Discovery {
         endpoint: String,
     },
+}
+
+/// Configuration for a function's backends.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FunctionBackendConfig {
+    /// Backend addresses for this function.
+    pub addresses: Vec<BackendAddress>,
+
+    /// Load balancing strategy (overrides the default).
+    #[serde(default)]
+    pub load_balance: Option<LoadBalanceStrategyConfig>,
+}
+
+/// Load balancing strategy configuration.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadBalanceStrategyConfig {
+    /// Round-robin selection.
+    #[default]
+    RoundRobin,
+    /// Random selection.
+    Random,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -428,8 +454,7 @@ mod tests {
             mode = "static"
 
             [routing.functions.hello]
-            type = "http"
-            url = "http://127.0.0.1:7850"
+            addresses = [{ type = "http", url = "http://127.0.0.1:7850" }]
 
             [limits]
             max_body_size = 5242880
@@ -442,7 +467,7 @@ mod tests {
         assert_eq!(config.limits.max_body_size, 5 * 1024 * 1024);
 
         match config.routing {
-            RoutingConfig::Static { functions } => {
+            RoutingConfig::Static { functions, .. } => {
                 assert!(functions.contains_key("hello"));
             }
             _ => panic!("Expected static routing"),
@@ -541,5 +566,91 @@ mod tests {
 
         let config = GatewayConfig::parse(config_str).unwrap();
         assert!(config.middleware.circuit_breaker.is_none());
+    }
+
+    #[test]
+    fn config_load_balance_default() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+
+            [routing.functions.hello]
+            addresses = [{ type = "http", url = "http://127.0.0.1:7850" }]
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        match config.routing {
+            RoutingConfig::Static { load_balance, .. } => {
+                assert_eq!(load_balance, LoadBalanceStrategyConfig::RoundRobin);
+            }
+            _ => panic!("Expected static routing"),
+        }
+    }
+
+    #[test]
+    fn config_load_balance_random() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+            load_balance = "random"
+
+            [routing.functions.hello]
+            addresses = [{ type = "http", url = "http://127.0.0.1:7850" }]
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        match config.routing {
+            RoutingConfig::Static { load_balance, .. } => {
+                assert_eq!(load_balance, LoadBalanceStrategyConfig::Random);
+            }
+            _ => panic!("Expected static routing"),
+        }
+    }
+
+    #[test]
+    fn config_multiple_backends() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+
+            [routing.functions.hello]
+            addresses = [
+                { type = "http", url = "http://backend1:8080" },
+                { type = "http", url = "http://backend2:8080" },
+                { type = "http", url = "http://backend3:8080" }
+            ]
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        match config.routing {
+            RoutingConfig::Static { functions, .. } => {
+                let func = functions.get("hello").expect("Function 'hello' should exist");
+                assert_eq!(func.addresses.len(), 3);
+            }
+            _ => panic!("Expected static routing"),
+        }
+    }
+
+    #[test]
+    fn config_per_function_load_balance() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+            load_balance = "round_robin"
+
+            [routing.functions.hello]
+            addresses = [{ type = "http", url = "http://127.0.0.1:7850" }]
+            load_balance = "random"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        match config.routing {
+            RoutingConfig::Static { functions, load_balance } => {
+                assert_eq!(load_balance, LoadBalanceStrategyConfig::RoundRobin);
+                let func = functions.get("hello").expect("Function 'hello' should exist");
+                assert_eq!(func.load_balance, Some(LoadBalanceStrategyConfig::Random));
+            }
+            _ => panic!("Expected static routing"),
+        }
     }
 }
