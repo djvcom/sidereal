@@ -1,0 +1,55 @@
+[package]
+name = "sidereal-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Worker registration, health tracking, and placement for Sidereal"
+
+[[bin]]
+name = "sidereal-scheduler"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Protocol types
+sidereal-proto = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# HTTP server
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["trace", "cors"] }
+
+# Serialisation
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Configuration
+figment = { workspace = true, features = ["toml", "env"] }
+
+# Observability
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# Valkey/Redis connection pooling
+deadpool-redis = { workspace = true }
+
+# Utilities
+ulid = "1.1"
+thiserror = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+rand = { workspace = true, features = ["small_rng"] }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []

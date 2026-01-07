@@ -163,6 +163,11 @@ async fn handle_connection(
                 warn!("Received unsupported State message");
                 false
             }
+            MessageType::Scheduler => {
+                // Scheduler messages are between workers and scheduler service
+                warn!("Received unexpected Scheduler message on runtime channel");
+                false
+            }
         };
 
         if shutdown {

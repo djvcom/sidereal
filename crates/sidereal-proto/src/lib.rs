@@ -43,6 +43,7 @@ mod control;
 mod envelope;
 mod error;
 mod function;
+mod scheduler;
 mod state;
 mod types;
 
@@ -55,6 +56,11 @@ pub use control::ControlMessage;
 pub use envelope::{Envelope, EnvelopeHeader};
 pub use error::{ErrorCode, ProtocolError, StateErrorCode};
 pub use function::{FunctionMessage, InvokeRequest, InvokeResponse};
+pub use scheduler::{
+    Capacity, DeregisterReason, DeregisterRequest, DrainReason, DrainRequest, HeartbeatRequest,
+    HeartbeatResponse, RegisterRequest, RegisterResponse, SchedulerErrorCode, SchedulerMessage,
+    StatusUpdateRequest, TriggerType, WorkerCommand, WorkerStatusProto,
+};
 pub use state::{QueueMessageData, StateMessage, StateRequest, StateResponse};
 pub use types::CorrelationId;
 
@@ -80,4 +86,7 @@ pub mod ports {
 
     /// Control messages port.
     pub const CONTROL: u32 = 1026;
+
+    /// Scheduler registration port.
+    pub const SCHEDULER: u32 = 1027;
 }

@@ -64,3 +64,18 @@ hyperlocal = "0.9"
 http-body-util = "0.1"
 sidereal-macros = { path = "crates/sidereal-macros" }
 sidereal-firecracker = { path = "crates/sidereal-firecracker" }
+sidereal-proto = { path = "crates/sidereal-proto" }
+sidereal-scheduler = { path = "crates/sidereal-scheduler" }
+
+# HTTP server
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# Connection pooling for Valkey
+deadpool-redis = "0.18"
+
+# Concurrent data structures
+dashmap = "6"
+parking_lot = "0.12"
+
+# Random number generation
+rand = "0.8"

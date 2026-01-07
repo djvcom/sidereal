@@ -28,6 +28,8 @@ pub enum MessageType {
     State = 0x02,
     /// Control message.
     Control = 0x03,
+    /// Scheduler message.
+    Scheduler = 0x04,
 }
 
 impl MessageType {
@@ -38,6 +40,7 @@ impl MessageType {
             0x01 => Some(Self::Function),
             0x02 => Some(Self::State),
             0x03 => Some(Self::Control),
+            0x04 => Some(Self::Scheduler),
             _ => None,
         }
     }
@@ -253,6 +256,7 @@ mod tests {
             MessageType::Function,
             MessageType::State,
             MessageType::Control,
+            MessageType::Scheduler,
         ];
 
         for t in types {

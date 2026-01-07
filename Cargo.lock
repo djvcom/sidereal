@@ -3062,6 +3062,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "sidereal-scheduler"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "dashmap",
+ "deadpool-redis",
+ "figment",
+ "parking_lot",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sidereal-proto",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-test",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+]
+
+[[package]]
 name = "sidereal-sdk"
 version = "0.1.0"
 dependencies = [
@@ -3638,6 +3662,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-test"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6d24790a10a7af737693a3e8f1d03faef7e6ca0cc99aae5066f533766de545"
+dependencies = [
+ "futures-core",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3780,6 +3815,7 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
