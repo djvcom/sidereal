@@ -11,6 +11,9 @@ mod valkey;
 #[cfg(feature = "postgres")]
 mod postgres;
 
+#[cfg(feature = "vsock")]
+mod vsock;
+
 #[cfg(feature = "config")]
 mod config;
 
@@ -29,6 +32,9 @@ pub use valkey::{ValkeyKv, ValkeyLock, ValkeyLockProvider};
 
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresQueue;
+
+#[cfg(feature = "vsock")]
+pub use vsock::{VsockLockProvider, VsockStateClient};
 
 #[cfg(feature = "config")]
 pub use config::{BackendConfig, KvConfig, LockConfig, QueueConfig, StateConfig};

@@ -22,3 +22,6 @@ tracing-subscriber.workspace = true
 # Re-use protocol types from firecracker crate
 sidereal-firecracker.workspace = true
 sidereal-proto = { version = "0.1.0", path = "../sidereal-proto" }
+
+# State client for accessing KV/Queue/Lock from functions
+sidereal-state = { version = "0.1.0", path = "../sidereal-state", features = ["vsock"] }

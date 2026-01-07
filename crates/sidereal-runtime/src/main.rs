@@ -3,20 +3,25 @@
 //! This binary:
 //! 1. Mounts required filesystems (proc, sys, tmp)
 //! 2. Sets up signal handlers
-//! 3. Listens on vsock for requests from the host
-//! 4. Executes function invocations
-//! 5. Handles graceful shutdown
+//! 3. Connects to host state server (optional)
+//! 4. Listens on vsock for requests from the host
+//! 5. Executes function invocations
+//! 6. Handles graceful shutdown
 
 use sidereal_proto::codec::{Codec, FrameHeader, MessageType, FRAME_HEADER_SIZE, MAX_MESSAGE_SIZE};
 use sidereal_proto::ports::FUNCTION as VSOCK_PORT;
 use sidereal_proto::{ControlMessage, Envelope, FunctionMessage, InvokeRequest, InvokeResponse, ProtocolError};
+use sidereal_state::VsockStateClient;
 use std::io::ErrorKind;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
 mod filesystem;
 mod signals;
+
+/// Global state client for functions to access KV/Queue/Lock.
+static STATE_CLIENT: OnceLock<Arc<VsockStateClient>> = OnceLock::new();
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -33,10 +38,35 @@ async fn main() {
 
     signals::setup_signal_handlers();
 
+    // Try to connect to host state server (optional - may not be configured)
+    init_state_client().await;
+
     if let Err(e) = run_vsock_server().await {
         error!("vsock server error: {}", e);
         std::process::exit(1);
     }
+}
+
+/// Initialise connection to the host state server.
+///
+/// This is optional - if the state server isn't running, functions simply
+/// won't have access to state primitives.
+async fn init_state_client() {
+    match VsockStateClient::connect().await {
+        Ok(client) => {
+            info!("Connected to host state server");
+            let _ = STATE_CLIENT.set(Arc::new(client));
+        }
+        Err(e) => {
+            warn!(error = %e, "State server not available - functions will not have state access");
+        }
+    }
+}
+
+/// Get the state client if available.
+#[allow(dead_code)]
+pub fn state_client() -> Option<Arc<VsockStateClient>> {
+    STATE_CLIENT.get().cloned()
 }
 
 async fn run_vsock_server() -> Result<(), Box<dyn std::error::Error>> {

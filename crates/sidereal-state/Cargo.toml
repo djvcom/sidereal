@@ -27,6 +27,10 @@ deadpool-redis = { version = "0.18", optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono"], optional = true }
 chrono = { version = "0.4.42", optional = true }
 
+# Vsock adapter (optional) - for Firecracker guest communication
+tokio-vsock = { workspace = true, optional = true }
+sidereal-proto = { path = "../sidereal-proto", optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
@@ -35,6 +39,7 @@ default = ["memory"]
 memory = []
 valkey = ["redis", "deadpool-redis"]
 postgres = ["sqlx", "chrono"]
+vsock = ["tokio-vsock", "sidereal-proto"]
 config = ["figment"]
-full = ["memory", "valkey", "postgres", "config"]
+full = ["memory", "valkey", "postgres", "vsock", "config"]
 chrono = ["dep:chrono"]
