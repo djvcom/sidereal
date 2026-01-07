@@ -5,7 +5,8 @@
 //! a `CONNECT <port>\n` command, then receives `OK <port>\n` on success.
 
 use crate::error::{FirecrackerError, Result};
-use crate::protocol::{GuestRequest, GuestResponse};
+use sidereal_proto::codec::{Codec, FrameHeader, MessageType, FRAME_HEADER_SIZE, MAX_MESSAGE_SIZE};
+use sidereal_proto::{ControlMessage, Envelope, FunctionMessage, InvokeRequest, InvokeResponse, ProtocolError};
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -15,12 +16,17 @@ use tracing::debug;
 pub struct VsockClient {
     uds_path: PathBuf,
     port: u32,
+    codec: std::sync::Mutex<Codec>,
 }
 
 impl VsockClient {
     /// Create a new vsock client.
     pub fn new(uds_path: PathBuf, port: u32) -> Self {
-        Self { uds_path, port }
+        Self {
+            uds_path,
+            port,
+            codec: std::sync::Mutex::new(Codec::with_capacity(8192)),
+        }
     }
 
     /// Connect to the guest vsock using Firecracker's CONNECT protocol.
@@ -67,46 +73,114 @@ impl VsockClient {
         }
     }
 
-    /// Send a request and receive a response.
-    async fn request(&self, req: &GuestRequest) -> Result<GuestResponse> {
+    /// Send a function message and receive a response.
+    async fn function_request(&self, envelope: Envelope<FunctionMessage>) -> Result<Envelope<FunctionMessage>> {
         let mut stream = self.connect().await?;
 
-        let encoded = serde_json::to_vec(req)?;
-        let len = encoded.len() as u32;
+        // Encode the envelope
+        let bytes = {
+            let mut codec = self.codec.lock().unwrap();
+            codec.encode(&envelope, MessageType::Function)
+                .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))?
+                .to_vec()
+        };
 
-        stream.write_all(&len.to_be_bytes()).await?;
-        stream.write_all(&encoded).await?;
+        // Write frame
+        stream.write_all(&bytes).await?;
         stream.flush().await?;
 
-        let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf).await.map_err(|e| {
-            FirecrackerError::VsockError(format!("Failed to read response length: {}", e))
+        // Read response header
+        let mut header_buf = [0u8; FRAME_HEADER_SIZE];
+        stream.read_exact(&mut header_buf).await.map_err(|e| {
+            FirecrackerError::VsockError(format!("Failed to read response header: {}", e))
         })?;
-        let len = u32::from_be_bytes(len_buf) as usize;
 
-        if len > 10 * 1024 * 1024 {
+        let header = FrameHeader::decode(&header_buf)
+            .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))?;
+
+        if header.message_type != MessageType::Function {
+            return Err(FirecrackerError::ProtocolError(format!(
+                "Expected Function response, got {:?}",
+                header.message_type
+            )));
+        }
+
+        let len = header.payload_len as usize;
+        if len > MAX_MESSAGE_SIZE {
             return Err(FirecrackerError::ProtocolError(format!(
                 "Response too large: {} bytes",
                 len
             )));
         }
 
+        // Read payload
         let mut buf = vec![0u8; len];
         stream.read_exact(&mut buf).await.map_err(|e| {
             FirecrackerError::VsockError(format!("Failed to read response body: {}", e))
         })?;
 
-        serde_json::from_slice(&buf)
-            .map_err(|e| FirecrackerError::ProtocolError(format!("Invalid response JSON: {}", e)))
+        Codec::decode::<Envelope<FunctionMessage>>(&buf)
+            .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))
+    }
+
+    /// Send a control message and receive a response.
+    async fn control_request(&self, envelope: Envelope<ControlMessage>) -> Result<Envelope<ControlMessage>> {
+        let mut stream = self.connect().await?;
+
+        // Encode the envelope
+        let bytes = {
+            let mut codec = self.codec.lock().unwrap();
+            codec.encode(&envelope, MessageType::Control)
+                .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))?
+                .to_vec()
+        };
+
+        // Write frame
+        stream.write_all(&bytes).await?;
+        stream.flush().await?;
+
+        // Read response header
+        let mut header_buf = [0u8; FRAME_HEADER_SIZE];
+        stream.read_exact(&mut header_buf).await.map_err(|e| {
+            FirecrackerError::VsockError(format!("Failed to read response header: {}", e))
+        })?;
+
+        let header = FrameHeader::decode(&header_buf)
+            .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))?;
+
+        if header.message_type != MessageType::Control {
+            return Err(FirecrackerError::ProtocolError(format!(
+                "Expected Control response, got {:?}",
+                header.message_type
+            )));
+        }
+
+        let len = header.payload_len as usize;
+        if len > MAX_MESSAGE_SIZE {
+            return Err(FirecrackerError::ProtocolError(format!(
+                "Response too large: {} bytes",
+                len
+            )));
+        }
+
+        // Read payload
+        let mut buf = vec![0u8; len];
+        stream.read_exact(&mut buf).await.map_err(|e| {
+            FirecrackerError::VsockError(format!("Failed to read response body: {}", e))
+        })?;
+
+        Codec::decode::<Envelope<ControlMessage>>(&buf)
+            .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))
     }
 
     /// Ping the guest to check if it's ready.
     pub async fn ping(&self) -> Result<()> {
         debug!("Sending ping to guest");
-        let response = self.request(&GuestRequest::ping()).await?;
+        let envelope = Envelope::new(ControlMessage::Ping);
+        let response = self.control_request(envelope).await?;
 
-        match response {
-            GuestResponse::Pong => Ok(()),
+        match response.payload {
+            ControlMessage::Pong => Ok(()),
             other => Err(FirecrackerError::ProtocolError(format!(
                 "Unexpected response to ping: {:?}",
                 other
@@ -119,20 +193,32 @@ impl VsockClient {
         &self,
         function_name: &str,
         payload: Vec<u8>,
-        trace_id: &str,
-    ) -> Result<GuestResponse> {
-        debug!(function = %function_name, trace_id = %trace_id, "Invoking function");
-        self.request(&GuestRequest::invoke(function_name, payload, trace_id))
-            .await
+        metadata: Vec<(String, String)>,
+    ) -> Result<InvokeResponse> {
+        debug!(function = %function_name, "Invoking function");
+
+        let request = InvokeRequest::new(function_name, payload);
+        let mut envelope = Envelope::new(FunctionMessage::Invoke(request));
+        envelope.header.metadata = metadata;
+
+        let response = self.function_request(envelope).await?;
+
+        match response.payload {
+            FunctionMessage::Response(resp) => Ok(resp),
+            FunctionMessage::Invoke(_) => Err(FirecrackerError::ProtocolError(
+                "Got Invoke instead of Response".into(),
+            )),
+        }
     }
 
     /// Request graceful shutdown.
     pub async fn shutdown(&self) -> Result<()> {
         debug!("Sending shutdown request to guest");
-        let response = self.request(&GuestRequest::shutdown()).await?;
+        let envelope = Envelope::new(ControlMessage::Shutdown);
+        let response = self.control_request(envelope).await?;
 
-        match response {
-            GuestResponse::ShutdownAck => Ok(()),
+        match response.payload {
+            ControlMessage::ShutdownAck => Ok(()),
             other => Err(FirecrackerError::ProtocolError(format!(
                 "Unexpected response to shutdown: {:?}",
                 other

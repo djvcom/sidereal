@@ -7,8 +7,11 @@
 //! 4. Executes function invocations
 //! 5. Handles graceful shutdown
 
-use sidereal_firecracker::protocol::{GuestRequest, GuestResponse, VSOCK_PORT};
+use sidereal_proto::codec::{Codec, FrameHeader, MessageType, FRAME_HEADER_SIZE, MAX_MESSAGE_SIZE};
+use sidereal_proto::ports::FUNCTION as VSOCK_PORT;
+use sidereal_proto::{ControlMessage, Envelope, FunctionMessage, InvokeRequest, InvokeResponse, ProtocolError};
 use std::io::ErrorKind;
+use std::sync::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
@@ -68,9 +71,12 @@ async fn run_vsock_server() -> Result<(), Box<dyn std::error::Error>> {
 async fn handle_connection(
     mut stream: tokio_vsock::VsockStream,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let codec = Mutex::new(Codec::with_capacity(8192));
+
     loop {
-        let mut len_buf = [0u8; 4];
-        match stream.read_exact(&mut len_buf).await {
+        // Read frame header
+        let mut header_buf = [0u8; FRAME_HEADER_SIZE];
+        match stream.read_exact(&mut header_buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
                 debug!("Connection closed");
@@ -79,24 +85,57 @@ async fn handle_connection(
             Err(e) => return Err(e.into()),
         }
 
-        let len = u32::from_be_bytes(len_buf) as usize;
-        if len > 10 * 1024 * 1024 {
+        let header = FrameHeader::decode(&header_buf)?;
+
+        let len = header.payload_len as usize;
+        if len > MAX_MESSAGE_SIZE {
             return Err(format!("Request too large: {} bytes", len).into());
         }
 
+        // Read payload
         let mut buf = vec![0u8; len];
         stream.read_exact(&mut buf).await?;
 
-        let request: GuestRequest = serde_json::from_slice(&buf)?;
-        let response = handle_request(request).await;
+        // Process based on message type
+        let shutdown = match header.message_type {
+            MessageType::Function => {
+                let envelope: Envelope<FunctionMessage> = Codec::decode(&buf)?;
+                let response = handle_function_message(envelope).await;
 
-        let encoded = serde_json::to_vec(&response)?;
-        let len = encoded.len() as u32;
-        stream.write_all(&len.to_be_bytes()).await?;
-        stream.write_all(&encoded).await?;
-        stream.flush().await?;
+                // Encode and send response
+                let bytes = {
+                    let mut c = codec.lock().unwrap();
+                    c.encode(&response, MessageType::Function)
+                        .map_err(|e: ProtocolError| e.to_string())?
+                        .to_vec()
+                };
+                stream.write_all(&bytes).await?;
+                stream.flush().await?;
+                false
+            }
+            MessageType::Control => {
+                let envelope: Envelope<ControlMessage> = Codec::decode(&buf)?;
+                let (response, shutdown) = handle_control_message(envelope).await;
 
-        if matches!(response, GuestResponse::ShutdownAck) {
+                // Encode and send response
+                let bytes = {
+                    let mut c = codec.lock().unwrap();
+                    c.encode(&response, MessageType::Control)
+                        .map_err(|e: ProtocolError| e.to_string())?
+                        .to_vec()
+                };
+                stream.write_all(&bytes).await?;
+                stream.flush().await?;
+                shutdown
+            }
+            MessageType::State => {
+                // State messages not handled by runtime yet
+                warn!("Received unsupported State message");
+                false
+            }
+        };
+
+        if shutdown {
             info!("Shutdown acknowledged, exiting");
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             std::process::exit(0);
@@ -104,51 +143,72 @@ async fn handle_connection(
     }
 }
 
-async fn handle_request(request: GuestRequest) -> GuestResponse {
-    match request {
-        GuestRequest::Ping => {
-            debug!("Received ping");
-            GuestResponse::pong()
-        }
+async fn handle_function_message(envelope: Envelope<FunctionMessage>) -> Envelope<FunctionMessage> {
+    match envelope.payload {
+        FunctionMessage::Invoke(request) => {
+            info!(function = %request.function_name, "Invoking function");
 
-        GuestRequest::Invoke {
-            function_name,
-            payload,
-            trace_id,
-        } => {
-            info!(function = %function_name, trace_id = %trace_id, "Invoking function");
-
-            match invoke_function(&function_name, &payload).await {
-                Ok((status, body)) => {
-                    debug!(function = %function_name, status = status, "Function completed");
-                    GuestResponse::result(status, body, trace_id)
+            match invoke_function(&request).await {
+                Ok(response) => {
+                    debug!(function = %request.function_name, status = response.status, "Function completed");
+                    Envelope::response_to(&envelope.header, FunctionMessage::Response(response))
                 }
                 Err(e) => {
-                    error!(function = %function_name, error = %e, "Function failed");
-                    GuestResponse::error(e.to_string(), trace_id)
+                    error!(function = %request.function_name, error = %e, "Function failed");
+                    let response = InvokeResponse::error(e.to_string());
+                    Envelope::response_to(&envelope.header, FunctionMessage::Response(response))
                 }
             }
         }
+        FunctionMessage::Response(_) => {
+            warn!("Received unexpected Response message");
+            let response = InvokeResponse::bad_request("Unexpected Response message");
+            Envelope::response_to(&envelope.header, FunctionMessage::Response(response))
+        }
+    }
+}
 
-        GuestRequest::Shutdown => {
+async fn handle_control_message(envelope: Envelope<ControlMessage>) -> (Envelope<ControlMessage>, bool) {
+    match envelope.payload {
+        ControlMessage::Ping => {
+            debug!("Received ping");
+            (
+                Envelope::response_to(&envelope.header, ControlMessage::Pong),
+                false,
+            )
+        }
+        ControlMessage::Shutdown => {
             info!("Shutdown requested");
-            GuestResponse::shutdown_ack()
+            (
+                Envelope::response_to(&envelope.header, ControlMessage::ShutdownAck),
+                true,
+            )
+        }
+        ControlMessage::Pong | ControlMessage::ShutdownAck => {
+            warn!("Received unexpected control response");
+            (
+                Envelope::response_to(&envelope.header, ControlMessage::Pong),
+                false,
+            )
         }
     }
 }
 
 async fn invoke_function(
-    function_name: &str,
-    payload: &[u8],
-) -> Result<(u16, Vec<u8>), Box<dyn std::error::Error>> {
+    request: &InvokeRequest,
+) -> Result<InvokeResponse, Box<dyn std::error::Error>> {
     // TODO: Implement actual function invocation
     // For now, return a placeholder response
-    info!(function = %function_name, payload_len = payload.len(), "Function invocation (placeholder)");
+    info!(
+        function = %request.function_name,
+        payload_len = request.payload.len(),
+        "Function invocation (placeholder)"
+    );
 
     let response = serde_json::json!({
-        "message": format!("Function '{}' executed successfully (placeholder)", function_name),
-        "payload_received": payload.len()
+        "message": format!("Function '{}' executed successfully (placeholder)", request.function_name),
+        "payload_received": request.payload.len()
     });
 
-    Ok((200, serde_json::to_vec(&response)?))
+    Ok(InvokeResponse::ok(serde_json::to_vec(&response)?))
 }

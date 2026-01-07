@@ -22,3 +22,4 @@ hyper.workspace = true
 hyper-util.workspace = true
 hyperlocal.workspace = true
 http-body-util.workspace = true
+sidereal-proto = { version = "0.1.0", path = "../sidereal-proto" }

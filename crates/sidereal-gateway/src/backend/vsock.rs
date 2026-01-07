@@ -1,7 +1,7 @@
 //! vsock backend for proxying requests to Firecracker VMs.
 
 use async_trait::async_trait;
-use sidereal_firecracker::{FirecrackerError, GuestResponse, VsockClient};
+use sidereal_firecracker::{FirecrackerError, VsockClient};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -51,33 +51,31 @@ impl VsockBackend {
 impl WorkerBackend for VsockBackend {
     async fn dispatch(&self, req: DispatchRequest) -> Result<DispatchResponse, GatewayError> {
         let client = self.client();
+
+        // Build metadata from headers and trace ID
+        let mut metadata = Vec::new();
+        if !req.trace_id.is_empty() {
+            metadata.push(("x-trace-id".to_string(), req.trace_id.clone()));
+        }
+
         let response = timeout(
             self.timeout,
-            client.invoke(&req.function_name, req.payload, &req.trace_id),
+            client.invoke(&req.function_name, req.payload, metadata),
         )
         .await
         .map_err(|_| GatewayError::Timeout)?
         .map_err(firecracker_to_gateway_error)?;
 
-        match response {
-            GuestResponse::Result {
-                status,
-                body,
-                trace_id: _,
-            } => Ok(DispatchResponse {
-                status,
-                body,
-                headers: http::HeaderMap::new(),
-            }),
-            GuestResponse::Error { message, .. } => Err(GatewayError::BackendError(format!(
-                "Guest error: {}",
-                message
-            ))),
-            other => Err(GatewayError::BackendError(format!(
-                "Unexpected response type: {:?}",
-                other
-            ))),
+        // Check if the response indicates an error
+        if response.status >= 400 {
+            // Still return as a response, let the gateway handle error status codes
         }
+
+        Ok(DispatchResponse {
+            status: response.status,
+            body: response.body,
+            headers: convert_headers(&response.headers),
+        })
     }
 
     async fn health_check(&self) -> Result<(), GatewayError> {
@@ -87,6 +85,19 @@ impl WorkerBackend for VsockBackend {
             .map_err(|_| GatewayError::Timeout)?
             .map_err(firecracker_to_gateway_error)
     }
+}
+
+fn convert_headers(headers: &[(String, Vec<u8>)]) -> http::HeaderMap {
+    let mut map = http::HeaderMap::new();
+    for (name, value) in headers {
+        if let (Ok(header_name), Ok(header_value)) = (
+            http::header::HeaderName::from_bytes(name.as_bytes()),
+            http::header::HeaderValue::from_bytes(value),
+        ) {
+            map.insert(header_name, header_value);
+        }
+    }
+    map
 }
 
 fn firecracker_to_gateway_error(err: FirecrackerError) -> GatewayError {
@@ -113,5 +124,16 @@ mod tests {
         let backend =
             VsockBackend::new("/tmp/test.sock".into(), 1024).with_timeout(Duration::from_secs(60));
         assert_eq!(backend.timeout, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn converts_headers() {
+        let headers = vec![
+            ("content-type".to_string(), b"application/json".to_vec()),
+            ("x-custom".to_string(), b"value".to_vec()),
+        ];
+        let result = convert_headers(&headers);
+        assert_eq!(result.get("content-type").unwrap(), "application/json");
+        assert_eq!(result.get("x-custom").unwrap(), "value");
     }
 }

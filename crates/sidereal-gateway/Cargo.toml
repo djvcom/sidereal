@@ -62,10 +62,11 @@ jsonwebtoken = { version = "10.2.0", features = ["aws_lc_rs"] }
 # Metrics
 metrics = "0.24.3"
 metrics-exporter-prometheus = "0.18.1"
+sidereal-proto = { version = "0.1.0", path = "../sidereal-proto", optional = true }
 
 [features]
 default = []
-firecracker = ["dep:sidereal-firecracker"]
+firecracker = ["dep:sidereal-firecracker", "dep:sidereal-proto"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

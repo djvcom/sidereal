@@ -2,8 +2,8 @@
 
 use crate::config::{api, VmConfig};
 use crate::error::{FirecrackerError, Result};
-use crate::protocol::VSOCK_PORT;
 use crate::vsock::VsockClient;
+use sidereal_proto::ports::FUNCTION as VSOCK_PORT;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::{Method, Request};
