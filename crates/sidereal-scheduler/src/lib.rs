@@ -36,10 +36,14 @@ pub mod scaling;
 pub mod store;
 
 // Re-export main types
-pub use config::{HealthConfig, PlacementAlgorithmType, PlacementConfig, ScalingConfig, SchedulerConfig};
+pub use config::{
+    HealthConfig, PlacementAlgorithmType, PlacementConfig, ScalingConfig, SchedulerConfig,
+};
 pub use error::{Result, SchedulerError};
 pub use health::HealthTracker;
 pub use placement::{LeastLoaded, PlacementAlgorithm, PowerOfTwoChoices, RoundRobin};
 pub use registry::{WorkerCapacity, WorkerId, WorkerInfo, WorkerRegistry, WorkerStatus};
 pub use scaling::{ClusterMetrics, ScalingDecision, ScalingPolicy};
-pub use store::{PlacementChange, PlacementStore, ValkeyPlacementStore, WorkerAvailability, WorkerEndpoint};
+pub use store::{
+    PlacementChange, PlacementStore, ValkeyPlacementStore, WorkerAvailability, WorkerEndpoint,
+};

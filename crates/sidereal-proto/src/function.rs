@@ -192,7 +192,10 @@ mod tests {
             .with_header("Content-Type", b"application/json".to_vec());
 
         assert_eq!(req.http_method, Some("POST".to_string()));
-        assert_eq!(req.get_header("content-type"), Some(b"application/json".as_slice()));
+        assert_eq!(
+            req.get_header("content-type"),
+            Some(b"application/json".as_slice())
+        );
     }
 
     #[test]

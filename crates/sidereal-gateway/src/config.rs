@@ -153,6 +153,38 @@ pub enum RoutingConfig {
     Discovery {
         endpoint: String,
     },
+    Scheduler(SchedulerResolverConfig),
+}
+
+/// Configuration for the scheduler-based resolver.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SchedulerResolverConfig {
+    /// Valkey connection URL for reading placement data.
+    pub valkey_url: String,
+
+    /// Enable local cache for placement data.
+    #[serde(default = "default_true")]
+    pub enable_cache: bool,
+
+    /// Local cache TTL in seconds.
+    #[serde(default = "default_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+
+    /// Path to vsock UDS for Firecracker communication.
+    #[serde(default = "default_vsock_uds_path")]
+    pub vsock_uds_path: PathBuf,
+
+    /// Load balancing strategy for selecting among available workers.
+    #[serde(default)]
+    pub load_balance: LoadBalanceStrategyConfig,
+}
+
+fn default_cache_ttl_secs() -> u64 {
+    5
+}
+
+fn default_vsock_uds_path() -> PathBuf {
+    PathBuf::from("/var/run/firecracker/vsock")
 }
 
 /// Configuration for a function's backends.
@@ -573,7 +605,10 @@ mod tests {
 
         let config = GatewayConfig::parse(config_str).unwrap();
 
-        let rate_limit = config.middleware.rate_limit.expect("Rate limit should be configured");
+        let rate_limit = config
+            .middleware
+            .rate_limit
+            .expect("Rate limit should be configured");
         assert_eq!(rate_limit.requests_per_second, 100);
         assert_eq!(rate_limit.burst_size, 50);
     }
@@ -603,7 +638,10 @@ mod tests {
 
         let config = GatewayConfig::parse(config_str).unwrap();
 
-        let cb = config.middleware.circuit_breaker.expect("Circuit breaker should be configured");
+        let cb = config
+            .middleware
+            .circuit_breaker
+            .expect("Circuit breaker should be configured");
         assert_eq!(cb.failure_threshold, 10);
         assert_eq!(cb.success_threshold, 5);
         assert_eq!(cb.reset_timeout_ms, 60000);
@@ -620,7 +658,10 @@ mod tests {
 
         let config = GatewayConfig::parse(config_str).unwrap();
 
-        let cb = config.middleware.circuit_breaker.expect("Circuit breaker should be configured");
+        let cb = config
+            .middleware
+            .circuit_breaker
+            .expect("Circuit breaker should be configured");
         assert_eq!(cb.failure_threshold, 5);
         assert_eq!(cb.success_threshold, 3);
         assert_eq!(cb.reset_timeout_ms, 30000);
@@ -693,7 +734,9 @@ mod tests {
         let config = GatewayConfig::parse(config_str).unwrap();
         match config.routing {
             RoutingConfig::Static { functions, .. } => {
-                let func = functions.get("hello").expect("Function 'hello' should exist");
+                let func = functions
+                    .get("hello")
+                    .expect("Function 'hello' should exist");
                 assert_eq!(func.addresses.len(), 3);
             }
             _ => panic!("Expected static routing"),
@@ -714,9 +757,14 @@ mod tests {
 
         let config = GatewayConfig::parse(config_str).unwrap();
         match config.routing {
-            RoutingConfig::Static { functions, load_balance } => {
+            RoutingConfig::Static {
+                functions,
+                load_balance,
+            } => {
                 assert_eq!(load_balance, LoadBalanceStrategyConfig::RoundRobin);
-                let func = functions.get("hello").expect("Function 'hello' should exist");
+                let func = functions
+                    .get("hello")
+                    .expect("Function 'hello' should exist");
                 assert_eq!(func.load_balance, Some(LoadBalanceStrategyConfig::Random));
             }
             _ => panic!("Expected static routing"),
@@ -740,7 +788,10 @@ mod tests {
         let config = GatewayConfig::parse(config_str).unwrap();
         let tls = config.server.tls.expect("TLS should be configured");
         assert_eq!(tls.cert_path.to_str().unwrap(), "/etc/ssl/certs/server.crt");
-        assert_eq!(tls.key_path.to_str().unwrap(), "/etc/ssl/private/server.key");
+        assert_eq!(
+            tls.key_path.to_str().unwrap(),
+            "/etc/ssl/private/server.key"
+        );
     }
 
     #[test]
@@ -844,5 +895,62 @@ mod tests {
 
         let config = GatewayConfig::parse(config_str).unwrap();
         assert!(config.metrics.is_none());
+    }
+
+    #[test]
+    fn config_scheduler_routing() {
+        let config_str = r#"
+            [routing]
+            mode = "scheduler"
+            valkey_url = "redis://localhost:6379"
+            enable_cache = true
+            cache_ttl_secs = 10
+            vsock_uds_path = "/tmp/vsock"
+            load_balance = "random"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        match config.routing {
+            RoutingConfig::Scheduler(scheduler_config) => {
+                assert_eq!(scheduler_config.valkey_url, "redis://localhost:6379");
+                assert!(scheduler_config.enable_cache);
+                assert_eq!(scheduler_config.cache_ttl_secs, 10);
+                assert_eq!(
+                    scheduler_config.vsock_uds_path,
+                    std::path::PathBuf::from("/tmp/vsock")
+                );
+                assert_eq!(
+                    scheduler_config.load_balance,
+                    LoadBalanceStrategyConfig::Random
+                );
+            }
+            _ => panic!("Expected scheduler routing"),
+        }
+    }
+
+    #[test]
+    fn config_scheduler_routing_defaults() {
+        let config_str = r#"
+            [routing]
+            mode = "scheduler"
+            valkey_url = "redis://localhost:6379"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        match config.routing {
+            RoutingConfig::Scheduler(scheduler_config) => {
+                assert!(scheduler_config.enable_cache);
+                assert_eq!(scheduler_config.cache_ttl_secs, 5);
+                assert_eq!(
+                    scheduler_config.vsock_uds_path,
+                    std::path::PathBuf::from("/var/run/firecracker/vsock")
+                );
+                assert_eq!(
+                    scheduler_config.load_balance,
+                    LoadBalanceStrategyConfig::RoundRobin
+                );
+            }
+            _ => panic!("Expected scheduler routing"),
+        }
     }
 }

@@ -78,7 +78,10 @@ mod tests {
         carrier.set("traceparent", "00-abc-def-01".to_string());
 
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[0], ("traceparent".to_string(), "00-abc-def-01".to_string()));
+        assert_eq!(
+            metadata[0],
+            ("traceparent".to_string(), "00-abc-def-01".to_string())
+        );
     }
 
     #[test]

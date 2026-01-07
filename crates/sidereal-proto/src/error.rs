@@ -239,7 +239,10 @@ mod tests {
 
     #[test]
     fn error_code_display() {
-        assert_eq!(ErrorCode::FunctionNotFound.to_string(), "function_not_found");
+        assert_eq!(
+            ErrorCode::FunctionNotFound.to_string(),
+            "function_not_found"
+        );
         assert_eq!(StateErrorCode::Conflict.to_string(), "conflict");
     }
 }

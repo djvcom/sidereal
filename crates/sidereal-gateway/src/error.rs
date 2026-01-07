@@ -53,6 +53,15 @@ pub enum GatewayError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Service provisioning: {0}")]
+    ServiceProvisioning(String),
+
+    #[error("All workers unhealthy: {0}")]
+    AllWorkersUnhealthy(String),
+
+    #[error("Placement store error: {0}")]
+    PlacementStore(String),
 }
 
 impl GatewayError {
@@ -74,6 +83,9 @@ impl GatewayError {
             GatewayError::VsockError(_) => "vsock_error",
             GatewayError::ProtocolError(_) => "protocol_error",
             GatewayError::Io(_) => "io_error",
+            GatewayError::ServiceProvisioning(_) => "service_provisioning",
+            GatewayError::AllWorkersUnhealthy(_) => "all_workers_unhealthy",
+            GatewayError::PlacementStore(_) => "placement_store_error",
         }
     }
 
@@ -83,7 +95,9 @@ impl GatewayError {
             GatewayError::InvalidFunctionName(_) => StatusCode::BAD_REQUEST,
             GatewayError::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             GatewayError::Timeout => StatusCode::GATEWAY_TIMEOUT,
-            GatewayError::CircuitOpen => StatusCode::SERVICE_UNAVAILABLE,
+            GatewayError::CircuitOpen
+            | GatewayError::ServiceProvisioning(_)
+            | GatewayError::AllWorkersUnhealthy(_) => StatusCode::SERVICE_UNAVAILABLE,
             GatewayError::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             GatewayError::UriTooLong => StatusCode::URI_TOO_LONG,
             GatewayError::TooManyHeaders => StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
@@ -94,6 +108,7 @@ impl GatewayError {
             GatewayError::Config(_)
             | GatewayError::InvalidBackendUrl(_)
             | GatewayError::RequestBuildFailed(_)
+            | GatewayError::PlacementStore(_)
             | GatewayError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -116,6 +131,12 @@ impl IntoResponse for GatewayError {
             GatewayError::PayloadTooLarge => "Request body too large".to_string(),
             GatewayError::UriTooLong => "URI too long".to_string(),
             GatewayError::TooManyHeaders => "Too many request headers".to_string(),
+            GatewayError::ServiceProvisioning(func) => {
+                format!("Service provisioning: {}", func)
+            }
+            GatewayError::AllWorkersUnhealthy(func) => {
+                format!("All workers unhealthy for function: {}", func)
+            }
 
             // Hide internal details for security
             GatewayError::Config(_)
@@ -125,6 +146,7 @@ impl IntoResponse for GatewayError {
             | GatewayError::BackendError(_)
             | GatewayError::VsockError(_)
             | GatewayError::ProtocolError(_)
+            | GatewayError::PlacementStore(_)
             | GatewayError::Io(_) => "Internal server error".to_string(),
         };
 

@@ -35,7 +35,9 @@ impl HealthTracker {
 
         // If worker was unhealthy, check if it should become healthy again
         if entry.consecutive_successes >= self.config.healthy_threshold {
-            let _ = self.registry.update_status(worker_id, WorkerStatus::Healthy);
+            let _ = self
+                .registry
+                .update_status(worker_id, WorkerStatus::Healthy);
         }
         entry.consecutive_successes += 1;
     }
@@ -50,7 +52,9 @@ impl HealthTracker {
 
         // Check if worker should be marked unhealthy
         if entry.consecutive_failures >= self.config.unhealthy_threshold {
-            let _ = self.registry.update_status(worker_id, WorkerStatus::Unhealthy);
+            let _ = self
+                .registry
+                .update_status(worker_id, WorkerStatus::Unhealthy);
         }
     }
 
@@ -94,7 +98,10 @@ impl HealthTracker {
         for worker_id in self.registry.worker_ids() {
             let should_ping = match self.health_data.get(&worker_id) {
                 Some(health) => {
-                    let last_check = health.last_success.or(health.last_failure).unwrap_or(health.first_seen);
+                    let last_check = health
+                        .last_success
+                        .or(health.last_failure)
+                        .unwrap_or(health.first_seen);
                     now.duration_since(last_check) > interval
                 }
                 None => true,

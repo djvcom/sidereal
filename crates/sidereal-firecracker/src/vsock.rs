@@ -6,7 +6,9 @@
 
 use crate::error::{FirecrackerError, Result};
 use sidereal_proto::codec::{Codec, FrameHeader, MessageType, FRAME_HEADER_SIZE, MAX_MESSAGE_SIZE};
-use sidereal_proto::{ControlMessage, Envelope, FunctionMessage, InvokeRequest, InvokeResponse, ProtocolError};
+use sidereal_proto::{
+    ControlMessage, Envelope, FunctionMessage, InvokeRequest, InvokeResponse, ProtocolError,
+};
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -74,13 +76,17 @@ impl VsockClient {
     }
 
     /// Send a function message and receive a response.
-    async fn function_request(&self, envelope: Envelope<FunctionMessage>) -> Result<Envelope<FunctionMessage>> {
+    async fn function_request(
+        &self,
+        envelope: Envelope<FunctionMessage>,
+    ) -> Result<Envelope<FunctionMessage>> {
         let mut stream = self.connect().await?;
 
         // Encode the envelope
         let bytes = {
             let mut codec = self.codec.lock().unwrap();
-            codec.encode(&envelope, MessageType::Function)
+            codec
+                .encode(&envelope, MessageType::Function)
                 .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))?
                 .to_vec()
         };
@@ -124,13 +130,17 @@ impl VsockClient {
     }
 
     /// Send a control message and receive a response.
-    async fn control_request(&self, envelope: Envelope<ControlMessage>) -> Result<Envelope<ControlMessage>> {
+    async fn control_request(
+        &self,
+        envelope: Envelope<ControlMessage>,
+    ) -> Result<Envelope<ControlMessage>> {
         let mut stream = self.connect().await?;
 
         // Encode the envelope
         let bytes = {
             let mut codec = self.codec.lock().unwrap();
-            codec.encode(&envelope, MessageType::Control)
+            codec
+                .encode(&envelope, MessageType::Control)
                 .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))?
                 .to_vec()
         };

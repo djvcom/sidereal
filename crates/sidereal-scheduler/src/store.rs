@@ -128,7 +128,11 @@ impl PlacementStore for ValkeyPlacementStore {
                     return Ok(WorkerAvailability::NotFound);
                 }
 
-                let available: Vec<_> = endpoints.iter().filter(|e| e.is_available()).cloned().collect();
+                let available: Vec<_> = endpoints
+                    .iter()
+                    .filter(|e| e.is_available())
+                    .cloned()
+                    .collect();
                 let starting: Vec<_> = endpoints
                     .iter()
                     .filter(|e| e.status == WorkerStatus::Starting)
@@ -186,7 +190,8 @@ impl PlacementStore for ValkeyPlacementStore {
                 if endpoints.len() != original_len {
                     let new_json = serde_json::to_string(&endpoints)
                         .map_err(|e| SchedulerError::Serialisation(e.to_string()))?;
-                    conn.set_ex::<_, _, ()>(&key, &new_json, self.ttl_secs).await?;
+                    conn.set_ex::<_, _, ()>(&key, &new_json, self.ttl_secs)
+                        .await?;
                 }
             }
         }
@@ -248,7 +253,11 @@ impl PlacementStore for InMemoryPlacementStore {
                     return Ok(WorkerAvailability::NotFound);
                 }
 
-                let available: Vec<_> = endpoints.iter().filter(|e| e.is_available()).cloned().collect();
+                let available: Vec<_> = endpoints
+                    .iter()
+                    .filter(|e| e.is_available())
+                    .cloned()
+                    .collect();
                 let starting: Vec<_> = endpoints
                     .iter()
                     .filter(|e| e.status == WorkerStatus::Starting)

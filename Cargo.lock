@@ -2995,6 +2995,7 @@ dependencies = [
  "axum",
  "axum-server",
  "dashmap",
+ "deadpool-redis",
  "figment",
  "governor",
  "http",

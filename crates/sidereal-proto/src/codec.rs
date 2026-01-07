@@ -156,11 +156,12 @@ impl Codec {
     ) -> Result<&[u8], ProtocolError>
     where
         T: Archive,
-        crate::Envelope<T>: for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, RkyvError>>,
+        crate::Envelope<T>:
+            for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, RkyvError>>,
     {
         // Serialise envelope
-        let payload =
-            rkyv::to_bytes::<RkyvError>(envelope).map_err(|e| ProtocolError::Serialisation(e.to_string()))?;
+        let payload = rkyv::to_bytes::<RkyvError>(envelope)
+            .map_err(|e| ProtocolError::Serialisation(e.to_string()))?;
 
         // Validate size
         if payload.len() > MAX_MESSAGE_SIZE {
@@ -188,7 +189,8 @@ impl Codec {
         T::Archived: for<'a> CheckBytes<HighValidator<'a, RkyvError>>
             + Deserialize<T, HighDeserializer<RkyvError>>,
     {
-        rkyv::from_bytes::<T, RkyvError>(bytes).map_err(|e| ProtocolError::Deserialisation(e.to_string()))
+        rkyv::from_bytes::<T, RkyvError>(bytes)
+            .map_err(|e| ProtocolError::Deserialisation(e.to_string()))
     }
 
     /// Decodes an envelope from bytes without validation.

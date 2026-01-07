@@ -1,7 +1,9 @@
 //! Function resolution abstractions.
 
+mod scheduler_resolver;
 mod static_resolver;
 
+pub use scheduler_resolver::SchedulerResolver;
 pub use static_resolver::StaticResolver;
 
 use async_trait::async_trait;

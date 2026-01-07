@@ -22,7 +22,6 @@ pub struct SchedulerConfig {
     pub scaling: ScalingConfig,
 }
 
-
 /// HTTP API configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]

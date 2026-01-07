@@ -83,7 +83,10 @@ async fn handle_request(
 }
 
 /// Run a simple state server for testing.
-async fn run_test_server(listener: TcpListener, kv: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>) {
+async fn run_test_server(
+    listener: TcpListener,
+    kv: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>,
+) {
     while let Ok((mut stream, _)) = listener.accept().await {
         let kv = kv.clone();
         tokio::spawn(async move {

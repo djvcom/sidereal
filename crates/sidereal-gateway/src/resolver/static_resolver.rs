@@ -42,6 +42,11 @@ impl StaticResolver {
                     "Discovery routing not yet implemented".into(),
                 ));
             }
+            RoutingConfig::Scheduler(_) => {
+                return Err(GatewayError::Config(
+                    "Use SchedulerResolver for scheduler routing mode".into(),
+                ));
+            }
         };
 
         Ok(Self { functions })
@@ -50,10 +55,7 @@ impl StaticResolver {
     /// Create a resolver with a single HTTP function (for testing).
     pub fn single(name: impl Into<String>, url: impl Into<String>) -> Self {
         let mut functions = HashMap::new();
-        functions.insert(
-            name.into(),
-            vec![WorkerAddress::Http { url: url.into() }],
-        );
+        functions.insert(name.into(), vec![WorkerAddress::Http { url: url.into() }]);
         Self { functions }
     }
 

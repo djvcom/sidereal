@@ -63,6 +63,7 @@ jsonwebtoken = { version = "10.2.0", features = ["aws_lc_rs"] }
 metrics = "0.24.3"
 metrics-exporter-prometheus = "0.18.1"
 sidereal-proto = { version = "0.1.0", path = "../sidereal-proto", optional = true }
+deadpool-redis.workspace = true
 
 [features]
 default = []

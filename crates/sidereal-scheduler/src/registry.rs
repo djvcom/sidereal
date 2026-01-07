@@ -360,15 +360,24 @@ mod tests {
         registry.register(worker.clone()).unwrap();
         let result = registry.register(worker);
 
-        assert!(matches!(result, Err(SchedulerError::WorkerAlreadyRegistered(_))));
+        assert!(matches!(
+            result,
+            Err(SchedulerError::WorkerAlreadyRegistered(_))
+        ));
     }
 
     #[test]
     fn list_for_function() {
         let registry = WorkerRegistry::new();
-        registry.register(make_worker("worker-1", vec!["greet", "farewell"])).unwrap();
-        registry.register(make_worker("worker-2", vec!["greet"])).unwrap();
-        registry.register(make_worker("worker-3", vec!["other"])).unwrap();
+        registry
+            .register(make_worker("worker-1", vec!["greet", "farewell"]))
+            .unwrap();
+        registry
+            .register(make_worker("worker-2", vec!["greet"]))
+            .unwrap();
+        registry
+            .register(make_worker("worker-3", vec!["other"]))
+            .unwrap();
 
         let greet_workers = registry.list_for_function("greet");
         assert_eq!(greet_workers.len(), 2);
@@ -383,7 +392,9 @@ mod tests {
     #[test]
     fn deregister_removes_from_index() {
         let registry = WorkerRegistry::new();
-        registry.register(make_worker("worker-1", vec!["greet"])).unwrap();
+        registry
+            .register(make_worker("worker-1", vec!["greet"]))
+            .unwrap();
 
         assert_eq!(registry.list_for_function("greet").len(), 1);
 
@@ -396,9 +407,13 @@ mod tests {
     #[test]
     fn update_status() {
         let registry = WorkerRegistry::new();
-        registry.register(make_worker("worker-1", vec!["greet"])).unwrap();
+        registry
+            .register(make_worker("worker-1", vec!["greet"]))
+            .unwrap();
 
-        registry.update_status("worker-1", WorkerStatus::Draining).unwrap();
+        registry
+            .update_status("worker-1", WorkerStatus::Draining)
+            .unwrap();
 
         let worker = registry.get("worker-1").unwrap();
         assert_eq!(worker.status, WorkerStatus::Draining);

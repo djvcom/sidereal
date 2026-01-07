@@ -226,7 +226,10 @@ mod tests {
         // w1 (load=2) should be selected more than w0 (load=8)
         let w0_count = *counts.get("w0").unwrap_or(&0);
         let w1_count = *counts.get("w1").unwrap_or(&0);
-        assert!(w1_count > w0_count, "w1={w1_count} should be > w0={w0_count}");
+        assert!(
+            w1_count > w0_count,
+            "w1={w1_count} should be > w0={w0_count}"
+        );
     }
 
     #[test]

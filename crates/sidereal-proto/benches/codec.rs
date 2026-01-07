@@ -92,19 +92,15 @@ fn bench_encode_state(c: &mut Criterion) {
     // State response with various payload sizes
     for size in [64, 1024, 8192].iter() {
         group.throughput(Throughput::Bytes(*size as u64));
-        group.bench_with_input(
-            BenchmarkId::new("response", size),
-            size,
-            |b, &size| {
-                let mut codec = Codec::with_capacity(size + 1024);
-                let envelope = create_state_response(size);
+        group.bench_with_input(BenchmarkId::new("response", size), size, |b, &size| {
+            let mut codec = Codec::with_capacity(size + 1024);
+            let envelope = create_state_response(size);
 
-                b.iter(|| {
-                    let result = codec.encode(black_box(&envelope), MessageType::State);
-                    black_box(result.unwrap().len())
-                });
-            },
-        );
+            b.iter(|| {
+                let result = codec.encode(black_box(&envelope), MessageType::State);
+                black_box(result.unwrap().len())
+            });
+        });
     }
 
     group.finish();
@@ -117,7 +113,10 @@ fn bench_decode_state(c: &mut Criterion) {
     group.bench_function("request", |b| {
         let mut codec = Codec::with_capacity(1024);
         let envelope = create_state_request();
-        let bytes = codec.encode(&envelope, MessageType::State).unwrap().to_vec();
+        let bytes = codec
+            .encode(&envelope, MessageType::State)
+            .unwrap()
+            .to_vec();
         let payload = &bytes[8..];
 
         b.iter(|| {
@@ -129,21 +128,20 @@ fn bench_decode_state(c: &mut Criterion) {
     // State response with various payload sizes
     for size in [64, 1024, 8192].iter() {
         group.throughput(Throughput::Bytes(*size as u64));
-        group.bench_with_input(
-            BenchmarkId::new("response", size),
-            size,
-            |b, &size| {
-                let mut codec = Codec::with_capacity(size + 1024);
-                let envelope = create_state_response(size);
-                let bytes = codec.encode(&envelope, MessageType::State).unwrap().to_vec();
-                let payload = &bytes[8..];
+        group.bench_with_input(BenchmarkId::new("response", size), size, |b, &size| {
+            let mut codec = Codec::with_capacity(size + 1024);
+            let envelope = create_state_response(size);
+            let bytes = codec
+                .encode(&envelope, MessageType::State)
+                .unwrap()
+                .to_vec();
+            let payload = &bytes[8..];
 
-                b.iter(|| {
-                    let result: Envelope<StateMessage> = Codec::decode(black_box(payload)).unwrap();
-                    black_box(result)
-                });
-            },
-        );
+            b.iter(|| {
+                let result: Envelope<StateMessage> = Codec::decode(black_box(payload)).unwrap();
+                black_box(result)
+            });
+        });
     }
 
     group.finish();

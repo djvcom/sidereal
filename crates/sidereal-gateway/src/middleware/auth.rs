@@ -107,7 +107,10 @@ where
     }
 }
 
-fn validate_token(token: &str, config: &AuthConfig) -> Result<TokenData<Claims>, jsonwebtoken::errors::Error> {
+fn validate_token(
+    token: &str,
+    config: &AuthConfig,
+) -> Result<TokenData<Claims>, jsonwebtoken::errors::Error> {
     let algorithm = match config.algorithm {
         AuthAlgorithm::HS256 => jsonwebtoken::Algorithm::HS256,
         AuthAlgorithm::HS384 => jsonwebtoken::Algorithm::HS384,

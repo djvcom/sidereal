@@ -3,12 +3,12 @@
 use crate::config::{api, VmConfig};
 use crate::error::{FirecrackerError, Result};
 use crate::vsock::VsockClient;
-use sidereal_proto::ports::FUNCTION as VSOCK_PORT;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::{Method, Request};
 use hyper_util::client::legacy::Client;
 use hyperlocal::{UnixClientExt, UnixConnector, Uri};
+use sidereal_proto::ports::FUNCTION as VSOCK_PORT;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;

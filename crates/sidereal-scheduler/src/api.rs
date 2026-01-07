@@ -4,14 +4,14 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post, delete},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::Serialize;
 use std::sync::Arc;
 
-use crate::registry::{WorkerInfo, WorkerRegistry, WorkerStatus};
 use crate::health::HealthTracker;
+use crate::registry::{WorkerInfo, WorkerRegistry, WorkerStatus};
 use crate::scaling::{ClusterMetrics, ScalingPolicy};
 use crate::store::PlacementStore;
 
@@ -50,9 +50,21 @@ async fn health_check() -> impl IntoResponse {
 async fn readiness_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let worker_count = state.registry.len();
     if worker_count > 0 {
-        (StatusCode::OK, Json(ReadyResponse { ready: true, workers: worker_count }))
+        (
+            StatusCode::OK,
+            Json(ReadyResponse {
+                ready: true,
+                workers: worker_count,
+            }),
+        )
     } else {
-        (StatusCode::SERVICE_UNAVAILABLE, Json(ReadyResponse { ready: false, workers: 0 }))
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ReadyResponse {
+                ready: false,
+                workers: 0,
+            }),
+        )
     }
 }
 
@@ -109,7 +121,10 @@ async fn get_placement(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(PlacementResponse::from_availability(function, availability)))
+    Ok(Json(PlacementResponse::from_availability(
+        function,
+        availability,
+    )))
 }
 
 /// Metrics endpoint.
@@ -134,7 +149,10 @@ async fn metrics(State(state): State<Arc<AppState>>) -> String {
          # TYPE scheduler_utilisation gauge\n\
          scheduler_utilisation {:.4}\n",
         metrics.worker_count,
-        workers.iter().filter(|w| w.status == WorkerStatus::Healthy).count(),
+        workers
+            .iter()
+            .filter(|w| w.status == WorkerStatus::Healthy)
+            .count(),
         metrics.total_capacity,
         metrics.total_load,
         metrics.utilisation(),
@@ -272,7 +290,10 @@ mod tests {
 
     fn make_app_state() -> Arc<AppState> {
         let registry = Arc::new(WorkerRegistry::new());
-        let health_tracker = Arc::new(HealthTracker::new(HealthConfig::default(), registry.clone()));
+        let health_tracker = Arc::new(HealthTracker::new(
+            HealthConfig::default(),
+            registry.clone(),
+        ));
         let scaling_policy = Arc::new(ScalingPolicy::new(ScalingConfig::default()));
         let placement_store = Arc::new(InMemoryPlacementStore::new());
 
@@ -290,7 +311,12 @@ mod tests {
         let app = router(state);
 
         let response = app
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -303,7 +329,12 @@ mod tests {
         let app = router(state);
 
         let response = app
-            .oneshot(Request::builder().uri("/workers").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/workers")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 

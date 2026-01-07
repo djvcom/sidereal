@@ -10,7 +10,9 @@
 
 use sidereal_proto::codec::{Codec, FrameHeader, MessageType, FRAME_HEADER_SIZE, MAX_MESSAGE_SIZE};
 use sidereal_proto::ports::FUNCTION as VSOCK_PORT;
-use sidereal_proto::{ControlMessage, Envelope, FunctionMessage, InvokeRequest, InvokeResponse, ProtocolError};
+use sidereal_proto::{
+    ControlMessage, Envelope, FunctionMessage, InvokeRequest, InvokeResponse, ProtocolError,
+};
 use sidereal_state::VsockStateClient;
 use std::io::ErrorKind;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -203,7 +205,9 @@ async fn handle_function_message(envelope: Envelope<FunctionMessage>) -> Envelop
     }
 }
 
-async fn handle_control_message(envelope: Envelope<ControlMessage>) -> (Envelope<ControlMessage>, bool) {
+async fn handle_control_message(
+    envelope: Envelope<ControlMessage>,
+) -> (Envelope<ControlMessage>, bool) {
     match envelope.payload {
         ControlMessage::Ping => {
             debug!("Received ping");

@@ -51,7 +51,9 @@ mod types;
 mod propagation;
 
 // Re-export core types
-pub use codec::{Codec, FrameHeader, MessageType, CURRENT_VERSION, FRAME_HEADER_SIZE, MAX_MESSAGE_SIZE};
+pub use codec::{
+    Codec, FrameHeader, MessageType, CURRENT_VERSION, FRAME_HEADER_SIZE, MAX_MESSAGE_SIZE,
+};
 pub use control::ControlMessage;
 pub use envelope::{Envelope, EnvelopeHeader};
 pub use error::{ErrorCode, ProtocolError, StateErrorCode};

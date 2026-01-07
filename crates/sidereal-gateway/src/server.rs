@@ -21,7 +21,9 @@ use crate::error::GatewayError;
 use crate::middleware::{
     create_rate_limit_layer, AuthLayer, MetricsLayer, OtelTraceLayer, SecurityLayer,
 };
-use crate::resolver::{validate_function_name, FunctionResolver, StaticResolver};
+use crate::resolver::{
+    validate_function_name, FunctionResolver, SchedulerResolver, StaticResolver,
+};
 
 /// Shared gateway state.
 pub struct GatewayState {
@@ -55,6 +57,15 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
                 "Discovery routing not yet implemented".into(),
             ));
         }
+        RoutingConfig::Scheduler(scheduler_config) => {
+            tracing::info!(
+                valkey_url = %scheduler_config.valkey_url,
+                cache_enabled = scheduler_config.enable_cache,
+                cache_ttl_secs = scheduler_config.cache_ttl_secs,
+                "Using scheduler-based function resolution"
+            );
+            Arc::new(SchedulerResolver::from_config(scheduler_config).await?)
+        }
     };
 
     // Create backend registry
@@ -78,6 +89,10 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
             LoadBalanceStrategyConfig::Random => LoadBalanceStrategy::Random,
         },
         RoutingConfig::Discovery { .. } => LoadBalanceStrategy::RoundRobin,
+        RoutingConfig::Scheduler(scheduler_config) => match scheduler_config.load_balance {
+            LoadBalanceStrategyConfig::RoundRobin => LoadBalanceStrategy::RoundRobin,
+            LoadBalanceStrategyConfig::Random => LoadBalanceStrategy::Random,
+        },
     };
     let load_balancer = LoadBalancer::new(load_balance_strategy);
     tracing::info!(strategy = ?load_balance_strategy, "Load balancer configured");
@@ -140,9 +155,10 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
 
     if let Some(ref tls_config) = config.server.tls {
         // TLS enabled
-        let rustls_config = RustlsConfig::from_pem_file(&tls_config.cert_path, &tls_config.key_path)
-            .await
-            .map_err(|e| GatewayError::Config(format!("TLS configuration error: {}", e)))?;
+        let rustls_config =
+            RustlsConfig::from_pem_file(&tls_config.cert_path, &tls_config.key_path)
+                .await
+                .map_err(|e| GatewayError::Config(format!("TLS configuration error: {}", e)))?;
 
         tracing::info!(
             address = %addr,

@@ -10,18 +10,20 @@ use tokio::net::TcpListener;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use sidereal_scheduler::{
-    api, HealthTracker, PlacementAlgorithmType, PlacementStore, PowerOfTwoChoices,
-    RoundRobin, ScalingPolicy, SchedulerConfig, ValkeyPlacementStore, WorkerRegistry, LeastLoaded,
-    PlacementAlgorithm,
-};
 use sidereal_scheduler::store::InMemoryPlacementStore;
+use sidereal_scheduler::{
+    api, HealthTracker, LeastLoaded, PlacementAlgorithm, PlacementAlgorithmType, PlacementStore,
+    PowerOfTwoChoices, RoundRobin, ScalingPolicy, SchedulerConfig, ValkeyPlacementStore,
+    WorkerRegistry,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialise tracing
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("sidereal_scheduler=info".parse()?))
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive("sidereal_scheduler=info".parse()?),
+        )
         .init();
 
     info!("Sidereal scheduler starting");
@@ -51,7 +53,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         PlacementAlgorithmType::PowerOfTwo => Arc::new(PowerOfTwoChoices::new()),
         PlacementAlgorithmType::LeastLoaded => Arc::new(LeastLoaded::new()),
     };
-    info!(algorithm = placement_algorithm.name(), "Placement algorithm configured");
+    info!(
+        algorithm = placement_algorithm.name(),
+        "Placement algorithm configured"
+    );
 
     // Create scaling policy
     let scaling_policy = Arc::new(ScalingPolicy::new(config.scaling.clone()));
@@ -100,7 +105,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn try_connect_valkey(config: &SchedulerConfig) -> Result<ValkeyPlacementStore, Box<dyn std::error::Error>> {
+async fn try_connect_valkey(
+    config: &SchedulerConfig,
+) -> Result<ValkeyPlacementStore, Box<dyn std::error::Error>> {
     Ok(ValkeyPlacementStore::new(&config.valkey).await?)
 }
 

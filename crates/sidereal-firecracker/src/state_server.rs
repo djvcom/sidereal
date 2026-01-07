@@ -11,7 +11,9 @@ use sidereal_proto::codec::{Codec, FrameHeader, MessageType, FRAME_HEADER_SIZE, 
 use sidereal_proto::{
     Envelope, QueueMessageData, StateErrorCode, StateMessage, StateRequest, StateResponse,
 };
-use sidereal_state::{KvBackend, KvError, LockBackend, LockError, LockOps, QueueBackend, QueueError};
+use sidereal_state::{
+    KvBackend, KvError, LockBackend, LockError, LockOps, QueueBackend, QueueError,
+};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
@@ -48,11 +50,7 @@ impl StateBackends {
     }
 
     /// Set the lock backend.
-    pub fn with_lock(
-        mut self,
-        lock: Arc<dyn LockBackend>,
-        lock_ops: Arc<dyn LockOps>,
-    ) -> Self {
+    pub fn with_lock(mut self, lock: Arc<dyn LockBackend>, lock_ops: Arc<dyn LockOps>) -> Self {
         self.lock = Some(lock);
         self.lock_ops = Some(lock_ops);
         self
@@ -97,9 +95,8 @@ impl StateRequestHandler {
                 Err(e) => return Err(e),
             }
 
-            let header = FrameHeader::decode(&header_buf).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-            })?;
+            let header = FrameHeader::decode(&header_buf)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
             if header.message_type != MessageType::State {
                 warn!("Received non-state message type: {:?}", header.message_type);
@@ -117,9 +114,8 @@ impl StateRequestHandler {
             stream.read_exact(&mut buf).await?;
 
             // Decode envelope
-            let envelope: Envelope<StateMessage> = Codec::decode(&buf).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-            })?;
+            let envelope: Envelope<StateMessage> = Codec::decode(&buf)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
             // Handle request
             let response = match envelope.payload {
@@ -138,7 +134,9 @@ impl StateRequestHandler {
                 let mut codec = self.codec.lock().await;
                 codec
                     .encode(&response, MessageType::State)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })?
                     .to_vec()
             };
 
@@ -211,7 +209,10 @@ impl StateRequestHandler {
 
     async fn handle_kv_get(&self, key: &str) -> StateResponse {
         let Some(kv) = &self.backends.kv else {
-            return StateResponse::error(StateErrorCode::NotConfigured, "KV backend not configured");
+            return StateResponse::error(
+                StateErrorCode::NotConfigured,
+                "KV backend not configured",
+            );
         };
 
         match kv.get(key).await {
@@ -220,9 +221,17 @@ impl StateRequestHandler {
         }
     }
 
-    async fn handle_kv_put(&self, key: &str, value: Vec<u8>, ttl_secs: Option<u64>) -> StateResponse {
+    async fn handle_kv_put(
+        &self,
+        key: &str,
+        value: Vec<u8>,
+        ttl_secs: Option<u64>,
+    ) -> StateResponse {
         let Some(kv) = &self.backends.kv else {
-            return StateResponse::error(StateErrorCode::NotConfigured, "KV backend not configured");
+            return StateResponse::error(
+                StateErrorCode::NotConfigured,
+                "KV backend not configured",
+            );
         };
 
         let ttl = ttl_secs.map(Duration::from_secs);
@@ -234,7 +243,10 @@ impl StateRequestHandler {
 
     async fn handle_kv_delete(&self, key: &str) -> StateResponse {
         let Some(kv) = &self.backends.kv else {
-            return StateResponse::error(StateErrorCode::NotConfigured, "KV backend not configured");
+            return StateResponse::error(
+                StateErrorCode::NotConfigured,
+                "KV backend not configured",
+            );
         };
 
         match kv.delete(key).await {
@@ -245,7 +257,10 @@ impl StateRequestHandler {
 
     async fn handle_kv_exists(&self, key: &str) -> StateResponse {
         let Some(kv) = &self.backends.kv else {
-            return StateResponse::error(StateErrorCode::NotConfigured, "KV backend not configured");
+            return StateResponse::error(
+                StateErrorCode::NotConfigured,
+                "KV backend not configured",
+            );
         };
 
         match kv.exists(key).await {
@@ -261,7 +276,10 @@ impl StateRequestHandler {
         cursor: Option<&str>,
     ) -> StateResponse {
         let Some(kv) = &self.backends.kv else {
-            return StateResponse::error(StateErrorCode::NotConfigured, "KV backend not configured");
+            return StateResponse::error(
+                StateErrorCode::NotConfigured,
+                "KV backend not configured",
+            );
         };
 
         match kv.list(prefix, limit, cursor).await {
@@ -280,7 +298,10 @@ impl StateRequestHandler {
         new: Vec<u8>,
     ) -> StateResponse {
         let Some(kv) = &self.backends.kv else {
-            return StateResponse::error(StateErrorCode::NotConfigured, "KV backend not configured");
+            return StateResponse::error(
+                StateErrorCode::NotConfigured,
+                "KV backend not configured",
+            );
         };
 
         match kv.cas(key, expected.as_deref(), &new).await {
@@ -307,7 +328,11 @@ impl StateRequestHandler {
         }
     }
 
-    async fn handle_queue_receive(&self, queue: &str, visibility_timeout_secs: u64) -> StateResponse {
+    async fn handle_queue_receive(
+        &self,
+        queue: &str,
+        visibility_timeout_secs: u64,
+    ) -> StateResponse {
         let Some(q) = &self.backends.queue else {
             return StateResponse::error(
                 StateErrorCode::NotConfigured,
@@ -417,7 +442,12 @@ impl StateRequestHandler {
         }
     }
 
-    async fn handle_lock_refresh(&self, resource: &str, token: &str, ttl_secs: u64) -> StateResponse {
+    async fn handle_lock_refresh(
+        &self,
+        resource: &str,
+        token: &str,
+        ttl_secs: u64,
+    ) -> StateResponse {
         let Some(lock_ops) = &self.backends.lock_ops else {
             return StateResponse::error(
                 StateErrorCode::NotConfigured,

@@ -30,13 +30,17 @@ impl ScalingPolicy {
         // Check cooldowns
         if let Some(last) = *self.last_scale_up.read() {
             if now.duration_since(last) < self.config.scale_up_cooldown {
-                return ScalingDecision::NoChange { reason: "scale-up cooldown active" };
+                return ScalingDecision::NoChange {
+                    reason: "scale-up cooldown active",
+                };
             }
         }
 
         if let Some(last) = *self.last_scale_down.read() {
             if now.duration_since(last) < self.config.scale_down_cooldown {
-                return ScalingDecision::NoChange { reason: "scale-down cooldown active" };
+                return ScalingDecision::NoChange {
+                    reason: "scale-down cooldown active",
+                };
             }
         }
 
@@ -51,10 +55,13 @@ impl ScalingPolicy {
         // Check if we need to scale up
         if utilisation > self.config.scale_up_threshold {
             if metrics.worker_count >= self.config.max_workers {
-                return ScalingDecision::NoChange { reason: "already at max workers" };
+                return ScalingDecision::NoChange {
+                    reason: "already at max workers",
+                };
             }
 
-            let target_capacity = (metrics.total_load as f64 / self.config.target_utilisation).ceil() as u32;
+            let target_capacity =
+                (metrics.total_load as f64 / self.config.target_utilisation).ceil() as u32;
             let needed_additional = target_capacity.saturating_sub(metrics.total_capacity);
 
             // Estimate workers needed (assuming average capacity)
@@ -73,7 +80,10 @@ impl ScalingPolicy {
                 *self.last_scale_up.write() = Some(now);
                 return ScalingDecision::ScaleUp {
                     count: to_add,
-                    reason: format!("utilisation {utilisation:.2} > threshold {}", self.config.scale_up_threshold),
+                    reason: format!(
+                        "utilisation {utilisation:.2} > threshold {}",
+                        self.config.scale_up_threshold
+                    ),
                 };
             }
         }
@@ -81,7 +91,9 @@ impl ScalingPolicy {
         // Check if we can scale down
         if utilisation < self.config.scale_down_threshold {
             if metrics.worker_count <= self.config.min_workers {
-                return ScalingDecision::NoChange { reason: "already at min workers" };
+                return ScalingDecision::NoChange {
+                    reason: "already at min workers",
+                };
             }
 
             let to_remove = self
@@ -93,12 +105,17 @@ impl ScalingPolicy {
                 *self.last_scale_down.write() = Some(now);
                 return ScalingDecision::ScaleDown {
                     count: to_remove,
-                    reason: format!("utilisation {utilisation:.2} < threshold {}", self.config.scale_down_threshold),
+                    reason: format!(
+                        "utilisation {utilisation:.2} < threshold {}",
+                        self.config.scale_down_threshold
+                    ),
                 };
             }
         }
 
-        ScalingDecision::NoChange { reason: "utilisation within thresholds" }
+        ScalingDecision::NoChange {
+            reason: "utilisation within thresholds",
+        }
     }
 
     /// Resets cooldowns (for testing).

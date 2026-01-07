@@ -220,7 +220,10 @@ impl Default for MetricsServer {
 pub fn spawn_metrics_server(
     config: MetricsConfig,
     cancel: CancellationToken,
-) -> (PrometheusHandle, tokio::task::JoinHandle<Result<(), GatewayError>>) {
+) -> (
+    PrometheusHandle,
+    tokio::task::JoinHandle<Result<(), GatewayError>>,
+) {
     let server = MetricsServer::new();
     let handle = server.handle();
 

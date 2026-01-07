@@ -276,8 +276,8 @@ impl QueueBackend for VsockStateClient {
         match response {
             StateResponse::QueueMessage(None) => Ok(None),
             StateResponse::QueueMessage(Some(data)) => {
-                let enqueued_at = std::time::UNIX_EPOCH
-                    + std::time::Duration::from_nanos(data.enqueued_at_ns);
+                let enqueued_at =
+                    std::time::UNIX_EPOCH + std::time::Duration::from_nanos(data.enqueued_at_ns);
 
                 Ok(Some(Message {
                     id: MessageId::new(data.id),

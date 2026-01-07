@@ -8,8 +8,7 @@ use tower_governor::GovernorLayer;
 use crate::config::RateLimitConfig;
 
 /// The rate limit layer type used by the gateway.
-pub type RateLimitLayer =
-    GovernorLayer<SmartIpKeyExtractor, NoOpMiddleware, axum::body::Body>;
+pub type RateLimitLayer = GovernorLayer<SmartIpKeyExtractor, NoOpMiddleware, axum::body::Body>;
 
 /// Create a rate limiting layer from configuration.
 ///
