@@ -42,6 +42,35 @@ pub struct GatewayConfig {
 
     #[serde(default)]
     pub limits: LimitsConfig,
+
+    #[serde(default)]
+    pub metrics: Option<MetricsConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MetricsConfig {
+    #[serde(default = "default_metrics_bind_address")]
+    pub bind_address: SocketAddr,
+
+    #[serde(default = "default_metrics_path")]
+    pub path: String,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            bind_address: default_metrics_bind_address(),
+            path: default_metrics_path(),
+        }
+    }
+}
+
+fn default_metrics_bind_address() -> SocketAddr {
+    "127.0.0.1:9090".parse().unwrap()
+}
+
+fn default_metrics_path() -> String {
+    "/metrics".to_string()
 }
 
 impl GatewayConfig {
@@ -81,6 +110,9 @@ pub struct ServerConfig {
         deserialize_with = "deserialize_duration"
     )]
     pub shutdown_timeout: Duration,
+
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
 }
 
 impl Default for ServerConfig {
@@ -88,8 +120,15 @@ impl Default for ServerConfig {
         Self {
             bind_address: default_bind_address(),
             shutdown_timeout: default_shutdown_timeout(),
+            tls: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TlsConfig {
+    pub cert_path: PathBuf,
+    pub key_path: PathBuf,
 }
 
 fn default_bind_address() -> SocketAddr {
@@ -155,6 +194,36 @@ pub struct MiddlewareConfig {
 
     #[serde(default)]
     pub circuit_breaker: Option<CircuitBreakerConfig>,
+
+    #[serde(default)]
+    pub auth: Option<AuthConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthConfig {
+    pub secret: String,
+
+    #[serde(default = "default_auth_algorithm")]
+    pub algorithm: AuthAlgorithm,
+
+    #[serde(default)]
+    pub issuer: Option<String>,
+
+    #[serde(default)]
+    pub audience: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum AuthAlgorithm {
+    #[default]
+    HS256,
+    HS384,
+    HS512,
+}
+
+fn default_auth_algorithm() -> AuthAlgorithm {
+    AuthAlgorithm::HS256
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -652,5 +721,128 @@ mod tests {
             }
             _ => panic!("Expected static routing"),
         }
+    }
+
+    #[test]
+    fn config_tls() {
+        let config_str = r#"
+            [server]
+            bind_address = "0.0.0.0:8443"
+
+            [server.tls]
+            cert_path = "/etc/ssl/certs/server.crt"
+            key_path = "/etc/ssl/private/server.key"
+
+            [routing]
+            mode = "static"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        let tls = config.server.tls.expect("TLS should be configured");
+        assert_eq!(tls.cert_path.to_str().unwrap(), "/etc/ssl/certs/server.crt");
+        assert_eq!(tls.key_path.to_str().unwrap(), "/etc/ssl/private/server.key");
+    }
+
+    #[test]
+    fn config_tls_disabled_by_default() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        assert!(config.server.tls.is_none());
+    }
+
+    #[test]
+    fn config_auth() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+
+            [middleware.auth]
+            secret = "my-secret-key"
+            algorithm = "HS384"
+            issuer = "my-issuer"
+            audience = "my-audience"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        let auth = config.middleware.auth.expect("Auth should be configured");
+        assert_eq!(auth.secret, "my-secret-key");
+        assert_eq!(auth.algorithm, AuthAlgorithm::HS384);
+        assert_eq!(auth.issuer.as_deref(), Some("my-issuer"));
+        assert_eq!(auth.audience.as_deref(), Some("my-audience"));
+    }
+
+    #[test]
+    fn config_auth_defaults() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+
+            [middleware.auth]
+            secret = "test-secret"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        let auth = config.middleware.auth.expect("Auth should be configured");
+        assert_eq!(auth.algorithm, AuthAlgorithm::HS256);
+        assert!(auth.issuer.is_none());
+        assert!(auth.audience.is_none());
+    }
+
+    #[test]
+    fn config_auth_disabled_by_default() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        assert!(config.middleware.auth.is_none());
+    }
+
+    #[test]
+    fn config_metrics() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+
+            [metrics]
+            bind_address = "0.0.0.0:9090"
+            path = "/prom/metrics"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        let metrics = config.metrics.expect("Metrics should be configured");
+        assert_eq!(metrics.bind_address, "0.0.0.0:9090".parse().unwrap());
+        assert_eq!(metrics.path, "/prom/metrics");
+    }
+
+    #[test]
+    fn config_metrics_defaults() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+
+            [metrics]
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        let metrics = config.metrics.expect("Metrics should be configured");
+        assert_eq!(metrics.bind_address, "127.0.0.1:9090".parse().unwrap());
+        assert_eq!(metrics.path, "/metrics");
+    }
+
+    #[test]
+    fn config_metrics_disabled_by_default() {
+        let config_str = r#"
+            [routing]
+            mode = "static"
+        "#;
+
+        let config = GatewayConfig::parse(config_str).unwrap();
+        assert!(config.metrics.is_none());
     }
 }

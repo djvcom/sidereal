@@ -52,6 +52,17 @@ uuid.workspace = true
 sidereal-firecracker = { workspace = true, optional = true }
 governor = "0.10.4"
 
+# TLS
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+rustls-pemfile = "2.2.0"
+
+# Authentication
+jsonwebtoken = { version = "10.2.0", features = ["aws_lc_rs"] }
+
+# Metrics
+metrics = "0.24.3"
+metrics-exporter-prometheus = "0.18.1"
+
 [features]
 default = []
 firecracker = ["dep:sidereal-firecracker"]

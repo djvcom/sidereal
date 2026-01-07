@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use axum_server::tls_rustls::RustlsConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -17,7 +18,9 @@ use crate::backend::{
 };
 use crate::config::{GatewayConfig, LoadBalanceStrategyConfig, RoutingConfig};
 use crate::error::GatewayError;
-use crate::middleware::{create_rate_limit_layer, OtelTraceLayer, SecurityLayer};
+use crate::middleware::{
+    create_rate_limit_layer, AuthLayer, MetricsLayer, OtelTraceLayer, SecurityLayer,
+};
 use crate::resolver::{validate_function_name, FunctionResolver, StaticResolver};
 
 /// Shared gateway state.
@@ -87,44 +90,91 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         load_balancer,
     });
 
-    // Build base router
-    let base_router = Router::new()
+    // Spawn metrics server if configured
+    let _metrics_handle = if let Some(ref metrics_config) = config.metrics {
+        let (handle, _task) = crate::middleware::metrics::spawn_metrics_server(
+            metrics_config.clone(),
+            cancel.clone(),
+        );
+        tracing::info!(
+            address = %metrics_config.bind_address,
+            path = %metrics_config.path,
+            "Metrics server enabled"
+        );
+        Some(handle)
+    } else {
+        None
+    };
+
+    // Build base router with middleware stack
+    let mut router = Router::new()
         .route("/health", get(health_check))
         .route("/ready", get(readiness_check))
         .route("/{function}", post(handle_function))
         .route("/{function}/*path", post(handle_function_with_path))
+        .layer(MetricsLayer::new())
         .layer(OtelTraceLayer::new())
         .layer(SecurityLayer::new())
         .with_state(state);
 
-    // Bind and serve
-    let addr = config.server.bind_address;
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(GatewayError::Io)?;
+    // Apply auth middleware if configured
+    if let Some(ref auth_config) = config.middleware.auth {
+        tracing::info!(algorithm = ?auth_config.algorithm, "JWT authentication enabled");
+        router = router.layer(AuthLayer::new(auth_config));
+    }
 
-    // Apply rate limiting if configured, then serve
-    // Note: into_make_service_with_connect_info is required for IP-based rate limiting
-    if let Some(rate_limit_config) = &config.middleware.rate_limit {
+    // Apply rate limiting if configured
+    let app = if let Some(ref rate_limit_config) = config.middleware.rate_limit {
         tracing::info!(
             requests_per_second = rate_limit_config.requests_per_second,
             burst_size = rate_limit_config.burst_size,
             "Rate limiting enabled"
         );
-        let app = base_router.layer(create_rate_limit_layer(rate_limit_config));
+        router.layer(create_rate_limit_layer(rate_limit_config))
+    } else {
+        router
+    };
+
+    // Serve with or without TLS
+    let addr = config.server.bind_address;
+
+    if let Some(ref tls_config) = config.server.tls {
+        // TLS enabled
+        let rustls_config = RustlsConfig::from_pem_file(&tls_config.cert_path, &tls_config.key_path)
+            .await
+            .map_err(|e| GatewayError::Config(format!("TLS configuration error: {}", e)))?;
+
+        tracing::info!(
+            address = %addr,
+            cert = %tls_config.cert_path.display(),
+            "Gateway listening (TLS enabled)"
+        );
+
+        // Use Handle for graceful shutdown with axum-server
+        let handle = axum_server::Handle::new();
+        let shutdown_handle = handle.clone();
+
+        tokio::spawn(async move {
+            cancel.cancelled().await;
+            shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
+        });
+
+        axum_server::bind_rustls(addr, rustls_config)
+            .handle(handle)
+            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+            .await
+            .map_err(GatewayError::Io)?;
+    } else {
+        // Plain HTTP
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .map_err(GatewayError::Io)?;
+
         tracing::info!(address = %addr, "Gateway listening");
+
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(async move { cancel.cancelled().await })
-        .await
-        .map_err(GatewayError::Io)?;
-    } else {
-        tracing::info!(address = %addr, "Gateway listening (rate limiting disabled)");
-        axum::serve(
-            listener,
-            base_router.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(async move { cancel.cancelled().await })
         .await
@@ -305,6 +355,7 @@ mod tests {
             },
             middleware: Default::default(),
             limits: Default::default(),
+            metrics: None,
         }
     }
 
