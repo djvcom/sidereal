@@ -43,6 +43,7 @@ impl PlacementCache {
         }
     }
 
+    #[allow(clippy::option_option)]
     fn get(&self, function: &str) -> Option<Option<FunctionInfo>> {
         self.entries.get(function).and_then(|entry| {
             if entry.cached_at.elapsed() < self.ttl {
@@ -55,7 +56,7 @@ impl PlacementCache {
 
     fn set(&self, function: &str, info: Option<FunctionInfo>) {
         self.entries.insert(
-            function.to_string(),
+            function.to_owned(),
             CacheEntry {
                 info,
                 cached_at: Instant::now(),
@@ -76,8 +77,8 @@ pub enum WorkerStatus {
 }
 
 impl WorkerStatus {
-    fn is_available(self) -> bool {
-        matches!(self, WorkerStatus::Healthy | WorkerStatus::Degraded)
+    const fn is_available(self) -> bool {
+        matches!(self, Self::Healthy | Self::Degraded)
     }
 }
 
@@ -97,18 +98,18 @@ impl SchedulerResolver {
         let cfg = Config::from_url(&config.valkey_url);
         let pool = cfg
             .create_pool(Some(Runtime::Tokio1))
-            .map_err(|e| GatewayError::Config(format!("Failed to create Valkey pool: {}", e)))?;
+            .map_err(|e| GatewayError::Config(format!("Failed to create Valkey pool: {e}")))?;
 
         // Test connection
         let mut conn = pool
             .get()
             .await
-            .map_err(|e| GatewayError::Config(format!("Failed to connect to Valkey: {}", e)))?;
+            .map_err(|e| GatewayError::Config(format!("Failed to connect to Valkey: {e}")))?;
 
         let _: String = deadpool_redis::redis::cmd("PING")
             .query_async(&mut conn)
             .await
-            .map_err(|e| GatewayError::Config(format!("Valkey ping failed: {}", e)))?;
+            .map_err(|e| GatewayError::Config(format!("Valkey ping failed: {e}")))?;
 
         let cache = if config.enable_cache {
             Some(PlacementCache::new(config.cache_ttl_secs))
@@ -118,7 +119,7 @@ impl SchedulerResolver {
 
         Ok(Self {
             pool,
-            key_prefix: "sidereal:placement:".to_string(),
+            key_prefix: "sidereal:placement:".to_owned(),
             vsock_uds_path: config.vsock_uds_path.clone(),
             cache,
         })
@@ -161,49 +162,43 @@ impl SchedulerResolver {
             .pool
             .get()
             .await
-            .map_err(|e| GatewayError::PlacementStore(format!("Connection failed: {}", e)))?;
+            .map_err(|e| GatewayError::PlacementStore(format!("Connection failed: {e}")))?;
 
         let key = self.placement_key(function);
         let data: Option<String> = conn
             .get(&key)
             .await
-            .map_err(|e| GatewayError::PlacementStore(format!("Get failed: {}", e)))?;
+            .map_err(|e| GatewayError::PlacementStore(format!("Get failed: {e}")))?;
 
         match data {
             None => Ok(None),
             Some(json) => {
                 let endpoints: Vec<WorkerEndpoint> = serde_json::from_str(&json).map_err(|e| {
-                    GatewayError::PlacementStore(format!("Failed to parse placement: {}", e))
+                    GatewayError::PlacementStore(format!("Failed to parse placement: {e}"))
                 })?;
 
                 if endpoints.is_empty() {
                     return Ok(None);
                 }
 
-                let available: Vec<_> = endpoints
-                    .iter()
-                    .filter(|e| e.status.is_available())
-                    .collect();
+                let has_available = endpoints.iter().any(|e| e.status.is_available());
+                let has_starting = endpoints.iter().any(|e| e.status == WorkerStatus::Starting);
 
-                let starting: Vec<_> = endpoints
-                    .iter()
-                    .filter(|e| e.status == WorkerStatus::Starting)
-                    .collect();
-
-                if !available.is_empty() {
-                    let addresses = available
-                        .into_iter()
+                if has_available {
+                    let addresses = endpoints
+                        .iter()
+                        .filter(|e| e.status.is_available())
                         .map(|e| self.endpoint_to_address(e))
                         .collect();
 
                     Ok(Some(FunctionInfo {
-                        name: function.to_string(),
+                        name: function.to_owned(),
                         backend_addresses: addresses,
                     }))
-                } else if !starting.is_empty() {
-                    Err(GatewayError::ServiceProvisioning(function.to_string()))
+                } else if has_starting {
+                    Err(GatewayError::ServiceProvisioning(function.to_owned()))
                 } else {
-                    Err(GatewayError::AllWorkersUnhealthy(function.to_string()))
+                    Err(GatewayError::AllWorkersUnhealthy(function.to_owned()))
                 }
             }
         }
@@ -237,7 +232,7 @@ impl FunctionResolver for SchedulerResolver {
             .pool
             .get()
             .await
-            .map_err(|e| GatewayError::PlacementStore(format!("Connection failed: {}", e)))?;
+            .map_err(|e| GatewayError::PlacementStore(format!("Connection failed: {e}")))?;
 
         let pattern = self.all_placements_pattern();
 
@@ -245,7 +240,7 @@ impl FunctionResolver for SchedulerResolver {
             .arg(&pattern)
             .query_async(&mut conn)
             .await
-            .map_err(|e| GatewayError::PlacementStore(format!("Keys scan failed: {}", e)))?;
+            .map_err(|e| GatewayError::PlacementStore(format!("Keys scan failed: {e}")))?;
 
         let mut functions = Vec::new();
         let prefix_len = self.key_prefix.len();

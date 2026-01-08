@@ -26,3 +26,6 @@ opentelemetry-configuration.workspace = true
 
 # Internal crates
 sidereal-firecracker.workspace = true
+
+[lints]
+workspace = true

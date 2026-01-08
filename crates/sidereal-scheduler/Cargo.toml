@@ -53,3 +53,6 @@ tokio-test = "0.4"
 
 [features]
 default = []
+
+[lints]
+workspace = true

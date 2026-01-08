@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 /// Configuration for a Firecracker microVM.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct VmConfig {
     /// Path to the kernel image (vmlinux).
     pub kernel_path: PathBuf,
@@ -33,7 +34,7 @@ impl Default for VmConfig {
             vcpu_count: 1,
             mem_size_mib: 128,
             vsock_cid: 3, // Guest CID starts at 3 (0=hypervisor, 1=local, 2=host)
-            boot_args: "console=ttyS0 reboot=k panic=1 pci=off".to_string(),
+            boot_args: "console=ttyS0 reboot=k panic=1 pci=off".to_owned(),
         }
     }
 }
@@ -47,17 +48,17 @@ impl VmConfig {
         }
     }
 
-    pub fn with_vcpus(mut self, count: u8) -> Self {
+    pub const fn with_vcpus(mut self, count: u8) -> Self {
         self.vcpu_count = count;
         self
     }
 
-    pub fn with_memory(mut self, mib: u32) -> Self {
+    pub const fn with_memory(mut self, mib: u32) -> Self {
         self.mem_size_mib = mib;
         self
     }
 
-    pub fn with_cid(mut self, cid: u32) -> Self {
+    pub const fn with_cid(mut self, cid: u32) -> Self {
         self.vsock_cid = cid;
         self
     }
@@ -70,7 +71,7 @@ impl VmConfig {
 
 /// Firecracker API request types for VM configuration.
 pub mod api {
-    use super::*;
+    use super::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize)]
     pub struct BootSource {

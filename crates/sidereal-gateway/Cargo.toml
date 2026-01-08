@@ -71,3 +71,6 @@ firecracker = ["dep:sidereal-firecracker", "dep:sidereal-proto"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

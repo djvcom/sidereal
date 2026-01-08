@@ -123,7 +123,7 @@ impl opentelemetry_configuration::opentelemetry::propagation::Extractor for Head
     }
 
     fn keys(&self) -> Vec<&str> {
-        self.0.keys().map(|k| k.as_str()).collect()
+        self.0.keys().map(http::HeaderName::as_str).collect()
     }
 }
 

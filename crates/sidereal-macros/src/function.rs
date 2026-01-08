@@ -30,15 +30,12 @@ pub fn expand(_attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
     // Extract parameters - first is trigger, rest are extractors
     let inputs = &sig.inputs;
-    if inputs.is_empty() {
+    let Some(trigger_arg) = inputs.first() else {
         return Err(Error::new_spanned(
             inputs,
             "sidereal_sdk::function must have at least one parameter (the trigger type)",
         ));
-    }
-
-    // First parameter is the trigger type
-    let trigger_arg = inputs.first().unwrap();
+    };
     let (trigger_pat, trigger_ty) = extract_typed_arg(trigger_arg)?;
 
     // Detect the trigger kind and extract inner type
@@ -262,8 +259,7 @@ fn detect_trigger_type(ty: &Type) -> Result<(DetectedTrigger, TokenStream)> {
                     return Err(Error::new_spanned(
                         ty,
                         format!(
-                            "Unknown trigger type '{}'. Expected HttpRequest<T> or QueueMessage<T>",
-                            other
+                            "Unknown trigger type '{other}'. Expected HttpRequest<T> or QueueMessage<T>"
                         ),
                     ));
                 }
@@ -314,7 +310,7 @@ fn type_name_to_queue_name(type_name: &str) -> String {
         if c.is_uppercase() {
             if !result.is_empty() {
                 let next_is_lower = chars.peek().is_some_and(|n| n.is_lowercase());
-                if next_is_lower || result.chars().last().is_some_and(|p| p.is_lowercase()) {
+                if next_is_lower || result.chars().last().is_some_and(char::is_lowercase) {
                     result.push('-');
                 }
             }

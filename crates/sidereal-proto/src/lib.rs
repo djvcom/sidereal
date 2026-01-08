@@ -1,3 +1,6 @@
+// Allow unsafe code for rkyv zero-copy deserialization performance
+#![allow(unsafe_code)]
+
 //! Wire protocol types for Sidereal inter-component communication.
 //!
 //! This crate provides a unified, high-performance wire protocol based on rkyv

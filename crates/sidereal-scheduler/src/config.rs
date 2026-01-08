@@ -1,7 +1,7 @@
 //! Configuration types for the scheduler.
 
 use serde::Deserialize;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 /// Scheduler configuration.
@@ -33,7 +33,7 @@ pub struct ApiConfig {
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            listen_addr: "0.0.0.0:8081".parse().unwrap(),
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8081),
         }
     }
 }
@@ -71,9 +71,9 @@ pub struct ValkeyConfig {
 impl Default for ValkeyConfig {
     fn default() -> Self {
         Self {
-            url: "redis://localhost:6379".to_string(),
+            url: "redis://localhost:6379".to_owned(),
             placement_ttl_secs: 30,
-            pub_sub_channel: "sidereal:placements".to_string(),
+            pub_sub_channel: "sidereal:placements".to_owned(),
             max_connections: 10,
         }
     }
@@ -194,6 +194,7 @@ mod serde_duration_secs {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

@@ -68,7 +68,7 @@ sidereal-proto = { path = "crates/sidereal-proto" }
 sidereal-scheduler = { path = "crates/sidereal-scheduler" }
 
 # HTTP server
-tower-http = { version = "0.6", features = ["trace", "cors"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "decompression-gzip"] }
 
 # Connection pooling for Valkey
 deadpool-redis = "0.18"
@@ -79,3 +79,94 @@ parking_lot = "0.12"
 
 # Random number generation
 rand = "0.8"
+
+# =============================================================================
+# Workspace-wide lint configuration
+# =============================================================================
+# Inherit in member crates with: [lints] workspace = true
+
+[workspace.lints.rust]
+# Deny unsafe code by default (crates can opt-in with #![allow(unsafe_code)])
+unsafe_code = "deny"
+# Enforce documentation
+missing_docs = "warn"
+# Catch common mistakes
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+# =============================================================================
+# Panic-prevention: Library code should never panic
+# =============================================================================
+# Use #[allow(...)] in test modules where these are acceptable
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unwrap_in_result = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "warn"
+indexing_slicing = "warn"
+
+# =============================================================================
+# Pedantic: High code quality standards
+# =============================================================================
+pedantic = { level = "warn", priority = -1 }
+
+# Selectively allow some pedantic lints that are too noisy
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+too_many_lines = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+if_not_else = "allow"
+
+# =============================================================================
+# Nursery: Useful experimental lints
+# =============================================================================
+nursery = { level = "warn", priority = -1 }
+# Some nursery lints are too unstable
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+redundant_pub_crate = "allow"
+
+# =============================================================================
+# Additional strictness
+# =============================================================================
+# Error handling
+result_large_err = "warn"
+large_futures = "warn"
+large_stack_frames = "warn"
+
+# Correctness
+as_conversions = "warn"
+cast_possible_truncation = "warn"
+cast_precision_loss = "warn"
+cast_sign_loss = "warn"
+float_cmp = "warn"
+
+# Style consistency
+default_trait_access = "warn"
+semicolon_if_nothing_returned = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+trivially_copy_pass_by_ref = "warn"
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+implicit_clone = "warn"
+inconsistent_struct_constructor = "warn"
+iter_not_returning_iterator = "warn"
+macro_use_imports = "warn"
+match_wildcard_for_single_variants = "warn"
+redundant_else = "warn"
+ref_option_ref = "warn"
+str_to_string = "warn"
+unnecessary_wraps = "warn"
+unused_self = "warn"
+use_self = "warn"
+
+# Security
+# (Note: Additional security lints handled by deny(unsafe_code) above)

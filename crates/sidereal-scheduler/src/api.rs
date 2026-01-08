@@ -106,7 +106,7 @@ async fn drain_worker(
     state
         .registry
         .update_status(&id, WorkerStatus::Draining)
-        .map(|_| StatusCode::ACCEPTED)
+        .map(|()| StatusCode::ACCEPTED)
         .map_err(|_| StatusCode::NOT_FOUND)
 }
 
@@ -159,6 +159,7 @@ async fn metrics(State(state): State<Arc<AppState>>) -> String {
     )
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
 fn calculate_cluster_metrics(workers: &[WorkerInfo]) -> ClusterMetrics {
     ClusterMetrics {
         worker_count: workers.len() as u32,
@@ -243,7 +244,7 @@ impl PlacementResponse {
         match availability {
             WorkerAvailability::Available(endpoints) => Self {
                 function,
-                status: "available".to_string(),
+                status: "available".to_owned(),
                 workers: endpoints
                     .into_iter()
                     .map(|e| PlacementWorker {
@@ -255,12 +256,12 @@ impl PlacementResponse {
             },
             WorkerAvailability::Provisioning => Self {
                 function,
-                status: "provisioning".to_string(),
+                status: "provisioning".to_owned(),
                 workers: vec![],
             },
             WorkerAvailability::AllUnhealthy(endpoints) => Self {
                 function,
-                status: "all_unhealthy".to_string(),
+                status: "all_unhealthy".to_owned(),
                 workers: endpoints
                     .into_iter()
                     .map(|e| PlacementWorker {
@@ -272,7 +273,7 @@ impl PlacementResponse {
             },
             WorkerAvailability::NotFound => Self {
                 function,
-                status: "not_found".to_string(),
+                status: "not_found".to_owned(),
                 workers: vec![],
             },
         }

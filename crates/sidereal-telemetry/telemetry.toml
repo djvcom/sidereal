@@ -1,0 +1,12 @@
+[server]
+grpc_addr = "127.0.0.1:14317"
+http_addr = "127.0.0.1:14318"
+query_addr = "127.0.0.1:13100"
+
+[storage]
+type = "local"
+path = "/tmp/telemetry-test"
+
+[buffer]
+max_batch_size = 5
+flush_interval_secs = 2

@@ -50,16 +50,13 @@ impl VsockClient {
             .write_all(connect_cmd.as_bytes())
             .await
             .map_err(|e| {
-                FirecrackerError::VsockConnectionFailed(format!("Failed to send CONNECT: {}", e))
+                FirecrackerError::VsockConnectionFailed(format!("Failed to send CONNECT: {e}"))
             })?;
 
         let mut reader = BufReader::new(&mut stream);
         let mut response = String::new();
         reader.read_line(&mut response).await.map_err(|e| {
-            FirecrackerError::VsockConnectionFailed(format!(
-                "Failed to read CONNECT response: {}",
-                e
-            ))
+            FirecrackerError::VsockConnectionFailed(format!("Failed to read CONNECT response: {e}"))
         })?;
 
         debug!("CONNECT response: {}", response.trim());
@@ -84,7 +81,10 @@ impl VsockClient {
 
         // Encode the envelope
         let bytes = {
-            let mut codec = self.codec.lock().unwrap();
+            let mut codec = self
+                .codec
+                .lock()
+                .map_err(|_| FirecrackerError::ProtocolError("codec lock poisoned".into()))?;
             codec
                 .encode(&envelope, MessageType::Function)
                 .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))?
@@ -98,7 +98,7 @@ impl VsockClient {
         // Read response header
         let mut header_buf = [0u8; FRAME_HEADER_SIZE];
         stream.read_exact(&mut header_buf).await.map_err(|e| {
-            FirecrackerError::VsockError(format!("Failed to read response header: {}", e))
+            FirecrackerError::VsockError(format!("Failed to read response header: {e}"))
         })?;
 
         let header = FrameHeader::decode(&header_buf)
@@ -111,18 +111,18 @@ impl VsockClient {
             )));
         }
 
+        #[allow(clippy::as_conversions)]
         let len = header.payload_len as usize;
         if len > MAX_MESSAGE_SIZE {
             return Err(FirecrackerError::ProtocolError(format!(
-                "Response too large: {} bytes",
-                len
+                "Response too large: {len} bytes"
             )));
         }
 
         // Read payload
         let mut buf = vec![0u8; len];
         stream.read_exact(&mut buf).await.map_err(|e| {
-            FirecrackerError::VsockError(format!("Failed to read response body: {}", e))
+            FirecrackerError::VsockError(format!("Failed to read response body: {e}"))
         })?;
 
         Codec::decode::<Envelope<FunctionMessage>>(&buf)
@@ -138,7 +138,10 @@ impl VsockClient {
 
         // Encode the envelope
         let bytes = {
-            let mut codec = self.codec.lock().unwrap();
+            let mut codec = self
+                .codec
+                .lock()
+                .map_err(|_| FirecrackerError::ProtocolError("codec lock poisoned".into()))?;
             codec
                 .encode(&envelope, MessageType::Control)
                 .map_err(|e: ProtocolError| FirecrackerError::ProtocolError(e.to_string()))?
@@ -152,7 +155,7 @@ impl VsockClient {
         // Read response header
         let mut header_buf = [0u8; FRAME_HEADER_SIZE];
         stream.read_exact(&mut header_buf).await.map_err(|e| {
-            FirecrackerError::VsockError(format!("Failed to read response header: {}", e))
+            FirecrackerError::VsockError(format!("Failed to read response header: {e}"))
         })?;
 
         let header = FrameHeader::decode(&header_buf)
@@ -165,18 +168,18 @@ impl VsockClient {
             )));
         }
 
+        #[allow(clippy::as_conversions)]
         let len = header.payload_len as usize;
         if len > MAX_MESSAGE_SIZE {
             return Err(FirecrackerError::ProtocolError(format!(
-                "Response too large: {} bytes",
-                len
+                "Response too large: {len} bytes"
             )));
         }
 
         // Read payload
         let mut buf = vec![0u8; len];
         stream.read_exact(&mut buf).await.map_err(|e| {
-            FirecrackerError::VsockError(format!("Failed to read response body: {}", e))
+            FirecrackerError::VsockError(format!("Failed to read response body: {e}"))
         })?;
 
         Codec::decode::<Envelope<ControlMessage>>(&buf)
@@ -192,8 +195,7 @@ impl VsockClient {
         match response.payload {
             ControlMessage::Pong => Ok(()),
             other => Err(FirecrackerError::ProtocolError(format!(
-                "Unexpected response to ping: {:?}",
-                other
+                "Unexpected response to ping: {other:?}"
             ))),
         }
     }
@@ -230,8 +232,7 @@ impl VsockClient {
         match response.payload {
             ControlMessage::ShutdownAck => Ok(()),
             other => Err(FirecrackerError::ProtocolError(format!(
-                "Unexpected response to shutdown: {:?}",
-                other
+                "Unexpected response to shutdown: {other:?}"
             ))),
         }
     }

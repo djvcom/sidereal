@@ -21,3 +21,6 @@ http.workspace = true
 tower.workspace = true
 tracing.workspace = true
 sidereal-state = { version = "0.1.0", path = "../sidereal-state", features = ["config"] }
+
+[lints]
+workspace = true

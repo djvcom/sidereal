@@ -35,3 +35,6 @@ otel = ["dep:opentelemetry", "dep:tracing"]
 [[bench]]
 name = "codec"
 harness = false
+
+[lints]
+workspace = true

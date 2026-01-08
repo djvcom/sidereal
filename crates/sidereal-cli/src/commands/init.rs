@@ -124,23 +124,23 @@ dead_letter = true
 /// Validate a project name is a valid Rust crate name.
 fn validate_name(name: &str) -> Result<(), InitError> {
     if name.is_empty() {
-        return Err(InitError::InvalidName("name cannot be empty".to_string()));
+        return Err(InitError::InvalidName("name cannot be empty".to_owned()));
     }
 
-    // Must start with a letter or underscore
-    let first = name.chars().next().unwrap();
+    let Some(first) = name.chars().next() else {
+        return Err(InitError::InvalidName("name cannot be empty".to_owned()));
+    };
+
     if !first.is_ascii_alphabetic() && first != '_' {
         return Err(InitError::InvalidName(
-            "name must start with a letter or underscore".to_string(),
+            "name must start with a letter or underscore".to_owned(),
         ));
     }
 
-    // Must contain only alphanumeric, underscore, or hyphen
     for ch in name.chars() {
         if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-' {
             return Err(InitError::InvalidName(format!(
-                "name contains invalid character: '{}'",
-                ch
+                "name contains invalid character: '{ch}'"
             )));
         }
     }
@@ -152,7 +152,7 @@ fn render_template(template: &str, name: &str) -> String {
     template.replace("{{name}}", name)
 }
 
-pub async fn run(name: &str, path: Option<PathBuf>) -> Result<(), InitError> {
+pub fn run(name: &str, path: Option<PathBuf>) -> Result<(), InitError> {
     validate_name(name)?;
 
     let project_dir = path.unwrap_or_else(|| PathBuf::from(name));
@@ -161,22 +161,15 @@ pub async fn run(name: &str, path: Option<PathBuf>) -> Result<(), InitError> {
         return Err(InitError::DirectoryExists(project_dir));
     }
 
-    // Create directory structure
     fs::create_dir_all(project_dir.join("src"))?;
-
-    // Write Cargo.toml
     fs::write(
         project_dir.join("Cargo.toml"),
         render_template(CARGO_TOML_TEMPLATE, name),
     )?;
-
-    // Write src/main.rs
     fs::write(
         project_dir.join("src/main.rs"),
         render_template(MAIN_RS_TEMPLATE, name),
     )?;
-
-    // Write sidereal.toml
     fs::write(
         project_dir.join("sidereal.toml"),
         render_template(SIDEREAL_TOML_TEMPLATE, name),

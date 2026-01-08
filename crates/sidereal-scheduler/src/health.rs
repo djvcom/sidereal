@@ -27,7 +27,7 @@ impl HealthTracker {
 
     /// Records a successful heartbeat from a worker.
     pub fn record_heartbeat(&self, worker_id: &str, latency: Duration) {
-        let mut entry = self.health_data.entry(worker_id.to_string()).or_default();
+        let mut entry = self.health_data.entry(worker_id.to_owned()).or_default();
 
         entry.last_success = Some(Instant::now());
         entry.consecutive_failures = 0;
@@ -44,7 +44,7 @@ impl HealthTracker {
 
     /// Records a failed health check for a worker.
     pub fn record_failure(&self, worker_id: &str) {
-        let mut entry = self.health_data.entry(worker_id.to_string()).or_default();
+        let mut entry = self.health_data.entry(worker_id.to_owned()).or_default();
 
         entry.last_failure = Some(Instant::now());
         entry.consecutive_failures += 1;
@@ -64,7 +64,7 @@ impl HealthTracker {
         let timeout = self.config.heartbeat_timeout;
         let mut timed_out = Vec::new();
 
-        for entry in self.health_data.iter() {
+        for entry in &self.health_data {
             let last_seen = entry.last_success.unwrap_or(entry.first_seen);
             if now.duration_since(last_seen) > timeout {
                 timed_out.push(entry.key().clone());
@@ -116,7 +116,7 @@ impl HealthTracker {
     }
 
     /// Returns the expected heartbeat interval for workers.
-    pub fn heartbeat_interval(&self) -> Duration {
+    pub const fn heartbeat_interval(&self) -> Duration {
         self.config.heartbeat_interval
     }
 }
@@ -153,6 +153,12 @@ impl WorkerHealth {
 
     /// Returns the p99 latency.
     #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        clippy::as_conversions
+    )]
     pub fn latency_p99(&self) -> Duration {
         if self.latencies.is_empty() {
             return Duration::ZERO;
@@ -162,11 +168,15 @@ impl WorkerHealth {
         sorted.sort();
 
         let index = ((sorted.len() as f64) * 0.99).ceil() as usize - 1;
-        sorted[index.min(sorted.len() - 1)]
+        sorted
+            .get(index.min(sorted.len() - 1))
+            .copied()
+            .unwrap_or(Duration::ZERO)
     }
 
     /// Returns the average latency.
     #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
     pub fn latency_avg(&self) -> Duration {
         if self.latencies.is_empty() {
             return Duration::ZERO;

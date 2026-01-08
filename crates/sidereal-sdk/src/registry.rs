@@ -39,11 +39,11 @@ pub struct FunctionResult {
 }
 
 impl FunctionResult {
-    pub fn ok(body: Vec<u8>) -> Self {
+    pub const fn ok(body: Vec<u8>) -> Self {
         Self { body, status: 200 }
     }
 
-    pub fn with_status(status: u16, body: Vec<u8>) -> Self {
+    pub const fn with_status(status: u16, body: Vec<u8>) -> Self {
         Self { body, status }
     }
 

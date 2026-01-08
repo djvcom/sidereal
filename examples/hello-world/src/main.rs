@@ -25,7 +25,7 @@ fn default_name() -> String {
     "World".to_string()
 }
 
-fn default_max_length() -> usize {
+const fn default_max_length() -> usize {
     100
 }
 
@@ -50,12 +50,14 @@ pub async fn greet(req: HttpRequest<GreetRequest>) -> HttpResponse<GreetResponse
     info!(name = %truncated_name, "Processing greet request");
 
     HttpResponse::ok(GreetResponse {
-        message: format!("Hello, {}!", truncated_name),
+        message: format!("Hello, {truncated_name}!"),
     })
 }
 
 #[tokio::main]
 async fn main() {
     let config = sidereal_sdk::ServerConfig::default();
-    sidereal_sdk::run(config).await;
+    if let Err(e) = sidereal_sdk::run(config).await {
+        eprintln!("Server error: {e}");
+    }
 }

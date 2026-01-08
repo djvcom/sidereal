@@ -137,14 +137,13 @@ fn validate_token(
 }
 
 fn unauthorized_response<B: Default>() -> Response<B> {
-    Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .header(
-            http::header::WWW_AUTHENTICATE,
-            "Bearer realm=\"sidereal-gateway\"",
-        )
-        .body(B::default())
-        .unwrap()
+    let mut response = Response::new(B::default());
+    *response.status_mut() = StatusCode::UNAUTHORIZED;
+    response.headers_mut().insert(
+        http::header::WWW_AUTHENTICATE,
+        http::HeaderValue::from_static("Bearer realm=\"sidereal-gateway\""),
+    );
+    response
 }
 
 #[cfg(test)]

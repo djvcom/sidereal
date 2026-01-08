@@ -82,7 +82,7 @@ where
             .split('/')
             .next()
             .unwrap_or("unknown")
-            .to_string();
+            .to_owned();
 
         // Create a span for this request
         let span = opentelemetry_configuration::tracing::info_span!(
@@ -136,7 +136,7 @@ impl opentelemetry_configuration::opentelemetry::propagation::Extractor for Head
     }
 
     fn keys(&self) -> Vec<&str> {
-        self.0.keys().map(|k| k.as_str()).collect()
+        self.0.keys().map(http::HeaderName::as_str).collect()
     }
 }
 

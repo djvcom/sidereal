@@ -38,6 +38,7 @@ impl RoundRobin {
 }
 
 impl PlacementAlgorithm for RoundRobin {
+    #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
     fn select_worker(&self, function: &str, workers: &[&WorkerInfo]) -> Option<WorkerId> {
         if workers.is_empty() {
             return None;
@@ -45,11 +46,11 @@ impl PlacementAlgorithm for RoundRobin {
 
         let counter = self
             .counters
-            .entry(function.to_string())
+            .entry(function.to_owned())
             .or_insert_with(|| AtomicU64::new(0));
 
         let index = counter.fetch_add(1, Ordering::Relaxed) as usize % workers.len();
-        Some(workers[index].id.clone())
+        workers.get(index).map(|w| w.id.clone())
     }
 
     fn name(&self) -> &'static str {
@@ -94,7 +95,7 @@ impl PlacementAlgorithm for PowerOfTwoChoices {
         }
 
         if workers.len() == 1 {
-            return Some(workers[0].id.clone());
+            return workers.first().map(|w| w.id.clone());
         }
 
         let (a, b) = {
@@ -109,10 +110,11 @@ impl PlacementAlgorithm for PowerOfTwoChoices {
         };
 
         // Select the worker with lower load
-        let worker = if workers[a].capacity.current_load <= workers[b].capacity.current_load {
-            &workers[a]
+        let (worker_a, worker_b) = (workers.get(a)?, workers.get(b)?);
+        let worker = if worker_a.capacity.current_load <= worker_b.capacity.current_load {
+            worker_a
         } else {
-            &workers[b]
+            worker_b
         };
 
         Some(worker.id.clone())
@@ -133,7 +135,7 @@ pub struct LeastLoaded;
 impl LeastLoaded {
     /// Creates a new least-loaded placer.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }

@@ -57,7 +57,7 @@ impl WorkerRegistry {
         let (_, info) = self
             .workers
             .remove(worker_id)
-            .ok_or_else(|| SchedulerError::WorkerNotFound(worker_id.to_string()))?;
+            .ok_or_else(|| SchedulerError::WorkerNotFound(worker_id.to_owned()))?;
 
         // Remove from function index
         for function in &info.functions {
@@ -79,7 +79,7 @@ impl WorkerRegistry {
         let mut worker = self
             .workers
             .get_mut(worker_id)
-            .ok_or_else(|| SchedulerError::WorkerNotFound(worker_id.to_string()))?;
+            .ok_or_else(|| SchedulerError::WorkerNotFound(worker_id.to_owned()))?;
 
         worker.status = status;
         Ok(())
@@ -96,7 +96,7 @@ impl WorkerRegistry {
         let mut worker = self
             .workers
             .get_mut(worker_id)
-            .ok_or_else(|| SchedulerError::WorkerNotFound(worker_id.to_string()))?;
+            .ok_or_else(|| SchedulerError::WorkerNotFound(worker_id.to_owned()))?;
 
         worker.capacity.current_load = current_load;
         worker.capacity.memory_used_mb = memory_used_mb;
@@ -207,7 +207,7 @@ impl WorkerInfo {
 
     /// Converts the status to the protocol representation.
     #[must_use]
-    pub fn status_proto(&self) -> WorkerStatusProto {
+    pub const fn status_proto(&self) -> WorkerStatusProto {
         self.status.to_proto()
     }
 }
@@ -230,7 +230,7 @@ pub struct WorkerCapacity {
 impl WorkerCapacity {
     /// Creates capacity from protocol message.
     #[must_use]
-    pub fn from_proto(proto: &ProtoCapacity) -> Self {
+    pub const fn from_proto(proto: &ProtoCapacity) -> Self {
         Self {
             max_concurrent: proto.max_concurrent,
             current_load: 0,
@@ -246,12 +246,12 @@ impl WorkerCapacity {
         if self.max_concurrent == 0 {
             return 0.0;
         }
-        self.current_load as f64 / self.max_concurrent as f64
+        f64::from(self.current_load) / f64::from(self.max_concurrent)
     }
 
     /// Returns true if the worker has available capacity.
     #[must_use]
-    pub fn has_capacity(&self) -> bool {
+    pub const fn has_capacity(&self) -> bool {
         self.current_load < self.max_concurrent
     }
 }
@@ -288,7 +288,7 @@ pub enum WorkerStatus {
 impl WorkerStatus {
     /// Converts from protocol representation.
     #[must_use]
-    pub fn from_proto(proto: WorkerStatusProto) -> Self {
+    pub const fn from_proto(proto: WorkerStatusProto) -> Self {
         match proto {
             WorkerStatusProto::Starting => Self::Starting,
             WorkerStatusProto::Healthy => Self::Healthy,
@@ -301,7 +301,7 @@ impl WorkerStatus {
 
     /// Converts to protocol representation.
     #[must_use]
-    pub fn to_proto(self) -> WorkerStatusProto {
+    pub const fn to_proto(self) -> WorkerStatusProto {
         match self {
             Self::Starting => WorkerStatusProto::Starting,
             Self::Healthy => WorkerStatusProto::Healthy,
@@ -314,7 +314,7 @@ impl WorkerStatus {
 
     /// Returns true if the worker can accept requests.
     #[must_use]
-    pub fn is_available(self) -> bool {
+    pub const fn is_available(self) -> bool {
         matches!(self, Self::Healthy | Self::Degraded)
     }
 }

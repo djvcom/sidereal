@@ -18,7 +18,7 @@ use crate::error::GatewayError;
 pub struct MetricsLayer;
 
 impl MetricsLayer {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -62,7 +62,7 @@ where
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let method = req.method().to_string();
-        let path = req.uri().path().to_string();
+        let path = req.uri().path().to_owned();
 
         // Extract function name from path (first segment after /)
         let function = extract_function_name(&path);
@@ -91,7 +91,7 @@ where
                         "platform.gateway.requests",
                         "function" => function.clone(),
                         "method" => method.clone(),
-                        "status" => status.clone()
+                        "status" => status
                     )
                     .increment(1);
 
@@ -140,14 +140,18 @@ fn extract_function_name(path: &str) -> String {
         .next()
         .filter(|s| !s.is_empty() && *s != "health" && *s != "ready")
         .unwrap_or("unknown")
-        .to_string()
+        .to_owned()
 }
 
 /// Initialise the Prometheus metrics recorder.
-pub fn init_metrics_recorder() -> PrometheusHandle {
+///
+/// # Errors
+///
+/// Returns an error if the recorder cannot be installed.
+pub fn init_metrics_recorder() -> Result<PrometheusHandle, GatewayError> {
     PrometheusBuilder::new()
         .install_recorder()
-        .expect("Failed to install Prometheus recorder")
+        .map_err(|e| GatewayError::Config(format!("failed to install Prometheus recorder: {e}")))
 }
 
 /// Run the metrics server on a separate address.
@@ -191,10 +195,15 @@ pub struct MetricsServer {
 }
 
 impl MetricsServer {
-    pub fn new() -> Self {
-        Self {
-            handle: init_metrics_recorder(),
-        }
+    /// Creates a new metrics server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Prometheus recorder cannot be installed.
+    pub fn new() -> Result<Self, GatewayError> {
+        Ok(Self {
+            handle: init_metrics_recorder()?,
+        })
     }
 
     pub fn handle(&self) -> PrometheusHandle {
@@ -210,26 +219,27 @@ impl MetricsServer {
     }
 }
 
-impl Default for MetricsServer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Spawn the metrics server in a background task.
+///
+/// # Errors
+///
+/// Returns an error if the metrics recorder cannot be installed.
 pub fn spawn_metrics_server(
     config: MetricsConfig,
     cancel: CancellationToken,
-) -> (
-    PrometheusHandle,
-    tokio::task::JoinHandle<Result<(), GatewayError>>,
-) {
-    let server = MetricsServer::new();
+) -> Result<
+    (
+        PrometheusHandle,
+        tokio::task::JoinHandle<Result<(), GatewayError>>,
+    ),
+    GatewayError,
+> {
+    let server = MetricsServer::new()?;
     let handle = server.handle();
 
     let task = tokio::spawn(async move { server.run(&config, cancel).await });
 
-    (handle, task)
+    Ok((handle, task))
 }
 
 #[cfg(test)]

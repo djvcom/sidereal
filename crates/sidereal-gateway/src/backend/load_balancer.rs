@@ -23,7 +23,7 @@ pub struct LoadBalancer {
 
 impl LoadBalancer {
     /// Create a new load balancer with the given strategy.
-    pub fn new(strategy: LoadBalanceStrategy) -> Self {
+    pub const fn new(strategy: LoadBalanceStrategy) -> Self {
         Self {
             strategy,
             counter: AtomicUsize::new(0),
@@ -39,7 +39,7 @@ impl LoadBalancer {
         }
 
         if backends.len() == 1 {
-            return Some(&backends[0]);
+            return backends.first();
         }
 
         let index = match self.strategy {
@@ -49,6 +49,7 @@ impl LoadBalancer {
             }
             LoadBalanceStrategy::Random => {
                 // Use a simple pseudo-random selection based on time
+                #[allow(clippy::as_conversions)]
                 let nanos = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_nanos() as usize)
@@ -57,11 +58,11 @@ impl LoadBalancer {
             }
         };
 
-        Some(&backends[index])
+        backends.get(index)
     }
 
     /// Get the current strategy.
-    pub fn strategy(&self) -> LoadBalanceStrategy {
+    pub const fn strategy(&self) -> LoadBalanceStrategy {
         self.strategy
     }
 }

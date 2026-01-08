@@ -33,6 +33,7 @@ use std::collections::HashMap;
 /// }
 /// ```
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct HttpRequest<T> {
     /// The deserialised request body.
     pub body: T,
@@ -54,7 +55,7 @@ impl<T: DeserializeOwned> HttpRequest<T> {
             headers: HashMap::new(),
             query: HashMap::new(),
             path: String::new(),
-            method: "POST".to_string(),
+            method: "POST".to_owned(),
         }
     }
 
@@ -92,6 +93,7 @@ impl<T: DeserializeOwned> HttpRequest<T> {
 /// let _ = HttpResponse::bad_request("Invalid input");
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[must_use]
 pub struct HttpResponse<T> {
     /// The response body.
     pub body: T,
@@ -137,6 +139,7 @@ impl<T: Serialize> HttpResponse<T> {
 
 /// Error response helper.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[must_use]
 pub struct ErrorResponse {
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -283,7 +286,7 @@ pub fn type_name_to_queue_name(type_name: &str) -> String {
                 // Check if next char is lowercase (start of new word)
                 // or if previous was lowercase (end of acronym)
                 let next_is_lower = chars.peek().is_some_and(|n| n.is_lowercase());
-                if next_is_lower || result.chars().last().is_some_and(|p| p.is_lowercase()) {
+                if next_is_lower || result.chars().last().is_some_and(char::is_lowercase) {
                     result.push('-');
                 }
             }

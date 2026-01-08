@@ -14,6 +14,7 @@ use crate::error::GatewayError;
 
 /// HTTP backend that proxies requests to an HTTP server.
 #[derive(Debug)]
+#[must_use]
 pub struct HttpBackend {
     base_url: String,
     timeout: Duration,
@@ -21,7 +22,7 @@ pub struct HttpBackend {
 
 impl HttpBackend {
     /// Create a new HTTP backend with the given base URL.
-    pub fn new(base_url: String) -> Self {
+    pub const fn new(base_url: String) -> Self {
         Self {
             base_url,
             timeout: Duration::from_secs(30),
@@ -29,7 +30,7 @@ impl HttpBackend {
     }
 
     /// Set the request timeout.
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+    pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
@@ -38,14 +39,14 @@ impl HttpBackend {
         let uri: hyper::Uri = self
             .base_url
             .parse()
-            .map_err(|e| GatewayError::InvalidBackendUrl(format!("{}", e)))?;
+            .map_err(|e| GatewayError::InvalidBackendUrl(format!("{e}")))?;
 
         let host = uri
             .host()
             .ok_or_else(|| GatewayError::InvalidBackendUrl("missing host".into()))?
-            .to_string();
+            .to_owned();
 
-        let port = uri.port_u16().unwrap_or(match uri.scheme_str() {
+        let port = uri.port_u16().unwrap_or_else(|| match uri.scheme_str() {
             Some("https") => 443,
             _ => 80,
         });
@@ -86,7 +87,7 @@ impl WorkerBackend for HttpBackend {
 
         // Connect to backend
         let (host, port) = self.parse_host_port()?;
-        let addr = format!("{}:{}", host, port);
+        let addr = format!("{host}:{port}");
 
         let stream = tokio::time::timeout(self.timeout, TcpStream::connect(&addr))
             .await
@@ -130,7 +131,7 @@ impl WorkerBackend for HttpBackend {
 
     async fn health_check(&self) -> Result<(), GatewayError> {
         let (host, port) = self.parse_host_port()?;
-        let addr = format!("{}:{}", host, port);
+        let addr = format!("{host}:{port}");
 
         tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(&addr))
             .await

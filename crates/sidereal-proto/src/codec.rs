@@ -35,7 +35,7 @@ pub enum MessageType {
 impl MessageType {
     /// Creates a message type from a numeric value.
     #[must_use]
-    pub fn from_u16(value: u16) -> Option<Self> {
+    pub const fn from_u16(value: u16) -> Option<Self> {
         match value {
             0x01 => Some(Self::Function),
             0x02 => Some(Self::State),
@@ -47,6 +47,7 @@ impl MessageType {
 
     /// Returns the numeric value of this message type.
     #[must_use]
+    #[allow(clippy::as_conversions)]
     pub const fn as_u16(self) -> u16 {
         self as u16
     }
@@ -107,12 +108,13 @@ impl FrameHeader {
 
     /// Checks if this header's version is supported.
     #[must_use]
-    pub fn is_version_supported(&self) -> bool {
+    pub const fn is_version_supported(&self) -> bool {
         self.version >= crate::version::MIN_SUPPORTED && self.version <= crate::version::CURRENT
     }
 
     /// Validates the payload length.
-    pub fn validate_payload_len(&self) -> Result<(), ProtocolError> {
+    #[allow(clippy::as_conversions)]
+    pub const fn validate_payload_len(&self) -> Result<(), ProtocolError> {
         let len = self.payload_len as usize;
         if len > MAX_MESSAGE_SIZE {
             return Err(ProtocolError::MessageTooLarge {
@@ -134,7 +136,7 @@ pub struct Codec {
 impl Codec {
     /// Creates a new codec.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { buffer: Vec::new() }
     }
 
@@ -172,6 +174,7 @@ impl Codec {
         }
 
         // Build frame
+        #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
         let header = FrameHeader::new(message_type, payload.len() as u32);
         self.buffer.clear();
         self.buffer.extend_from_slice(&header.encode());
@@ -216,6 +219,7 @@ impl Codec {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

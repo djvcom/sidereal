@@ -119,9 +119,10 @@ async fn handle_connection(
 
         let header = FrameHeader::decode(&header_buf)?;
 
+        #[allow(clippy::as_conversions)]
         let len = header.payload_len as usize;
         if len > MAX_MESSAGE_SIZE {
-            return Err(format!("Request too large: {} bytes", len).into());
+            return Err(format!("Request too large: {len} bytes").into());
         }
 
         // Read payload
@@ -132,11 +133,11 @@ async fn handle_connection(
         let shutdown = match header.message_type {
             MessageType::Function => {
                 let envelope: Envelope<FunctionMessage> = Codec::decode(&buf)?;
-                let response = handle_function_message(envelope).await;
+                let response = handle_function_message(envelope);
 
                 // Encode and send response
                 let bytes = {
-                    let mut c = codec.lock().unwrap();
+                    let mut c = codec.lock().map_err(|_| "codec lock poisoned".to_owned())?;
                     c.encode(&response, MessageType::Function)
                         .map_err(|e: ProtocolError| e.to_string())?
                         .to_vec()
@@ -147,11 +148,11 @@ async fn handle_connection(
             }
             MessageType::Control => {
                 let envelope: Envelope<ControlMessage> = Codec::decode(&buf)?;
-                let (response, shutdown) = handle_control_message(envelope).await;
+                let (response, shutdown) = handle_control_message(&envelope);
 
                 // Encode and send response
                 let bytes = {
-                    let mut c = codec.lock().unwrap();
+                    let mut c = codec.lock().map_err(|_| "codec lock poisoned".to_owned())?;
                     c.encode(&response, MessageType::Control)
                         .map_err(|e: ProtocolError| e.to_string())?
                         .to_vec()
@@ -180,12 +181,12 @@ async fn handle_connection(
     }
 }
 
-async fn handle_function_message(envelope: Envelope<FunctionMessage>) -> Envelope<FunctionMessage> {
+fn handle_function_message(envelope: Envelope<FunctionMessage>) -> Envelope<FunctionMessage> {
     match envelope.payload {
         FunctionMessage::Invoke(request) => {
             info!(function = %request.function_name, "Invoking function");
 
-            match invoke_function(&request).await {
+            match invoke_function(&request) {
                 Ok(response) => {
                     debug!(function = %request.function_name, status = response.status, "Function completed");
                     Envelope::response_to(&envelope.header, FunctionMessage::Response(response))
@@ -205,10 +206,8 @@ async fn handle_function_message(envelope: Envelope<FunctionMessage>) -> Envelop
     }
 }
 
-async fn handle_control_message(
-    envelope: Envelope<ControlMessage>,
-) -> (Envelope<ControlMessage>, bool) {
-    match envelope.payload {
+fn handle_control_message(envelope: &Envelope<ControlMessage>) -> (Envelope<ControlMessage>, bool) {
+    match &envelope.payload {
         ControlMessage::Ping => {
             debug!("Received ping");
             (
@@ -233,9 +232,7 @@ async fn handle_control_message(
     }
 }
 
-async fn invoke_function(
-    request: &InvokeRequest,
-) -> Result<InvokeResponse, Box<dyn std::error::Error>> {
+fn invoke_function(request: &InvokeRequest) -> Result<InvokeResponse, Box<dyn std::error::Error>> {
     // TODO: Implement actual function invocation
     // For now, return a placeholder response
     info!(

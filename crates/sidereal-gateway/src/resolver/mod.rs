@@ -17,8 +17,8 @@ use crate::error::GatewayError;
 pub const MAX_FUNCTION_NAME_LENGTH: usize = 64;
 
 /// Regex pattern for valid function names.
-static FUNCTION_NAME_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_]*$").unwrap());
+static FUNCTION_NAME_PATTERN: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_]*$").ok());
 
 /// Information about a resolved function.
 #[derive(Debug, Clone)]
@@ -61,8 +61,7 @@ pub fn validate_function_name(name: &str) -> Result<(), GatewayError> {
 
     if name.len() > MAX_FUNCTION_NAME_LENGTH {
         return Err(GatewayError::InvalidFunctionName(format!(
-            "function name exceeds maximum length of {} characters",
-            MAX_FUNCTION_NAME_LENGTH
+            "function name exceeds maximum length of {MAX_FUNCTION_NAME_LENGTH} characters"
         )));
     }
 
@@ -74,7 +73,13 @@ pub fn validate_function_name(name: &str) -> Result<(), GatewayError> {
     }
 
     // Check pattern
-    if !FUNCTION_NAME_PATTERN.is_match(name) {
+    let Some(pattern) = FUNCTION_NAME_PATTERN.as_ref() else {
+        return Err(GatewayError::InvalidFunctionName(
+            "function name validation unavailable".into(),
+        ));
+    };
+
+    if !pattern.is_match(name) {
         return Err(GatewayError::InvalidFunctionName(
             "function name must start with a letter and contain only lowercase letters, numbers, and underscores".into(),
         ));

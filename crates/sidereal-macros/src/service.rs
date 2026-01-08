@@ -23,7 +23,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
     let fn_name_str = fn_name.to_string();
 
     // Detect service kind from return type
-    let detected_kind = detect_service_kind(&func.sig.output)?;
+    let detected_kind = detect_service_kind(&func.sig.output);
 
     match detected_kind {
         DetectedServiceKind::Background => expand_background_service(&func, &attrs, &fn_name_str),
@@ -77,14 +77,14 @@ fn parse_attributes(attr: TokenStream) -> Result<ServiceAttributes> {
     Ok(attrs)
 }
 
-fn detect_service_kind(output: &ReturnType) -> Result<DetectedServiceKind> {
+fn detect_service_kind(output: &ReturnType) -> DetectedServiceKind {
     match output {
-        ReturnType::Default => Ok(DetectedServiceKind::Background),
+        ReturnType::Default => DetectedServiceKind::Background,
         ReturnType::Type(_, ty) => {
             if is_router_type(ty) {
-                Ok(DetectedServiceKind::Router)
+                DetectedServiceKind::Router
             } else {
-                Ok(DetectedServiceKind::Background)
+                DetectedServiceKind::Background
             }
         }
     }
@@ -181,7 +181,10 @@ fn expand_background_service(
                 "Background service should have at most (state: Arc<AppState>, cancel: CancellationToken)",
             ));
         }
-        let (state_pat, state_ty) = &other_params[0];
+        #[allow(clippy::unreachable)]
+        let Some((state_pat, state_ty)) = other_params.first() else {
+            unreachable!("other_params.len() == 1 was checked above");
+        };
         (
             quote! { #state_pat: #state_ty, },
             quote! {},
@@ -269,7 +272,7 @@ fn expand_router_service(
     let path_prefix = if let Some(path) = &attrs.path {
         quote! { ::std::option::Option::Some(#path) }
     } else {
-        let default_path = format!("/{}", fn_name_str);
+        let default_path = format!("/{fn_name_str}");
         quote! { ::std::option::Option::Some(#default_path) }
     };
 

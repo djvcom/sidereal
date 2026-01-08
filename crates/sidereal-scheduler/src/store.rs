@@ -55,7 +55,7 @@ pub struct WorkerEndpoint {
 impl WorkerEndpoint {
     /// Returns true if the worker is available for requests.
     #[must_use]
-    pub fn is_available(&self) -> bool {
+    pub const fn is_available(&self) -> bool {
         self.status.is_available()
     }
 }
@@ -96,7 +96,7 @@ impl ValkeyPlacementStore {
         Ok(Self {
             pool,
             ttl_secs: config.placement_ttl_secs,
-            key_prefix: "sidereal:placement:".to_string(),
+            key_prefix: "sidereal:placement:".to_owned(),
             change_sender,
         })
     }
@@ -128,20 +128,16 @@ impl PlacementStore for ValkeyPlacementStore {
                     return Ok(WorkerAvailability::NotFound);
                 }
 
-                let available: Vec<_> = endpoints
-                    .iter()
-                    .filter(|e| e.is_available())
-                    .cloned()
-                    .collect();
-                let starting: Vec<_> = endpoints
-                    .iter()
-                    .filter(|e| e.status == WorkerStatus::Starting)
-                    .cloned()
-                    .collect();
+                let has_available = endpoints.iter().any(WorkerEndpoint::is_available);
+                let has_starting = endpoints.iter().any(|e| e.status == WorkerStatus::Starting);
 
-                if !available.is_empty() {
+                if has_available {
+                    let available: Vec<_> = endpoints
+                        .into_iter()
+                        .filter(WorkerEndpoint::is_available)
+                        .collect();
                     Ok(WorkerAvailability::Available(available))
-                } else if !starting.is_empty() {
+                } else if has_starting {
                     Ok(WorkerAvailability::Provisioning)
                 } else {
                     Ok(WorkerAvailability::AllUnhealthy(endpoints))
@@ -161,7 +157,7 @@ impl PlacementStore for ValkeyPlacementStore {
 
         // Notify subscribers
         let _ = self.change_sender.send(PlacementChange::Updated {
-            function: function.to_string(),
+            function: function.to_owned(),
         });
 
         Ok(())
@@ -214,7 +210,7 @@ impl std::fmt::Debug for ValkeyPlacementStore {
         f.debug_struct("ValkeyPlacementStore")
             .field("ttl_secs", &self.ttl_secs)
             .field("key_prefix", &self.key_prefix)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -253,20 +249,17 @@ impl PlacementStore for InMemoryPlacementStore {
                     return Ok(WorkerAvailability::NotFound);
                 }
 
-                let available: Vec<_> = endpoints
-                    .iter()
-                    .filter(|e| e.is_available())
-                    .cloned()
-                    .collect();
-                let starting: Vec<_> = endpoints
-                    .iter()
-                    .filter(|e| e.status == WorkerStatus::Starting)
-                    .cloned()
-                    .collect();
+                let has_available = endpoints.iter().any(WorkerEndpoint::is_available);
+                let has_starting = endpoints.iter().any(|e| e.status == WorkerStatus::Starting);
 
-                if !available.is_empty() {
+                if has_available {
+                    let available: Vec<_> = endpoints
+                        .iter()
+                        .filter(|e| e.is_available())
+                        .cloned()
+                        .collect();
                     Ok(WorkerAvailability::Available(available))
-                } else if !starting.is_empty() {
+                } else if has_starting {
                     Ok(WorkerAvailability::Provisioning)
                 } else {
                     Ok(WorkerAvailability::AllUnhealthy(endpoints.clone()))
@@ -276,9 +269,9 @@ impl PlacementStore for InMemoryPlacementStore {
     }
 
     async fn set_workers(&self, function: &str, workers: Vec<WorkerEndpoint>) -> Result<()> {
-        self.placements.insert(function.to_string(), workers);
+        self.placements.insert(function.to_owned(), workers);
         let _ = self.change_sender.send(PlacementChange::Updated {
-            function: function.to_string(),
+            function: function.to_owned(),
         });
         Ok(())
     }

@@ -19,7 +19,6 @@ use sidereal_scheduler::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialise tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::from_default_env().add_directive("sidereal_scheduler=info".parse()?),
@@ -28,7 +27,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Sidereal scheduler starting");
 
-    // Load configuration
     let config: SchedulerConfig = Figment::new()
         .merge(Toml::file("scheduler.toml"))
         .merge(Env::prefixed("SCHEDULER_").split("_"))
@@ -36,18 +34,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!(listen_addr = %config.api.listen_addr, "Configuration loaded");
 
-    // Create registry
     let registry = Arc::new(WorkerRegistry::new());
     info!("Worker registry initialised");
 
-    // Create health tracker
     let health_tracker = Arc::new(HealthTracker::new(config.health.clone(), registry.clone()));
     info!(
         heartbeat_timeout_secs = config.health.heartbeat_timeout.as_secs(),
         "Health tracker initialised"
     );
 
-    // Create placement algorithm
     let placement_algorithm: Arc<dyn PlacementAlgorithm> = match config.placement.algorithm {
         PlacementAlgorithmType::RoundRobin => Arc::new(RoundRobin::new()),
         PlacementAlgorithmType::PowerOfTwo => Arc::new(PowerOfTwoChoices::new()),
@@ -58,7 +53,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Placement algorithm configured"
     );
 
-    // Create scaling policy
     let scaling_policy = Arc::new(ScalingPolicy::new(config.scaling.clone()));
     info!(
         min_workers = config.scaling.min_workers,
@@ -66,7 +60,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Scaling policy configured"
     );
 
-    // Create placement store
     let placement_store: Arc<dyn PlacementStore> = match try_connect_valkey(&config).await {
         Ok(store) => {
             info!(url = %config.valkey.url, "Connected to Valkey");
@@ -78,7 +71,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Build application state
     let state = Arc::new(api::AppState {
         registry: registry.clone(),
         health_tracker: health_tracker.clone(),
@@ -86,17 +78,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         placement_store,
     });
 
-    // Start background tasks
     let registry_clone = registry.clone();
     let health_clone = health_tracker.clone();
     tokio::spawn(async move {
         run_health_check_loop(registry_clone, health_clone).await;
     });
 
-    // Build router
     let app = api::router(state);
 
-    // Start HTTP server
     let listener = TcpListener::bind(&config.api.listen_addr).await?;
     info!(addr = %config.api.listen_addr, "Scheduler API listening");
 
@@ -118,7 +107,6 @@ async fn run_health_check_loop(_registry: Arc<WorkerRegistry>, health_tracker: A
     loop {
         ticker.tick().await;
 
-        // Check for timed-out workers
         let timed_out = health_tracker.check_heartbeat_timeouts();
         for worker_id in timed_out {
             info!(worker_id = %worker_id, "Worker heartbeat timeout");

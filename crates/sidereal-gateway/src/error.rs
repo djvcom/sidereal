@@ -65,51 +65,51 @@ pub enum GatewayError {
 }
 
 impl GatewayError {
-    pub fn error_type(&self) -> &'static str {
+    pub const fn error_type(&self) -> &'static str {
         match self {
-            GatewayError::Config(_) => "config_error",
-            GatewayError::FunctionNotFound(_) => "function_not_found",
-            GatewayError::InvalidFunctionName(_) => "invalid_function_name",
-            GatewayError::InvalidBackendUrl(_) => "invalid_backend_url",
-            GatewayError::ConnectionFailed(_) => "connection_failed",
-            GatewayError::RequestBuildFailed(_) => "request_build_failed",
-            GatewayError::BackendError(_) => "backend_error",
-            GatewayError::Timeout => "timeout",
-            GatewayError::RateLimitExceeded => "rate_limit_exceeded",
-            GatewayError::CircuitOpen => "circuit_open",
-            GatewayError::PayloadTooLarge => "payload_too_large",
-            GatewayError::UriTooLong => "uri_too_long",
-            GatewayError::TooManyHeaders => "too_many_headers",
-            GatewayError::VsockError(_) => "vsock_error",
-            GatewayError::ProtocolError(_) => "protocol_error",
-            GatewayError::Io(_) => "io_error",
-            GatewayError::ServiceProvisioning(_) => "service_provisioning",
-            GatewayError::AllWorkersUnhealthy(_) => "all_workers_unhealthy",
-            GatewayError::PlacementStore(_) => "placement_store_error",
+            Self::Config(_) => "config_error",
+            Self::FunctionNotFound(_) => "function_not_found",
+            Self::InvalidFunctionName(_) => "invalid_function_name",
+            Self::InvalidBackendUrl(_) => "invalid_backend_url",
+            Self::ConnectionFailed(_) => "connection_failed",
+            Self::RequestBuildFailed(_) => "request_build_failed",
+            Self::BackendError(_) => "backend_error",
+            Self::Timeout => "timeout",
+            Self::RateLimitExceeded => "rate_limit_exceeded",
+            Self::CircuitOpen => "circuit_open",
+            Self::PayloadTooLarge => "payload_too_large",
+            Self::UriTooLong => "uri_too_long",
+            Self::TooManyHeaders => "too_many_headers",
+            Self::VsockError(_) => "vsock_error",
+            Self::ProtocolError(_) => "protocol_error",
+            Self::Io(_) => "io_error",
+            Self::ServiceProvisioning(_) => "service_provisioning",
+            Self::AllWorkersUnhealthy(_) => "all_workers_unhealthy",
+            Self::PlacementStore(_) => "placement_store_error",
         }
     }
 
-    pub fn status_code(&self) -> StatusCode {
+    pub const fn status_code(&self) -> StatusCode {
         match self {
-            GatewayError::FunctionNotFound(_) => StatusCode::NOT_FOUND,
-            GatewayError::InvalidFunctionName(_) => StatusCode::BAD_REQUEST,
-            GatewayError::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
-            GatewayError::Timeout => StatusCode::GATEWAY_TIMEOUT,
-            GatewayError::CircuitOpen
-            | GatewayError::ServiceProvisioning(_)
-            | GatewayError::AllWorkersUnhealthy(_) => StatusCode::SERVICE_UNAVAILABLE,
-            GatewayError::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            GatewayError::UriTooLong => StatusCode::URI_TOO_LONG,
-            GatewayError::TooManyHeaders => StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
-            GatewayError::ConnectionFailed(_)
-            | GatewayError::BackendError(_)
-            | GatewayError::VsockError(_)
-            | GatewayError::ProtocolError(_) => StatusCode::BAD_GATEWAY,
-            GatewayError::Config(_)
-            | GatewayError::InvalidBackendUrl(_)
-            | GatewayError::RequestBuildFailed(_)
-            | GatewayError::PlacementStore(_)
-            | GatewayError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::FunctionNotFound(_) => StatusCode::NOT_FOUND,
+            Self::InvalidFunctionName(_) => StatusCode::BAD_REQUEST,
+            Self::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
+            Self::CircuitOpen | Self::ServiceProvisioning(_) | Self::AllWorkersUnhealthy(_) => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+            Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::UriTooLong => StatusCode::URI_TOO_LONG,
+            Self::TooManyHeaders => StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+            Self::ConnectionFailed(_)
+            | Self::BackendError(_)
+            | Self::VsockError(_)
+            | Self::ProtocolError(_) => StatusCode::BAD_GATEWAY,
+            Self::Config(_)
+            | Self::InvalidBackendUrl(_)
+            | Self::RequestBuildFailed(_)
+            | Self::PlacementStore(_)
+            | Self::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
@@ -121,33 +121,33 @@ impl IntoResponse for GatewayError {
         // Sanitise error messages for external responses
         let message = match &self {
             // Safe to expose these messages
-            GatewayError::FunctionNotFound(name) => format!("Function not found: {}", name),
-            GatewayError::InvalidFunctionName(reason) => {
-                format!("Invalid function name: {}", reason)
+            Self::FunctionNotFound(name) => format!("Function not found: {name}"),
+            Self::InvalidFunctionName(reason) => {
+                format!("Invalid function name: {reason}")
             }
-            GatewayError::RateLimitExceeded => "Rate limit exceeded".to_string(),
-            GatewayError::Timeout => "Request timeout".to_string(),
-            GatewayError::CircuitOpen => "Service temporarily unavailable".to_string(),
-            GatewayError::PayloadTooLarge => "Request body too large".to_string(),
-            GatewayError::UriTooLong => "URI too long".to_string(),
-            GatewayError::TooManyHeaders => "Too many request headers".to_string(),
-            GatewayError::ServiceProvisioning(func) => {
-                format!("Service provisioning: {}", func)
+            Self::RateLimitExceeded => "Rate limit exceeded".to_owned(),
+            Self::Timeout => "Request timeout".to_owned(),
+            Self::CircuitOpen => "Service temporarily unavailable".to_owned(),
+            Self::PayloadTooLarge => "Request body too large".to_owned(),
+            Self::UriTooLong => "URI too long".to_owned(),
+            Self::TooManyHeaders => "Too many request headers".to_owned(),
+            Self::ServiceProvisioning(func) => {
+                format!("Service provisioning: {func}")
             }
-            GatewayError::AllWorkersUnhealthy(func) => {
-                format!("All workers unhealthy for function: {}", func)
+            Self::AllWorkersUnhealthy(func) => {
+                format!("All workers unhealthy for function: {func}")
             }
 
             // Hide internal details for security
-            GatewayError::Config(_)
-            | GatewayError::InvalidBackendUrl(_)
-            | GatewayError::ConnectionFailed(_)
-            | GatewayError::RequestBuildFailed(_)
-            | GatewayError::BackendError(_)
-            | GatewayError::VsockError(_)
-            | GatewayError::ProtocolError(_)
-            | GatewayError::PlacementStore(_)
-            | GatewayError::Io(_) => "Internal server error".to_string(),
+            Self::Config(_)
+            | Self::InvalidBackendUrl(_)
+            | Self::ConnectionFailed(_)
+            | Self::RequestBuildFailed(_)
+            | Self::BackendError(_)
+            | Self::VsockError(_)
+            | Self::ProtocolError(_)
+            | Self::PlacementStore(_)
+            | Self::Io(_) => "Internal server error".to_owned(),
         };
 
         (status, message).into_response()

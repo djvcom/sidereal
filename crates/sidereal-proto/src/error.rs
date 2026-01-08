@@ -79,13 +79,14 @@ pub enum ErrorCode {
 impl ErrorCode {
     /// Returns the numeric value of this error code.
     #[must_use]
+    #[allow(clippy::as_conversions)]
     pub const fn as_u8(self) -> u8 {
         self as u8
     }
 
     /// Creates an error code from a numeric value.
     #[must_use]
-    pub fn from_u8(value: u8) -> Option<Self> {
+    pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
             1 => Some(Self::UnsupportedVersion),
             2 => Some(Self::InvalidPayload),
@@ -154,13 +155,14 @@ pub enum StateErrorCode {
 impl StateErrorCode {
     /// Returns the numeric value of this error code.
     #[must_use]
+    #[allow(clippy::as_conversions)]
     pub const fn as_u8(self) -> u8 {
         self as u8
     }
 
     /// Creates an error code from a numeric value.
     #[must_use]
-    pub fn from_u8(value: u8) -> Option<Self> {
+    pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
             30 => Some(Self::NotFound),
             31 => Some(Self::Conflict),

@@ -28,3 +28,6 @@ sidereal-state = { version = "0.1.0", path = "../sidereal-state", optional = tru
 [features]
 default = []
 state-server = ["sidereal-state"]
+
+[lints]
+workspace = true

@@ -6,6 +6,7 @@ use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_governor::GovernorLayer;
 
 use crate::config::RateLimitConfig;
+use crate::error::GatewayError;
 
 /// The rate limit layer type used by the gateway.
 pub type RateLimitLayer = GovernorLayer<SmartIpKeyExtractor, NoOpMiddleware, axum::body::Body>;
@@ -14,18 +15,23 @@ pub type RateLimitLayer = GovernorLayer<SmartIpKeyExtractor, NoOpMiddleware, axu
 ///
 /// Uses `SmartIpKeyExtractor` which checks common reverse proxy headers
 /// (x-forwarded-for, x-real-ip, forwarded) before falling back to peer IP.
-pub fn create_rate_limit_layer(config: &RateLimitConfig) -> RateLimitLayer {
+///
+/// # Errors
+///
+/// Returns an error if the rate limit configuration is invalid.
+pub fn create_rate_limit_layer(config: &RateLimitConfig) -> Result<RateLimitLayer, GatewayError> {
     let governor_config = GovernorConfigBuilder::default()
         .key_extractor(SmartIpKeyExtractor)
-        .per_second(config.requests_per_second as u64)
+        .per_second(u64::from(config.requests_per_second))
         .burst_size(config.burst_size)
         .finish()
-        .expect("Invalid rate limit configuration");
+        .ok_or_else(|| GatewayError::Config("invalid rate limit configuration".into()))?;
 
-    GovernorLayer::new(governor_config)
+    Ok(GovernorLayer::new(governor_config))
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -36,7 +42,7 @@ mod tests {
             burst_size: 50,
         };
 
-        let _layer = create_rate_limit_layer(&config);
+        let _layer = create_rate_limit_layer(&config).unwrap();
     }
 
     #[test]
@@ -46,6 +52,6 @@ mod tests {
             burst_size: 1,
         };
 
-        let _layer = create_rate_limit_layer(&config);
+        let _layer = create_rate_limit_layer(&config).unwrap();
     }
 }

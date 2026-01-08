@@ -1,3 +1,6 @@
+// Allow unsafe code for POSIX signal handling
+#![allow(unsafe_code)]
+
 //! Signal handling for the guest runtime.
 //!
 //! As PID 1, we need to handle signals appropriately and reap zombie processes.
@@ -30,8 +33,7 @@ extern "C" fn handle_sigchld(_: libc::c_int) {
             Ok(WaitStatus::Signaled(pid, sig, _)) => {
                 debug!(pid = pid.as_raw(), signal = ?sig, "Child signaled");
             }
-            Ok(WaitStatus::StillAlive) => break,
-            Err(nix::errno::Errno::ECHILD) => break,
+            Ok(WaitStatus::StillAlive) | Err(nix::errno::Errno::ECHILD) => break,
             Err(e) => {
                 warn!("waitpid error: {}", e);
                 break;

@@ -38,6 +38,7 @@ pub enum BuildError {
 }
 
 /// Builder for configuring and running build-time validation.
+#[must_use]
 pub struct ConfigureBuilder {
     config_path: PathBuf,
 }
@@ -107,6 +108,6 @@ pub fn get_declared_queues(config: &SiderealConfig) -> Vec<&str> {
         .resources
         .as_ref()
         .and_then(|r| r.queue.as_ref())
-        .map(|queues| queues.keys().map(|s| s.as_str()).collect())
+        .map(|queues| queues.keys().map(std::string::String::as_str).collect())
         .unwrap_or_default()
 }

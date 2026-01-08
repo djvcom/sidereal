@@ -51,7 +51,7 @@ impl KvBackend for MemoryKv {
         let mut data = self.data.write().await;
         let expires_at = ttl.map(|d| Instant::now() + d);
         data.insert(
-            key.to_string(),
+            key.to_owned(),
             KvEntry {
                 value: value.to_vec(),
                 expires_at,
@@ -122,7 +122,7 @@ impl KvBackend for MemoryKv {
         match (expected, current) {
             (None, None) => {
                 data.insert(
-                    key.to_string(),
+                    key.to_owned(),
                     KvEntry {
                         value: new.to_vec(),
                         expires_at: None,
@@ -132,7 +132,7 @@ impl KvBackend for MemoryKv {
             }
             (Some(exp), Some(cur)) if exp == cur => {
                 data.insert(
-                    key.to_string(),
+                    key.to_owned(),
                     KvEntry {
                         value: new.to_vec(),
                         expires_at: None,
@@ -166,7 +166,7 @@ impl MemoryQueue {
 impl QueueBackend for MemoryQueue {
     async fn publish(&self, queue: &str, message: &[u8]) -> Result<MessageId, QueueError> {
         let mut queues = self.queues.lock().await;
-        let queue_data = queues.entry(queue.to_string()).or_default();
+        let queue_data = queues.entry(queue.to_owned()).or_default();
 
         let id = MessageId::new(Uuid::new_v4().to_string());
         let entry = QueueEntry {
@@ -189,9 +189,8 @@ impl QueueBackend for MemoryQueue {
         visibility_timeout: Duration,
     ) -> Result<Option<Message>, QueueError> {
         let mut queues = self.queues.lock().await;
-        let queue_data = match queues.get_mut(queue) {
-            Some(q) => q,
-            None => return Ok(None),
+        let Some(queue_data) = queues.get_mut(queue) else {
+            return Ok(None);
         };
 
         let now = Instant::now();
@@ -210,7 +209,7 @@ impl QueueBackend for MemoryQueue {
         let mut queues = self.queues.lock().await;
         let queue_data = queues
             .get_mut(queue)
-            .ok_or_else(|| QueueError::QueueNotFound(queue.to_string()))?;
+            .ok_or_else(|| QueueError::QueueNotFound(queue.to_owned()))?;
 
         let initial_len = queue_data.len();
         queue_data.retain(|entry| entry.message.id != *message_id);
@@ -226,7 +225,7 @@ impl QueueBackend for MemoryQueue {
         let mut queues = self.queues.lock().await;
         let queue_data = queues
             .get_mut(queue)
-            .ok_or_else(|| QueueError::QueueNotFound(queue.to_string()))?;
+            .ok_or_else(|| QueueError::QueueNotFound(queue.to_owned()))?;
 
         for entry in queue_data.iter_mut() {
             if entry.message.id == *message_id {
@@ -255,10 +254,11 @@ impl MemoryLock {
         Self::default()
     }
 
+    #[allow(clippy::as_conversions)]
     fn make_guard(self: &Arc<Self>, resource: &str, token: &str) -> LockGuard {
         LockGuard::new(
-            resource.to_string(),
-            token.to_string(),
+            resource.to_owned(),
+            token.to_owned(),
             self.clone() as Arc<dyn LockOps>,
         )
     }
@@ -330,7 +330,7 @@ impl LockBackend for Arc<MemoryLock> {
 
         let token = Uuid::new_v4().to_string();
         locks.insert(
-            resource.to_string(),
+            resource.to_owned(),
             LockEntry {
                 token: token.clone(),
                 expires_at: now + ttl,
@@ -379,7 +379,7 @@ impl LockBackend for MemoryLockProvider {
 
         let token = Uuid::new_v4().to_string();
         locks.insert(
-            resource.to_string(),
+            resource.to_owned(),
             LockEntry {
                 token: token.clone(),
                 expires_at: now + ttl,
@@ -388,8 +388,9 @@ impl LockBackend for MemoryLockProvider {
 
         drop(locks);
 
+        #[allow(clippy::as_conversions)]
         Ok(Some(LockGuard::new(
-            resource.to_string(),
+            resource.to_owned(),
             token,
             Arc::new(self.clone()) as Arc<dyn LockOps>,
         )))

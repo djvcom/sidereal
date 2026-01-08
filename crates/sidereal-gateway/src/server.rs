@@ -46,7 +46,6 @@ impl std::fmt::Debug for GatewayState {
 
 /// Run the gateway server.
 pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(), GatewayError> {
-    // Create resolver
     let resolver: Arc<dyn FunctionResolver> = match &config.routing {
         RoutingConfig::Static { .. } => Arc::new(
             StaticResolver::from_config(&config.routing)
@@ -68,10 +67,8 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         }
     };
 
-    // Create backend registry
     let backends = Arc::new(BackendRegistry::new());
 
-    // Create circuit breaker registry if configured
     let circuit_breakers = config.middleware.circuit_breaker.as_ref().map(|cb_config| {
         tracing::info!(
             failure_threshold = cb_config.failure_threshold,
@@ -82,7 +79,6 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         Arc::new(CircuitBreakerRegistry::new(cb_config.clone()))
     });
 
-    // Create load balancer with strategy from config
     let load_balance_strategy = match &config.routing {
         RoutingConfig::Static { load_balance, .. } => match load_balance {
             LoadBalanceStrategyConfig::RoundRobin => LoadBalanceStrategy::RoundRobin,
@@ -97,7 +93,6 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
     let load_balancer = LoadBalancer::new(load_balance_strategy);
     tracing::info!(strategy = ?load_balance_strategy, "Load balancer configured");
 
-    // Create state
     let state = Arc::new(GatewayState {
         resolver,
         backends,
@@ -105,12 +100,11 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         load_balancer,
     });
 
-    // Spawn metrics server if configured
     let _metrics_handle = if let Some(ref metrics_config) = config.metrics {
         let (handle, _task) = crate::middleware::metrics::spawn_metrics_server(
             metrics_config.clone(),
             cancel.clone(),
-        );
+        )?;
         tracing::info!(
             address = %metrics_config.bind_address,
             path = %metrics_config.path,
@@ -121,7 +115,6 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         None
     };
 
-    // Build base router with middleware stack
     let mut router = Router::new()
         .route("/health", get(health_check))
         .route("/ready", get(readiness_check))
@@ -132,33 +125,29 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         .layer(SecurityLayer::new())
         .with_state(state);
 
-    // Apply auth middleware if configured
     if let Some(ref auth_config) = config.middleware.auth {
         tracing::info!(algorithm = ?auth_config.algorithm, "JWT authentication enabled");
         router = router.layer(AuthLayer::new(auth_config));
     }
 
-    // Apply rate limiting if configured
     let app = if let Some(ref rate_limit_config) = config.middleware.rate_limit {
         tracing::info!(
             requests_per_second = rate_limit_config.requests_per_second,
             burst_size = rate_limit_config.burst_size,
             "Rate limiting enabled"
         );
-        router.layer(create_rate_limit_layer(rate_limit_config))
+        router.layer(create_rate_limit_layer(rate_limit_config)?)
     } else {
         router
     };
 
-    // Serve with or without TLS
     let addr = config.server.bind_address;
 
     if let Some(ref tls_config) = config.server.tls {
-        // TLS enabled
         let rustls_config =
             RustlsConfig::from_pem_file(&tls_config.cert_path, &tls_config.key_path)
                 .await
-                .map_err(|e| GatewayError::Config(format!("TLS configuration error: {}", e)))?;
+                .map_err(|e| GatewayError::Config(format!("TLS configuration error: {e}")))?;
 
         tracing::info!(
             address = %addr,
@@ -166,7 +155,6 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
             "Gateway listening (TLS enabled)"
         );
 
-        // Use Handle for graceful shutdown with axum-server
         let handle = axum_server::Handle::new();
         let shutdown_handle = handle.clone();
 
@@ -181,7 +169,6 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
             .await
             .map_err(GatewayError::Io)?;
     } else {
-        // Plain HTTP
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(GatewayError::Io)?;
@@ -255,33 +242,27 @@ async fn dispatch_to_function(
     headers: HeaderMap,
     payload: Vec<u8>,
 ) -> Result<impl IntoResponse, GatewayError> {
-    // Validate function name
     validate_function_name(function_name)?;
 
-    // Resolve the function
     let info = state
         .resolver
         .resolve(function_name)
         .await?
-        .ok_or_else(|| GatewayError::FunctionNotFound(function_name.to_string()))?;
+        .ok_or_else(|| GatewayError::FunctionNotFound(function_name.to_owned()))?;
 
-    // Select backend using load balancer
     let selected_address = state
         .load_balancer
         .select(&info.backend_addresses)
         .ok_or_else(|| {
             GatewayError::BackendError(format!(
-                "No backends available for function '{}'",
-                function_name
+                "No backends available for function '{function_name}'"
             ))
         })?;
 
-    // Record backend address in span
     let backend_key = selected_address.to_string();
     opentelemetry_configuration::tracing::Span::current()
         .record("gateway.backend.address", &backend_key);
 
-    // Check circuit breaker if enabled
     let circuit_breaker = state
         .circuit_breakers
         .as_ref()
@@ -291,19 +272,18 @@ async fn dispatch_to_function(
         cb.allow_request().await?;
     }
 
-    // Get backend
     let backend = state.backends.get_backend(selected_address)?;
 
-    // Extract or generate trace ID
     let trace_id = headers
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .map_or_else(
+            || uuid::Uuid::new_v4().to_string(),
+            std::borrow::ToOwned::to_owned,
+        );
 
-    // Dispatch request
     let req = DispatchRequest {
-        function_name: function_name.to_string(),
+        function_name: function_name.to_owned(),
         payload,
         trace_id,
         headers,
@@ -311,14 +291,12 @@ async fn dispatch_to_function(
 
     let response = match backend.dispatch(req).await {
         Ok(resp) => {
-            // Record success
             if let Some(cb) = circuit_breaker {
                 cb.record_success().await;
             }
             resp
         }
         Err(e) => {
-            // Record failure (only for connection/backend errors, not validation errors)
             if let Some(cb) = circuit_breaker {
                 if is_backend_failure(&e) {
                     cb.record_failure().await;
@@ -328,14 +306,13 @@ async fn dispatch_to_function(
         }
     };
 
-    // Build response
     let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
     Ok((status, response.body))
 }
 
 /// Check if an error represents a backend failure that should trip the circuit breaker.
-fn is_backend_failure(error: &GatewayError) -> bool {
+const fn is_backend_failure(error: &GatewayError) -> bool {
     matches!(
         error,
         GatewayError::ConnectionFailed(_)

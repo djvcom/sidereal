@@ -41,7 +41,7 @@ pub enum ConfigError {
 
 impl From<FigmentError> for ConfigError {
     fn from(err: FigmentError) -> Self {
-        ConfigError::Figment(Box::new(err))
+        Self::Figment(Box::new(err))
     }
 }
 
@@ -67,12 +67,11 @@ impl ConfigManager {
             return Err(ConfigError::FileNotFound(path.display().to_string()));
         }
 
-        let active_env =
-            std::env::var("SIDEREAL_ENV").unwrap_or_else(|_| "development".to_string());
+        let active_env = std::env::var("SIDEREAL_ENV").unwrap_or_else(|_| "development".to_owned());
 
         let base_figment = Figment::new().merge(InterpolatingToml::file(path)?);
 
-        let env_section_key = format!("env.{}", active_env);
+        let env_section_key = format!("env.{active_env}");
         let with_env_overrides: Figment =
             if let Ok(env_overrides) = base_figment.extract_inner::<Value>(&env_section_key) {
                 let env_dict = value_to_dict(env_overrides);
@@ -100,16 +99,16 @@ impl ConfigManager {
     }
 
     pub fn section<T: DeserializeOwned>(&self, name: &str) -> Result<T, ConfigError> {
-        let key = format!("app.{}", name);
+        let key = format!("app.{name}");
         self.inner
             .figment
             .extract_inner::<T>(&key)
             .map_err(|e| match e.kind {
                 figment::error::Kind::MissingField(_) => {
-                    ConfigError::SectionNotFound(name.to_string())
+                    ConfigError::SectionNotFound(name.to_owned())
                 }
                 _ => ConfigError::Deserialisation {
-                    section: name.to_string(),
+                    section: name.to_owned(),
                     source: Box::new(e),
                 },
             })
@@ -261,7 +260,7 @@ pub struct ProjectConfig {
 }
 
 fn default_version() -> String {
-    "0.1.0".to_string()
+    "0.1.0".to_owned()
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -270,7 +269,7 @@ pub struct DevConfig {
     pub port: u16,
 }
 
-fn default_port() -> u16 {
+const fn default_port() -> u16 {
     7850
 }
 
@@ -300,7 +299,7 @@ impl SiderealConfig {
         self.resources
             .as_ref()
             .and_then(|r| r.queue.as_ref())
-            .map(|queues| queues.keys().map(|s| s.as_str()).collect())
+            .map(|queues| queues.keys().map(std::string::String::as_str).collect())
             .unwrap_or_default()
     }
 }

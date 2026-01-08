@@ -53,15 +53,14 @@ impl CircuitBreaker {
         let state = *self.state.read().await;
 
         match state {
-            CircuitState::Closed => Ok(()),
+            CircuitState::Closed | CircuitState::HalfOpen => Ok(()),
             CircuitState::Open => {
-                // Check if reset timeout has elapsed
                 let last_failure = self.last_failure_time.load(Ordering::Relaxed);
+                #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
                 let now = Instant::now().elapsed().as_millis() as u64;
                 let elapsed_ms = now.saturating_sub(last_failure);
 
-                if elapsed_ms >= self.config.reset_timeout_ms as u64 {
-                    // Transition to half-open
+                if elapsed_ms >= u64::from(self.config.reset_timeout_ms) {
                     let mut state_guard = self.state.write().await;
                     if *state_guard == CircuitState::Open {
                         *state_guard = CircuitState::HalfOpen;
@@ -73,7 +72,6 @@ impl CircuitBreaker {
                     Err(GatewayError::CircuitOpen)
                 }
             }
-            CircuitState::HalfOpen => Ok(()),
         }
     }
 
@@ -118,6 +116,7 @@ impl CircuitBreaker {
                     let mut state_guard = self.state.write().await;
                     if *state_guard == CircuitState::Closed {
                         *state_guard = CircuitState::Open;
+                        #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
                         self.last_failure_time.store(
                             Instant::now().elapsed().as_millis() as u64,
                             Ordering::Relaxed,
@@ -134,6 +133,7 @@ impl CircuitBreaker {
                 let mut state_guard = self.state.write().await;
                 if *state_guard == CircuitState::HalfOpen {
                     *state_guard = CircuitState::Open;
+                    #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
                     self.last_failure_time.store(
                         Instant::now().elapsed().as_millis() as u64,
                         Ordering::Relaxed,
@@ -144,6 +144,7 @@ impl CircuitBreaker {
             }
             CircuitState::Open => {
                 // Update last failure time
+                #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
                 self.last_failure_time.store(
                     Instant::now().elapsed().as_millis() as u64,
                     Ordering::Relaxed,
@@ -186,7 +187,7 @@ impl CircuitBreakerRegistry {
         }
 
         let breaker = Arc::new(CircuitBreaker::new(self.config.clone()));
-        self.breakers.insert(key.to_string(), breaker.clone());
+        self.breakers.insert(key.to_owned(), breaker.clone());
         breaker
     }
 }

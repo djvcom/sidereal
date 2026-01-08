@@ -4,6 +4,27 @@
 //! and manages the lifecycle of background and router services.
 
 use crate::config::{ConfigManager, SiderealConfig};
+use thiserror::Error;
+
+/// Errors that can occur during server startup and operation.
+#[derive(Debug, Error)]
+pub enum ServerError {
+    /// Failed to parse the server address.
+    #[error("invalid server address: {0}")]
+    InvalidAddress(#[from] std::net::AddrParseError),
+
+    /// Failed to bind to the address.
+    #[error("failed to bind to address: {0}")]
+    BindFailed(std::io::Error),
+
+    /// Failed to install signal handler.
+    #[error("failed to install signal handler: {0}")]
+    SignalHandler(std::io::Error),
+
+    /// Server runtime error.
+    #[error("server error: {0}")]
+    Server(std::io::Error),
+}
 use crate::extractors::AppState;
 use crate::registry::{get_http_functions, get_queue_functions, FunctionMetadata, FunctionResult};
 use crate::service_registry::{
@@ -28,6 +49,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Configuration for the development server.
 #[derive(Clone)]
+#[must_use]
 pub struct ServerConfig {
     /// The port to listen on.
     pub port: u16,
@@ -41,19 +63,19 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             port: 7850,
-            host: "127.0.0.1".to_string(),
+            host: "127.0.0.1".to_owned(),
             shutdown_timeout: Duration::from_secs(30),
         }
     }
 }
 
 impl ServerConfig {
-    pub fn with_port(mut self, port: u16) -> Self {
+    pub const fn with_port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
 
-    pub fn with_shutdown_timeout(mut self, timeout: Duration) -> Self {
+    pub const fn with_shutdown_timeout(mut self, timeout: Duration) -> Self {
         self.shutdown_timeout = timeout;
         self
     }
@@ -67,21 +89,26 @@ impl ServerConfig {
 /// - Serves HTTP functions via POST /{function_name}
 /// - Handles graceful shutdown on Ctrl+C
 ///
+/// # Errors
+///
+/// Returns an error if the server fails to start (e.g., invalid address,
+/// port already in use, or signal handler installation failure).
+///
 /// # Example
 ///
 /// ```no_run
 /// // In your main.rs
 /// #[tokio::main]
 /// async fn main() {
-///     sidereal_sdk::run(sidereal_sdk::ServerConfig::default()).await;
+///     sidereal_sdk::run(sidereal_sdk::ServerConfig::default())
+///         .await
+///         .expect("Server failed");
 /// }
 /// ```
-pub async fn run(config: ServerConfig) {
-    // Create a cancellation token for graceful shutdown
+pub async fn run(config: ServerConfig) -> Result<(), ServerError> {
     let cancel_token = CancellationToken::new();
     let cancel_for_signal = cancel_token.clone();
 
-    // Discover all registered functions and services
     let http_functions: Vec<_> = get_http_functions().collect();
     let queue_functions: Vec<_> = get_queue_functions().collect();
     let background_services: Vec<_> = get_background_services().collect();
@@ -96,20 +123,18 @@ pub async fn run(config: ServerConfig) {
         eprintln!("  Use #[sidereal_sdk::service] for services");
     }
 
-    // Load configuration
     let config_manager = match ConfigManager::load() {
         Ok(cm) => {
             eprintln!("Loaded configuration (env: {})", cm.active_environment());
             Some(cm)
         }
         Err(e) => {
-            eprintln!("Warning: Could not load configuration: {}", e);
+            eprintln!("Warning: Could not load configuration: {e}");
             eprintln!("  Continuing without config support");
             None
         }
     };
 
-    // Validate queue configuration if config is loaded
     if config_manager.is_some() {
         let sidereal_config = SiderealConfig::load();
         if let Some(ref cfg) = sidereal_config {
@@ -117,7 +142,6 @@ pub async fn run(config: ServerConfig) {
         }
     }
 
-    // Initialise state provider from configuration
     let state_config = config_manager
         .as_ref()
         .and_then(|cm| cm.section::<StateConfig>("state").ok())
@@ -129,13 +153,12 @@ pub async fn run(config: ServerConfig) {
             sp
         }
         Err(e) => {
-            eprintln!("Warning: Could not initialise state provider: {}", e);
+            eprintln!("Warning: Could not initialise state provider: {e}");
             eprintln!("  State extractors (Kv, Queue, Lock) will not be available");
             StateProvider::default()
         }
     };
 
-    // Print startup info
     print_startup_info(
         &http_functions,
         &queue_functions,
@@ -143,36 +166,32 @@ pub async fn run(config: ServerConfig) {
         &router_services,
     );
 
-    // Build shared state
     let state = Arc::new(AppState::new(config_manager.clone(), state_provider));
 
-    // Spawn background services
     let mut background_tasks = JoinSet::new();
     for service in &background_services {
         let state_clone = state.clone();
         let cancel = cancel_token.clone();
 
         if let ServiceFactory::Background(factory) = service.factory {
-            let name = service.name.to_string();
+            let name = service.name.to_owned();
             background_tasks.spawn(async move {
-                eprintln!("Starting background service: {}", name);
+                eprintln!("Starting background service: {name}");
                 let result = factory(state_clone, cancel).await;
                 match &result {
-                    Ok(()) => eprintln!("Background service '{}' completed", name),
-                    Err(e) => eprintln!("Background service '{}' failed: {}", name, e),
+                    Ok(()) => eprintln!("Background service '{name}' completed"),
+                    Err(e) => eprintln!("Background service '{name}' failed: {e}"),
                 }
                 (name, result)
             });
         }
     }
 
-    // Build the router with function routes
     let mut app = Router::new()
         .route("/{function}", post(handle_function))
         .layer(OtelTraceLayer::new())
         .with_state(state);
 
-    // Mount router services
     for service in &router_services {
         if let ServiceFactory::Router(factory) = service.factory {
             let router = factory();
@@ -182,33 +201,29 @@ pub async fn run(config: ServerConfig) {
         }
     }
 
-    // Setup graceful shutdown
+    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(ServerError::BindFailed)?;
+
+    println!("Listening on http://{addr}");
+    println!();
+
     let shutdown_signal = async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install CTRL+C signal handler");
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            eprintln!("Warning: failed to listen for shutdown signal: {e}");
+            return;
+        }
         eprintln!("\nShutdown signal received, stopping services...");
         cancel_for_signal.cancel();
     };
 
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port)
-        .parse()
-        .expect("Invalid address");
-
-    println!("Listening on http://{}", addr);
-    println!();
-
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("Failed to bind to address");
-
-    // Run server with graceful shutdown
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
         .await
-        .expect("Server error");
+        .map_err(ServerError::Server)?;
 
-    // Wait for background services to finish (with timeout)
     if !background_tasks.is_empty() {
         eprintln!("Waiting for background services to complete...");
         let shutdown_deadline = tokio::time::Instant::now() + config.shutdown_timeout;
@@ -220,9 +235,9 @@ pub async fn run(config: ServerConfig) {
                 .flatten()
         {
             match result {
-                Ok((name, Ok(()))) => eprintln!("Service '{}' shut down cleanly", name),
-                Ok((name, Err(e))) => eprintln!("Service '{}' error during shutdown: {}", name, e),
-                Err(e) => eprintln!("Service task panicked: {}", e),
+                Ok((name, Ok(()))) => eprintln!("Service '{name}' shut down cleanly"),
+                Ok((name, Err(e))) => eprintln!("Service '{name}' error during shutdown: {e}"),
+                Err(e) => eprintln!("Service task panicked: {e}"),
             }
         }
 
@@ -236,6 +251,8 @@ pub async fn run(config: ServerConfig) {
     }
 
     eprintln!("Shutdown complete");
+
+    Ok(())
 }
 
 fn print_startup_info(
@@ -286,22 +303,16 @@ async fn handle_function(
     Path(function_name): Path<String>,
     body: Bytes,
 ) -> impl IntoResponse {
-    // Find the function
-    let func = match crate::registry::find_function(&function_name) {
-        Some(f) => f,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!("Function '{}' not found", function_name),
-            )
-                .into_response();
-        }
+    let Some(func) = crate::registry::find_function(&function_name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            format!("Function '{function_name}' not found"),
+        )
+            .into_response();
     };
 
-    // Call the legacy handler (eventually this will be replaced with axum handler mounting)
     let result: FunctionResult = (func.handler)(&body, ()).await;
 
-    // Return the response
     let status = StatusCode::from_u16(result.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
     (status, [("content-type", "application/json")], result.body).into_response()
@@ -313,8 +324,6 @@ fn validate_queue_configuration(
     queue_functions: &[&crate::registry::FunctionMetadata],
 ) {
     let declared_queues: HashSet<&str> = config.declared_queues().into_iter().collect();
-
-    // Collect queue names from function metadata
     let mut consumer_queues: HashSet<&str> = HashSet::new();
 
     for func in queue_functions {
@@ -323,27 +332,18 @@ fn validate_queue_configuration(
         }
     }
 
-    // Warn about queue consumers without declared queues
     for queue_name in &consumer_queues {
         if !declared_queues.contains(queue_name) {
             eprintln!(
-                "Warning: Queue consumer for '{}' has no matching queue in sidereal.toml",
-                queue_name
+                "Warning: Queue consumer for '{queue_name}' has no matching queue in sidereal.toml"
             );
-            eprintln!(
-                "  Add [resources.queue.{}] to your sidereal.toml",
-                queue_name
-            );
+            eprintln!("  Add [resources.queue.{queue_name}] to your sidereal.toml");
         }
     }
 
-    // Warn about declared queues without consumers
     for queue_name in &declared_queues {
         if !consumer_queues.contains(queue_name) {
-            eprintln!(
-                "Warning: Queue '{}' is declared but has no consumer function",
-                queue_name
-            );
+            eprintln!("Warning: Queue '{queue_name}' is declared but has no consumer function");
         }
     }
 }

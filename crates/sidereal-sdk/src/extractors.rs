@@ -50,7 +50,7 @@ pub struct AppState {
 
 impl AppState {
     /// Create a new AppState with optional configuration and state provider.
-    pub fn new(config: Option<ConfigManager>, state: StateProvider) -> Self {
+    pub const fn new(config: Option<ConfigManager>, state: StateProvider) -> Self {
         Self { config, state }
     }
 }
@@ -103,17 +103,17 @@ pub enum ConfigRejection {
 impl IntoResponse for ConfigRejection {
     fn into_response(self) -> Response {
         let (status, message) = match self {
-            ConfigRejection::NotLoaded => (
+            Self::NotLoaded => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Configuration not loaded".to_string(),
+                "Configuration not loaded".to_owned(),
             ),
-            ConfigRejection::SectionNotFound(section) => (
+            Self::SectionNotFound(section) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Configuration section '{}' not found", section),
+                format!("Configuration section '{section}' not found"),
             ),
-            ConfigRejection::DeserialiseError(msg) => (
+            Self::DeserialiseError(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Configuration error: {}", msg),
+                format!("Configuration error: {msg}"),
             ),
         };
         (status, message).into_response()
@@ -152,7 +152,7 @@ where
                 }
                 ConfigError::Figment(e) => ConfigRejection::DeserialiseError(e.to_string()),
                 ConfigError::FileNotFound(path) => {
-                    ConfigRejection::DeserialiseError(format!("Config file not found: {}", path))
+                    ConfigRejection::DeserialiseError(format!("Config file not found: {path}"))
                 }
             })
     }
@@ -205,7 +205,7 @@ impl Secrets {
     ///
     /// Returns an error if the secret is not found.
     pub fn get(&self, name: &str) -> Result<String, SecretError> {
-        std::env::var(name).map_err(|_| SecretError::NotFound(name.to_string()))
+        std::env::var(name).map_err(|_| SecretError::NotFound(name.to_owned()))
     }
 
     /// Get a secret by name, returning None if not found.
@@ -242,7 +242,7 @@ where
     type Rejection = SecretsRejection;
 
     async fn from_request_parts(_parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Ok(Secrets)
+        Ok(Self)
     }
 }
 
@@ -280,7 +280,11 @@ impl KvClient {
     }
 
     /// Put a value into the KV store.
-    pub async fn put<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), KvError> {
+    pub async fn put<T: serde::Serialize + Sync>(
+        &self,
+        key: &str,
+        value: &T,
+    ) -> Result<(), KvError> {
         let bytes = serde_json::to_vec(value).map_err(|e| KvError::Serialisation(e.to_string()))?;
         self.backend
             .put(key, &bytes, None)
@@ -289,7 +293,7 @@ impl KvClient {
     }
 
     /// Put a value into the KV store with a TTL.
-    pub async fn put_with_ttl<T: serde::Serialize>(
+    pub async fn put_with_ttl<T: serde::Serialize + Sync>(
         &self,
         key: &str,
         value: &T,
@@ -391,8 +395,8 @@ pub enum KvRejection {
 impl IntoResponse for KvRejection {
     fn into_response(self) -> Response {
         let message = match self {
-            KvRejection::NotAvailable => "KV store not available",
-            KvRejection::NotConfigured => "KV store not configured",
+            Self::NotAvailable => "KV store not available",
+            Self::NotConfigured => "KV store not configured",
         };
         (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
     }
@@ -415,7 +419,7 @@ where
             .kv()
             .map_err(|_| KvRejection::NotConfigured)?;
 
-        Ok(Kv(KvClient::new(backend)))
+        Ok(Self(KvClient::new(backend)))
     }
 }
 
@@ -456,8 +460,7 @@ where
             .headers
             .get("x-request-id")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_else(generate_request_id);
+            .map_or_else(generate_request_id, std::borrow::ToOwned::to_owned);
 
         // Extract function name from path
         let function_name = parts
@@ -467,9 +470,9 @@ where
             .split('/')
             .next()
             .unwrap_or("unknown")
-            .to_string();
+            .to_owned();
 
-        Ok(InvocationMeta {
+        Ok(Self {
             request_id,
             function_name,
         })
@@ -485,8 +488,9 @@ fn generate_request_id() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
+    #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
     let random: u32 = RandomState::new().build_hasher().finish() as u32;
-    format!("{:x}-{:08x}", timestamp, random)
+    format!("{timestamp:x}-{random:08x}")
 }
 
 // ============================================================================
@@ -506,7 +510,7 @@ impl QueueClient {
     }
 
     /// Publish a message to a queue.
-    pub async fn publish<T: serde::Serialize>(
+    pub async fn publish<T: serde::Serialize + Sync>(
         &self,
         queue: &str,
         message: &T,
@@ -616,8 +620,8 @@ pub enum QueueRejection {
 impl IntoResponse for QueueRejection {
     fn into_response(self) -> Response {
         let message = match self {
-            QueueRejection::NotAvailable => "Queue not available",
-            QueueRejection::NotConfigured => "Queue not configured",
+            Self::NotAvailable => "Queue not available",
+            Self::NotConfigured => "Queue not configured",
         };
         (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
     }
@@ -640,7 +644,7 @@ where
             .queue()
             .map_err(|_| QueueRejection::NotConfigured)?;
 
-        Ok(Queue(QueueClient::new(backend)))
+        Ok(Self(QueueClient::new(backend)))
     }
 }
 
@@ -726,8 +730,8 @@ pub enum LockRejection {
 impl IntoResponse for LockRejection {
     fn into_response(self) -> Response {
         let message = match self {
-            LockRejection::NotAvailable => "Lock service not available",
-            LockRejection::NotConfigured => "Lock service not configured",
+            Self::NotAvailable => "Lock service not available",
+            Self::NotConfigured => "Lock service not configured",
         };
         (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
     }
@@ -750,7 +754,7 @@ where
             .lock()
             .map_err(|_| LockRejection::NotConfigured)?;
 
-        Ok(Lock(LockClient::new(backend)))
+        Ok(Self(LockClient::new(backend)))
     }
 }
 

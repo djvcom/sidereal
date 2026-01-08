@@ -78,7 +78,7 @@ impl FunctionResolver for StaticResolver {
             .functions
             .get(function_name)
             .map(|addresses| FunctionInfo {
-                name: function_name.to_string(),
+                name: function_name.to_owned(),
                 backend_addresses: addresses.clone(),
             }))
     }

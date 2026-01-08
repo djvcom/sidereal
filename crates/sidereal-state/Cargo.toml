@@ -43,3 +43,6 @@ vsock = ["tokio-vsock", "sidereal-proto"]
 config = ["figment"]
 full = ["memory", "valkey", "postgres", "vsock", "config"]
 chrono = ["dep:chrono"]
+
+[lints]
+workspace = true

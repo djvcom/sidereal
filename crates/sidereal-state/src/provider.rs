@@ -14,6 +14,7 @@ use crate::valkey::{ValkeyKv, ValkeyLockProvider};
 use crate::postgres::PostgresQueue;
 
 #[derive(Clone, Default)]
+#[must_use]
 pub struct StateProvider {
     kv: Option<Arc<dyn KvBackend>>,
     queue: Option<Arc<dyn QueueBackend>>,
@@ -62,21 +63,22 @@ impl StateProvider {
     pub fn kv(&self) -> Result<Arc<dyn KvBackend>, StateError> {
         self.kv
             .clone()
-            .ok_or(StateError::NotConfigured("kv".to_string()))
+            .ok_or_else(|| StateError::NotConfigured("kv".to_owned()))
     }
 
     pub fn queue(&self) -> Result<Arc<dyn QueueBackend>, StateError> {
         self.queue
             .clone()
-            .ok_or(StateError::NotConfigured("queue".to_string()))
+            .ok_or_else(|| StateError::NotConfigured("queue".to_owned()))
     }
 
     pub fn lock(&self) -> Result<Arc<dyn LockBackend>, StateError> {
         self.lock
             .clone()
-            .ok_or(StateError::NotConfigured("lock".to_string()))
+            .ok_or_else(|| StateError::NotConfigured("lock".to_owned()))
     }
 
+    #[allow(clippy::unused_async)]
     async fn create_kv_backend(config: &KvConfig) -> Result<Arc<dyn KvBackend>, StateError> {
         match config {
             #[cfg(feature = "memory")]
@@ -96,11 +98,12 @@ impl StateProvider {
 
             #[allow(unreachable_patterns)]
             _ => Err(StateError::UnsupportedBackend(
-                "No suitable KV backend enabled".to_string(),
+                "No suitable KV backend enabled".to_owned(),
             )),
         }
     }
 
+    #[allow(clippy::unused_async)]
     async fn create_queue_backend(
         config: &QueueConfig,
     ) -> Result<Arc<dyn QueueBackend>, StateError> {
@@ -118,11 +121,12 @@ impl StateProvider {
 
             #[allow(unreachable_patterns)]
             _ => Err(StateError::UnsupportedBackend(
-                "No suitable queue backend enabled".to_string(),
+                "No suitable queue backend enabled".to_owned(),
             )),
         }
     }
 
+    #[allow(clippy::unused_async)]
     async fn create_lock_backend(config: &LockConfig) -> Result<Arc<dyn LockBackend>, StateError> {
         match config {
             #[cfg(feature = "memory")]
@@ -142,7 +146,7 @@ impl StateProvider {
 
             #[allow(unreachable_patterns)]
             _ => Err(StateError::UnsupportedBackend(
-                "No suitable lock backend enabled".to_string(),
+                "No suitable lock backend enabled".to_owned(),
             )),
         }
     }

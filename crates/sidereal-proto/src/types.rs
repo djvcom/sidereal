@@ -30,7 +30,7 @@ impl CorrelationId {
 
     /// Converts to a ULID for display purposes.
     #[must_use]
-    pub fn to_ulid(&self) -> ulid::Ulid {
+    pub const fn to_ulid(&self) -> ulid::Ulid {
         ulid::Ulid::from_bytes(self.0)
     }
 }
@@ -55,7 +55,7 @@ impl From<ulid::Ulid> for CorrelationId {
 
 impl From<CorrelationId> for ulid::Ulid {
     fn from(id: CorrelationId) -> Self {
-        ulid::Ulid::from_bytes(id.0)
+        Self::from_bytes(id.0)
     }
 }
 

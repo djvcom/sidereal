@@ -5,6 +5,12 @@ use std::path::PathBuf;
 use std::process::Command;
 use thiserror::Error;
 
+/// Environment variable set by `sidereal dev` to communicate the server port.
+///
+/// User code should read this variable to configure the server binding address.
+/// If not set, applications should fall back to a default port (typically 7850).
+const SIDEREAL_PORT_ENV: &str = "SIDEREAL_PORT";
+
 #[derive(Error, Debug)]
 pub enum DevError {
     #[error("Configuration file not found: sidereal.toml")]
@@ -43,7 +49,7 @@ struct DevConfig {
     port: u16,
 }
 
-fn default_port() -> u16 {
+const fn default_port() -> u16 {
     7850
 }
 
@@ -67,12 +73,10 @@ fn check_cargo_watch() -> Result<(), DevError> {
     }
 }
 
-pub async fn run(port_override: Option<u16>) -> Result<(), DevError> {
-    // Load configuration
+pub fn run(port_override: Option<u16>) -> Result<(), DevError> {
     let config = load_config()?;
     let port = port_override.unwrap_or(config.dev.port);
 
-    // Check for cargo-watch
     check_cargo_watch()?;
 
     println!(
@@ -81,18 +85,16 @@ pub async fn run(port_override: Option<u16>) -> Result<(), DevError> {
     );
     println!();
     println!("Using cargo-watch for hot reload.");
-    println!("Server will start on http://localhost:{}", port);
+    println!("Server will start on http://localhost:{port}");
     println!();
 
-    // Set the port via environment variable
-    // The user's main.rs can read SIDEREAL_PORT to configure the server
     let status = Command::new("cargo")
         .args(["watch", "-x", "run"])
-        .env("SIDEREAL_PORT", port.to_string())
+        .env(SIDEREAL_PORT_ENV, port.to_string())
         .status()?;
 
     if !status.success() {
-        return Err(DevError::BuildFailed("cargo watch failed".to_string()));
+        return Err(DevError::BuildFailed("cargo watch failed".to_owned()));
     }
 
     Ok(())

@@ -23,7 +23,7 @@ impl ControlMessage {
     ///
     /// Returns `None` for response messages (Pong, ShutdownAck).
     #[must_use]
-    pub fn response(&self) -> Option<Self> {
+    pub const fn response(&self) -> Option<Self> {
         match self {
             Self::Ping => Some(Self::Pong),
             Self::Shutdown => Some(Self::ShutdownAck),
@@ -33,13 +33,13 @@ impl ControlMessage {
 
     /// Checks if this is a request message.
     #[must_use]
-    pub fn is_request(&self) -> bool {
+    pub const fn is_request(&self) -> bool {
         matches!(self, Self::Ping | Self::Shutdown)
     }
 
     /// Checks if this is a response message.
     #[must_use]
-    pub fn is_response(&self) -> bool {
+    pub const fn is_response(&self) -> bool {
         matches!(self, Self::Pong | Self::ShutdownAck)
     }
 }

@@ -7,7 +7,7 @@ use crate::error::StateErrorCode;
 /// State operation messages.
 ///
 /// Used for worker → state coordinator communication via vsock.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum StateMessage {
     /// State operation request.
     Request(StateRequest),
@@ -19,7 +19,7 @@ pub enum StateMessage {
 /// State operation requests.
 ///
 /// Maps to the `KvBackend`, `QueueBackend`, and `LockBackend` trait methods.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum StateRequest {
     // KV operations
     /// Get a value by key.
@@ -87,7 +87,7 @@ pub enum StateRequest {
 }
 
 /// State operation responses.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum StateResponse {
     // KV responses
     /// Result of KvGet.
@@ -142,7 +142,7 @@ impl StateResponse {
 
     /// Checks if this is an error response.
     #[must_use]
-    pub fn is_error(&self) -> bool {
+    pub const fn is_error(&self) -> bool {
         matches!(self, Self::Error { .. })
     }
 
@@ -157,7 +157,7 @@ impl StateResponse {
 }
 
 /// Queue message data returned by QueueReceive.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct QueueMessageData {
     /// Unique message ID.
     pub id: String,

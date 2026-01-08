@@ -33,7 +33,7 @@ impl Context {
     pub fn new_dev(function_name: impl Into<String>) -> Self {
         Self {
             inner: Arc::new(ContextInner {
-                environment: "development".to_string(),
+                environment: "development".to_owned(),
                 function_name: function_name.into(),
                 request_id: generate_request_id(),
                 deadline: None,
@@ -46,7 +46,7 @@ impl Context {
 
     /// Create a new context with a configuration manager.
     pub fn with_config(function_name: impl Into<String>, config: ConfigManager) -> Self {
-        let environment = config.active_environment().to_string();
+        let environment = config.active_environment().to_owned();
         Self {
             inner: Arc::new(ContextInner {
                 environment,
@@ -107,8 +107,7 @@ impl Context {
         match &self.inner.config {
             Some(config_manager) => config_manager.section(section),
             None => Err(ConfigError::SectionNotFound(format!(
-                "{} (no configuration loaded)",
-                section
+                "{section} (no configuration loaded)"
             ))),
         }
     }
@@ -139,6 +138,7 @@ impl KvClient {
     }
 
     /// Get a value from the KV store.
+    #[allow(clippy::unused_async)]
     pub async fn get<T: serde::de::DeserializeOwned>(
         &self,
         key: &str,
@@ -159,20 +159,26 @@ impl KvClient {
     }
 
     /// Put a value into the KV store.
-    pub async fn put<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), ContextError> {
+    #[allow(clippy::unused_async)]
+    pub async fn put<T: serde::Serialize + Sync>(
+        &self,
+        key: &str,
+        value: &T,
+    ) -> Result<(), ContextError> {
         let bytes =
             serde_json::to_vec(value).map_err(|e| ContextError::Serialisation(e.to_string()))?;
 
         match &*self.inner {
             KvClientInner::InMemory(map) => {
                 let mut map = map.write().map_err(|_| ContextError::Internal)?;
-                map.insert(key.to_string(), bytes);
+                map.insert(key.to_owned(), bytes);
                 Ok(())
             }
         }
     }
 
     /// Delete a key from the KV store.
+    #[allow(clippy::unused_async)]
     pub async fn delete(&self, key: &str) -> Result<bool, ContextError> {
         match &*self.inner {
             KvClientInner::InMemory(map) => {
@@ -200,10 +206,11 @@ impl SecretsClient {
         }
     }
 
+    #[allow(clippy::unused_async)]
     async fn get(&self, name: &str) -> Result<String, ContextError> {
         match &*self.inner {
             SecretsClientInner::Env => {
-                std::env::var(name).map_err(|_| ContextError::SecretNotFound(name.to_string()))
+                std::env::var(name).map_err(|_| ContextError::SecretNotFound(name.to_owned()))
             }
         }
     }
@@ -219,7 +226,7 @@ impl Logger {
     pub fn info(&self, message: &str, fields: &[(&str, &str)]) {
         let fields_str: String = fields
             .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
+            .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(" ");
         eprintln!(
@@ -231,7 +238,7 @@ impl Logger {
     pub fn warn(&self, message: &str, fields: &[(&str, &str)]) {
         let fields_str: String = fields
             .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
+            .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(" ");
         eprintln!(
@@ -243,7 +250,7 @@ impl Logger {
     pub fn error(&self, message: &str, fields: &[(&str, &str)]) {
         let fields_str: String = fields
             .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
+            .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(" ");
         eprintln!(
@@ -276,9 +283,10 @@ fn generate_request_id() -> String {
         .unwrap_or_default()
         .as_millis();
     let random: u32 = rand_simple();
-    format!("{:x}-{:08x}", timestamp, random)
+    format!("{timestamp:x}-{random:08x}")
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
 fn rand_simple() -> u32 {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};

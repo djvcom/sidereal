@@ -8,6 +8,7 @@ use std::process::Command;
 use tracing::{debug, info};
 
 /// Builder for creating rootfs images.
+#[must_use]
 pub struct RootfsBuilder {
     work_dir: PathBuf,
     size_mb: u32,
@@ -23,7 +24,7 @@ impl RootfsBuilder {
     }
 
     /// Set the rootfs size in megabytes.
-    pub fn with_size(mut self, mb: u32) -> Self {
+    pub const fn with_size(mut self, mb: u32) -> Self {
         self.size_mb = mb;
         self
     }
@@ -38,7 +39,7 @@ impl RootfsBuilder {
         }
 
         std::fs::create_dir_all(&self.work_dir)?;
-        std::fs::create_dir_all(output_path.parent().unwrap_or(Path::new(".")))?;
+        std::fs::create_dir_all(output_path.parent().unwrap_or_else(|| Path::new(".")))?;
 
         info!(
             size_mb = self.size_mb,
@@ -67,11 +68,11 @@ impl RootfsBuilder {
                 &format!("count={}", self.size_mb),
             ])
             .status()
-            .map_err(|e| FirecrackerError::RootfsFailed(format!("dd failed: {}", e)))?;
+            .map_err(|e| FirecrackerError::RootfsFailed(format!("dd failed: {e}")))?;
 
         if !status.success() {
             return Err(FirecrackerError::RootfsFailed(
-                "dd failed to create image".to_string(),
+                "dd failed to create image".to_owned(),
             ));
         }
 
@@ -80,16 +81,17 @@ impl RootfsBuilder {
 
     /// Format the image as ext4.
     fn format_ext4(&self, path: &Path) -> Result<()> {
+        let _ = &self;
         debug!(path = %path.display(), "Formatting as ext4");
 
         let status = Command::new("mkfs.ext4")
             .args(["-F", &path.display().to_string()])
             .status()
-            .map_err(|e| FirecrackerError::RootfsFailed(format!("mkfs.ext4 failed: {}", e)))?;
+            .map_err(|e| FirecrackerError::RootfsFailed(format!("mkfs.ext4 failed: {e}")))?;
 
         if !status.success() {
             return Err(FirecrackerError::RootfsFailed(
-                "mkfs.ext4 failed".to_string(),
+                "mkfs.ext4 failed".to_owned(),
             ));
         }
 
@@ -112,10 +114,10 @@ impl RootfsBuilder {
                 &mount_dir.display().to_string(),
             ])
             .status()
-            .map_err(|e| FirecrackerError::RootfsFailed(format!("mount failed: {}", e)))?;
+            .map_err(|e| FirecrackerError::RootfsFailed(format!("mount failed: {e}")))?;
 
         if !status.success() {
-            return Err(FirecrackerError::RootfsFailed("mount failed".to_string()));
+            return Err(FirecrackerError::RootfsFailed("mount failed".to_owned()));
         }
 
         let result = self.populate_mounted_rootfs(&mount_dir, runtime_binary);
@@ -130,6 +132,7 @@ impl RootfsBuilder {
 
     /// Populate the mounted rootfs.
     fn populate_mounted_rootfs(&self, mount_dir: &Path, runtime_binary: &Path) -> Result<()> {
+        let _ = &self;
         let sbin_dir = mount_dir.join("sbin");
         let tmp_dir = mount_dir.join("tmp");
         let dev_dir = mount_dir.join("dev");
@@ -140,7 +143,7 @@ impl RootfsBuilder {
             let status = Command::new("sudo")
                 .args(["mkdir", "-p", &dir.display().to_string()])
                 .status()
-                .map_err(|e| FirecrackerError::RootfsFailed(format!("mkdir failed: {}", e)))?;
+                .map_err(|e| FirecrackerError::RootfsFailed(format!("mkdir failed: {e}")))?;
 
             if !status.success() {
                 return Err(FirecrackerError::RootfsFailed(format!(
@@ -164,22 +167,22 @@ impl RootfsBuilder {
                 &init_path.display().to_string(),
             ])
             .status()
-            .map_err(|e| FirecrackerError::RootfsFailed(format!("cp failed: {}", e)))?;
+            .map_err(|e| FirecrackerError::RootfsFailed(format!("cp failed: {e}")))?;
 
         if !status.success() {
             return Err(FirecrackerError::RootfsFailed(
-                "Failed to copy runtime binary".to_string(),
+                "Failed to copy runtime binary".to_owned(),
             ));
         }
 
         let status = Command::new("sudo")
             .args(["chmod", "+x", &init_path.display().to_string()])
             .status()
-            .map_err(|e| FirecrackerError::RootfsFailed(format!("chmod failed: {}", e)))?;
+            .map_err(|e| FirecrackerError::RootfsFailed(format!("chmod failed: {e}")))?;
 
         if !status.success() {
             return Err(FirecrackerError::RootfsFailed(
-                "Failed to chmod init binary".to_string(),
+                "Failed to chmod init binary".to_owned(),
             ));
         }
 
@@ -188,22 +191,22 @@ impl RootfsBuilder {
 }
 
 /// Download a pre-built kernel for Firecracker.
-pub async fn download_kernel(dest: &Path) -> Result<()> {
+pub fn download_kernel(dest: &Path) -> Result<()> {
     const KERNEL_URL: &str =
         "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin";
 
     info!(url = KERNEL_URL, dest = %dest.display(), "Downloading kernel");
 
-    std::fs::create_dir_all(dest.parent().unwrap_or(Path::new(".")))?;
+    std::fs::create_dir_all(dest.parent().unwrap_or_else(|| Path::new(".")))?;
 
     let status = Command::new("curl")
         .args(["-fsSL", "-o", &dest.display().to_string(), KERNEL_URL])
         .status()
-        .map_err(|e| FirecrackerError::RootfsFailed(format!("curl failed: {}", e)))?;
+        .map_err(|e| FirecrackerError::RootfsFailed(format!("curl failed: {e}")))?;
 
     if !status.success() {
         return Err(FirecrackerError::RootfsFailed(
-            "Failed to download kernel".to_string(),
+            "Failed to download kernel".to_owned(),
         ));
     }
 

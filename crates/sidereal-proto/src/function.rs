@@ -5,7 +5,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 /// Function invocation messages.
 ///
 /// Used for gateway → worker and worker → worker communication.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum FunctionMessage {
     /// Function invocation request.
     Invoke(InvokeRequest),
@@ -15,7 +15,7 @@ pub enum FunctionMessage {
 }
 
 /// Request to invoke a function.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct InvokeRequest {
     /// Target function name.
     ///
@@ -82,7 +82,7 @@ impl InvokeRequest {
 }
 
 /// Response from a function invocation.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct InvokeResponse {
     /// HTTP status code.
     ///
@@ -99,7 +99,7 @@ pub struct InvokeResponse {
 impl InvokeResponse {
     /// Creates a successful response (200 OK).
     #[must_use]
-    pub fn ok(body: Vec<u8>) -> Self {
+    pub const fn ok(body: Vec<u8>) -> Self {
         Self {
             status: 200,
             body,
@@ -109,7 +109,7 @@ impl InvokeResponse {
 
     /// Creates a response with the given status code.
     #[must_use]
-    pub fn with_status(status: u16, body: Vec<u8>) -> Self {
+    pub const fn with_status(status: u16, body: Vec<u8>) -> Self {
         Self {
             status,
             body,

@@ -7,7 +7,7 @@ use figment::{
 };
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
@@ -26,7 +26,7 @@ pub enum ConfigError {
 
 impl From<FigmentError> for ConfigError {
     fn from(err: FigmentError) -> Self {
-        ConfigError::Figment(Box::new(err))
+        Self::Figment(Box::new(err))
     }
 }
 
@@ -65,12 +65,12 @@ impl Default for MetricsConfig {
     }
 }
 
-fn default_metrics_bind_address() -> SocketAddr {
-    "127.0.0.1:9090".parse().unwrap()
+const fn default_metrics_bind_address() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9090)
 }
 
 fn default_metrics_path() -> String {
-    "/metrics".to_string()
+    "/metrics".to_owned()
 }
 
 impl GatewayConfig {
@@ -131,11 +131,11 @@ pub struct TlsConfig {
     pub key_path: PathBuf,
 }
 
-fn default_bind_address() -> SocketAddr {
-    "127.0.0.1:8080".parse().unwrap()
+const fn default_bind_address() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080)
 }
 
-fn default_shutdown_timeout() -> Duration {
+const fn default_shutdown_timeout() -> Duration {
     Duration::from_secs(30)
 }
 
@@ -179,7 +179,7 @@ pub struct SchedulerResolverConfig {
     pub load_balance: LoadBalanceStrategyConfig,
 }
 
-fn default_cache_ttl_secs() -> u64 {
+const fn default_cache_ttl_secs() -> u64 {
     5
 }
 
@@ -254,7 +254,7 @@ pub enum AuthAlgorithm {
     HS512,
 }
 
-fn default_auth_algorithm() -> AuthAlgorithm {
+const fn default_auth_algorithm() -> AuthAlgorithm {
     AuthAlgorithm::HS256
 }
 
@@ -272,7 +272,7 @@ impl Default for TracingConfig {
     }
 }
 
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 
@@ -307,15 +307,15 @@ impl Default for CircuitBreakerConfig {
     }
 }
 
-fn default_failure_threshold() -> u32 {
+const fn default_failure_threshold() -> u32 {
     5
 }
 
-fn default_success_threshold() -> u32 {
+const fn default_success_threshold() -> u32 {
     3
 }
 
-fn default_reset_timeout_ms() -> u32 {
+const fn default_reset_timeout_ms() -> u32 {
     30_000 // 30 seconds
 }
 
@@ -363,31 +363,31 @@ impl Default for LimitsConfig {
     }
 }
 
-fn default_max_body_size() -> usize {
+const fn default_max_body_size() -> usize {
     10 * 1024 * 1024 // 10MB
 }
 
-fn default_max_header_size() -> usize {
+const fn default_max_header_size() -> usize {
     16 * 1024 // 16KB
 }
 
-fn default_max_uri_length() -> usize {
+const fn default_max_uri_length() -> usize {
     8 * 1024 // 8KB
 }
 
-fn default_request_timeout() -> Duration {
+const fn default_request_timeout() -> Duration {
     Duration::from_secs(30)
 }
 
-fn default_connect_timeout() -> Duration {
+const fn default_connect_timeout() -> Duration {
     Duration::from_secs(5)
 }
 
-fn default_max_connections() -> usize {
+const fn default_max_connections() -> usize {
     10_000
 }
 
-fn default_max_connections_per_ip() -> usize {
+const fn default_max_connections_per_ip() -> usize {
     100
 }
 
@@ -405,22 +405,22 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
         let ms: u64 = stripped
             .trim()
             .parse()
-            .map_err(|_| format!("Invalid duration: {}", s))?;
+            .map_err(|_| format!("Invalid duration: {s}"))?;
         Ok(Duration::from_millis(ms))
     } else if let Some(stripped) = s.strip_suffix('s') {
         let secs: u64 = stripped
             .trim()
             .parse()
-            .map_err(|_| format!("Invalid duration: {}", s))?;
+            .map_err(|_| format!("Invalid duration: {s}"))?;
         Ok(Duration::from_secs(secs))
     } else if let Some(stripped) = s.strip_suffix('m') {
         let mins: u64 = stripped
             .trim()
             .parse()
-            .map_err(|_| format!("Invalid duration: {}", s))?;
+            .map_err(|_| format!("Invalid duration: {s}"))?;
         Ok(Duration::from_secs(mins * 60))
     } else {
-        let secs: u64 = s.parse().map_err(|_| format!("Invalid duration: {}", s))?;
+        let secs: u64 = s.parse().map_err(|_| format!("Invalid duration: {s}"))?;
         Ok(Duration::from_secs(secs))
     }
 }

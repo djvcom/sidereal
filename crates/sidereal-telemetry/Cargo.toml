@@ -1,0 +1,92 @@
+[package]
+name = "sidereal-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Self-hosted observability backend with OTLP ingestion and DataFusion queries"
+
+[[bin]]
+name = "sidereal-telemetry"
+path = "src/main.rs"
+
+[dependencies]
+# Arrow ecosystem (DataFusion 51 requires arrow/parquet 57, object_store 0.12)
+arrow = { version = "57.1", features = ["prettyprint"] }
+parquet = { version = "57.1", features = ["async", "object_store", "zstd"] }
+datafusion = "51"
+object_store = { version = "0.12", features = [] }
+
+# OTLP (official OpenTelemetry proto types + semantic conventions)
+# opentelemetry-proto 0.31 requires tonic 0.14
+opentelemetry-proto = { version = "0.31", features = ["gen-tonic", "trace", "metrics", "logs"] }
+opentelemetry-semantic-conventions = "0.31"
+tonic = { version = "0.14", features = ["gzip"] }
+prost = "0.14"
+
+# HTTP
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+
+# Async
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+
+# Serialisation
+serde.workspace = true
+serde_json.workspace = true
+ciborium = "0.2"
+base64 = "0.22"
+
+# Configuration
+figment.workspace = true
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+bytes = "1"
+ulid = "1.1"
+url = "2"
+hex = "0.4.3"
+hmac = "0.12.1"
+sha2 = "0.10.9"
+secrecy = "0.10.3"
+unicode-normalization = "0.1.25"
+glob = "0.3.3"
+regex = "1.12.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio-test = "0.4"
+futures = "0.3"
+rstest = "0.26.1"
+proptest = "1.8.0"
+criterion = { version = "0.5.1", features = ["html_reports", "async_tokio"] }
+toml.workspace = true
+flate2 = "1.1.5"
+
+[features]
+default = []
+s3 = ["object_store/aws"]
+gcs = ["object_store/gcp"]
+azure = ["object_store/azure"]
+
+[[bench]]
+name = "conversion"
+harness = false
+
+[[bench]]
+name = "ingestion"
+harness = false
+
+[[bench]]
+name = "query"
+harness = false
+
+[lints]
+workspace = true

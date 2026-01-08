@@ -9,3 +9,6 @@ description = "Build-time validation for Sidereal projects"
 serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
+
+[lints]
+workspace = true

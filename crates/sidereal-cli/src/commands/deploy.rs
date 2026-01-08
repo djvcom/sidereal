@@ -82,7 +82,7 @@ async fn run_local_deploy(args: DeployArgs) -> Result<(), DeployError> {
 
     if !kernel_path.exists() {
         println!("Downloading Firecracker kernel...");
-        download_kernel(&kernel_path).await?;
+        download_kernel(&kernel_path)?;
     }
 
     if !args.skip_build {
@@ -110,7 +110,7 @@ async fn run_local_deploy(args: DeployArgs) -> Result<(), DeployError> {
 
     println!("Waiting for VM to be ready...");
     match vm.wait_ready(Duration::from_secs(30)).await {
-        Ok(_) => {
+        Ok(()) => {
             println!();
             println!("VM is ready!");
             println!("  CID: {}", vm.cid());
@@ -150,7 +150,7 @@ fn check_prerequisites() -> Result<(), DeployError> {
 }
 
 fn get_sidereal_dir() -> Result<PathBuf, DeployError> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
     let sidereal_dir = PathBuf::from(home).join(".sidereal");
     std::fs::create_dir_all(&sidereal_dir)?;
     Ok(sidereal_dir)
@@ -174,53 +174,63 @@ async fn build_for_firecracker() -> Result<(), DeployError> {
 
     if !status.success() {
         return Err(DeployError::CrossCompileFailed(
-            "cargo build failed".to_string(),
+            "cargo build failed".to_owned(),
         ));
     }
 
     Ok(())
 }
 
+const RUNTIME_BINARY_NAME: &str = "sidereal-runtime";
+const MUSL_TARGET: &str = "x86_64-unknown-linux-musl";
+
 fn find_runtime_binary() -> Result<PathBuf, DeployError> {
-    // Try relative path first (when running from workspace root)
-    let binary_path = PathBuf::from("target/x86_64-unknown-linux-musl/release/sidereal-runtime");
+    try_relative_release_path()
+        .or_else(try_workspace_release_path)
+        .or_else(try_relative_debug_path)
+        .ok_or_else(|| {
+            DeployError::BuildFailed(
+                "Runtime binary not found. Run 'cargo build --release --target x86_64-unknown-linux-musl -p sidereal-runtime' first.".to_owned(),
+            )
+        })
+}
 
-    if binary_path.exists() {
-        return Ok(binary_path);
+fn try_relative_release_path() -> Option<PathBuf> {
+    let path = PathBuf::from(format!(
+        "target/{MUSL_TARGET}/release/{RUNTIME_BINARY_NAME}"
+    ));
+    path.exists().then_some(path)
+}
+
+fn try_relative_debug_path() -> Option<PathBuf> {
+    let path = PathBuf::from(format!("target/{MUSL_TARGET}/debug/{RUNTIME_BINARY_NAME}"));
+    path.exists().then_some(path)
+}
+
+fn try_workspace_release_path() -> Option<PathBuf> {
+    let workspace_root = find_workspace_root_via_cargo()?;
+    let path = workspace_root.join(format!(
+        "target/{MUSL_TARGET}/release/{RUNTIME_BINARY_NAME}"
+    ));
+    path.exists().then_some(path)
+}
+
+const SEARCH_STR: &str = "\"workspace_root\":\"";
+
+fn find_workspace_root_via_cargo() -> Option<PathBuf> {
+    let cargo = which::which("cargo").ok()?;
+    let output = std::process::Command::new(&cargo)
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
     }
 
-    // Try to find workspace root via cargo metadata
-    let cargo_bin = which::which("cargo").ok();
-    if let Some(cargo) = cargo_bin {
-        if let Ok(output) = std::process::Command::new(&cargo)
-            .args(["metadata", "--format-version", "1", "--no-deps"])
-            .output()
-        {
-            if output.status.success() {
-                if let Ok(metadata) = String::from_utf8(output.stdout) {
-                    const SEARCH_STR: &str = "\"workspace_root\":\"";
-                    if let Some(start) = metadata.find(SEARCH_STR) {
-                        let rest = &metadata[start + SEARCH_STR.len()..];
-                        if let Some(end) = rest.find('"') {
-                            let workspace_root = &rest[..end];
-                            let workspace_binary = PathBuf::from(workspace_root)
-                                .join("target/x86_64-unknown-linux-musl/release/sidereal-runtime");
-                            if workspace_binary.exists() {
-                                return Ok(workspace_binary);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let debug_path = PathBuf::from("target/x86_64-unknown-linux-musl/debug/sidereal-runtime");
-    if debug_path.exists() {
-        return Ok(debug_path);
-    }
-
-    Err(DeployError::BuildFailed(
-        "Runtime binary not found. Run 'cargo build --release --target x86_64-unknown-linux-musl -p sidereal-runtime' first.".to_string(),
-    ))
+    let metadata = String::from_utf8(output.stdout).ok()?;
+    let start = metadata.find(SEARCH_STR)?;
+    let rest = &metadata[start + SEARCH_STR.len()..];
+    let end = rest.find('"')?;
+    Some(PathBuf::from(&rest[..end]))
 }

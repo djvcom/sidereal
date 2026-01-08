@@ -30,8 +30,8 @@ pub enum WorkerAddress {
 impl std::fmt::Display for WorkerAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WorkerAddress::Http { url } => write!(f, "{}", url),
-            WorkerAddress::Vsock { uds_path, port } => {
+            Self::Http { url } => write!(f, "{url}"),
+            Self::Vsock { uds_path, port } => {
                 write!(f, "vsock://{}:{}", uds_path.display(), port)
             }
         }
@@ -92,8 +92,8 @@ impl BackendRegistry {
             return backend.clone();
         }
 
-        let backend = Arc::new(HttpBackend::new(url.to_string()));
-        self.http_backends.insert(url.to_string(), backend.clone());
+        let backend = Arc::new(HttpBackend::new(url.to_owned()));
+        self.http_backends.insert(url.to_owned(), backend.clone());
         backend
     }
 

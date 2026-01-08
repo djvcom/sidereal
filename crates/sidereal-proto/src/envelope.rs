@@ -11,7 +11,7 @@ use crate::types::CorrelationId;
 /// - Correlation ID for request/response matching
 /// - Generic metadata for OTEL context propagation
 /// - Timestamps and deadlines
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Envelope<T> {
     /// Envelope header with metadata.
     pub header: EnvelopeHeader,
@@ -52,7 +52,7 @@ impl<T> Envelope<T> {
 }
 
 /// Header metadata for all protocol envelopes.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct EnvelopeHeader {
     /// Protocol version.
     ///
@@ -119,7 +119,7 @@ impl EnvelopeHeader {
 
     /// Checks if this message version is compatible.
     #[must_use]
-    pub fn is_compatible(&self) -> bool {
+    pub const fn is_compatible(&self) -> bool {
         self.version >= crate::version::MIN_SUPPORTED && self.version <= crate::version::CURRENT
     }
 
@@ -127,8 +127,7 @@ impl EnvelopeHeader {
     #[must_use]
     pub fn is_expired(&self) -> bool {
         self.deadline_ns
-            .map(|deadline| current_timestamp_ns() > deadline)
-            .unwrap_or(false)
+            .is_some_and(|deadline| current_timestamp_ns() > deadline)
     }
 
     /// Gets metadata value by key.
@@ -160,6 +159,7 @@ impl Default for EnvelopeHeader {
 }
 
 /// Returns the current timestamp in nanoseconds since Unix epoch.
+#[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
 fn current_timestamp_ns() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

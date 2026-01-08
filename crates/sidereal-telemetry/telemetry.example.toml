@@ -1,0 +1,68 @@
+# Sidereal Telemetry Configuration Example
+#
+# Copy this file to telemetry.toml and adjust for your environment.
+# Environment variables prefixed with TELEMETRY_ can override any setting.
+
+[server]
+# OTLP gRPC receiver address (standard port 4317)
+grpc_addr = "0.0.0.0:4317"
+# OTLP HTTP receiver address (standard port 4318)
+http_addr = "0.0.0.0:4318"
+# Query API address
+query_addr = "0.0.0.0:3100"
+
+[buffer]
+# Maximum records per batch before automatic flush
+max_batch_size = 10000
+# Flush interval in seconds (for time-based flush)
+flush_interval_secs = 30
+# Maximum buffer size in bytes (backpressure threshold)
+max_buffer_bytes = 104857600  # 100MB
+
+[parquet]
+# Maximum rows per Parquet row group
+row_group_size = 1000000
+# Compression algorithm: zstd, snappy, lz4, none
+compression = "zstd"
+
+# Storage backend configuration
+# Choose one of: local, s3, gcs, memory
+
+# Local filesystem storage (default)
+[storage]
+type = "local"
+path = "./telemetry-data"
+
+# S3 or S3-compatible storage (MinIO, Garage, etc.)
+# Requires --features s3
+# [storage]
+# type = "s3"
+# bucket = "telemetry"
+# prefix = ""
+# region = "eu-west-1"  # or "garage" for Garage
+# endpoint = "http://localhost:3900"  # for S3-compatible services
+# access_key_id = "your-access-key"  # or use AWS_ACCESS_KEY_ID env var
+# secret_access_key = "your-secret-key"  # or use AWS_SECRET_ACCESS_KEY env var
+# force_path_style = true  # required for most S3-compatible services
+# allow_http = true  # for local development without TLS
+
+# Google Cloud Storage
+# Requires --features gcs
+# [storage]
+# type = "gcs"
+# bucket = "telemetry"
+# prefix = ""
+# service_account_path = "/path/to/service-account.json"  # or use GOOGLE_APPLICATION_CREDENTIALS env var
+
+# Azure Blob Storage
+# Requires --features azure
+# [storage]
+# type = "azure"
+# account = "myaccount"
+# container = "telemetry"
+# prefix = ""
+# access_key = "your-access-key"  # or use AZURE_STORAGE_ACCESS_KEY env var
+
+# In-memory storage (for testing only)
+# [storage]
+# type = "memory"

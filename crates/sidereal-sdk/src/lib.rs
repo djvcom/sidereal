@@ -138,7 +138,7 @@ pub use extractors::{
     KvError, KvRejection, SecretError, Secrets, SecretsRejection,
 };
 pub use registry::{FunctionMetadata, FunctionResult};
-pub use server::{run, ServerConfig};
+pub use server::{run, ServerConfig, ServerError};
 pub use service_registry::{
     get_background_services, get_router_services, get_services, ServiceError, ServiceFactory,
     ServiceKind, ServiceMetadata,

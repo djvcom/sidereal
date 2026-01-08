@@ -60,8 +60,8 @@ async fn main() {
     let cli = Cli::parse();
 
     let result: Result<(), anyhow::Error> = match cli.command {
-        Commands::Init { name, path } => commands::init::run(&name, path).await.map_err(Into::into),
-        Commands::Dev { port } => commands::dev::run(port).await.map_err(Into::into),
+        Commands::Init { name, path } => commands::init::run(&name, path).map_err(Into::into),
+        Commands::Dev { port } => commands::dev::run(port).map_err(Into::into),
         Commands::Deploy {
             local,
             keep_alive,
@@ -77,7 +77,7 @@ async fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         std::process::exit(1);
     }
 }

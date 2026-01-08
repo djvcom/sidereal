@@ -15,7 +15,7 @@ pub struct ScalingPolicy {
 
 impl ScalingPolicy {
     /// Creates a new scaling policy.
-    pub fn new(config: ScalingConfig) -> Self {
+    pub const fn new(config: ScalingConfig) -> Self {
         Self {
             config,
             last_scale_up: RwLock::new(None),
@@ -28,25 +28,31 @@ impl ScalingPolicy {
         let now = Instant::now();
 
         // Check cooldowns
-        if let Some(last) = *self.last_scale_up.read() {
-            if now.duration_since(last) < self.config.scale_up_cooldown {
-                return ScalingDecision::NoChange {
-                    reason: "scale-up cooldown active",
-                };
+        {
+            let last_scale_up = self.last_scale_up.read();
+            if let Some(last) = *last_scale_up {
+                if now.duration_since(last) < self.config.scale_up_cooldown {
+                    return ScalingDecision::NoChange {
+                        reason: "scale-up cooldown active",
+                    };
+                }
             }
         }
 
-        if let Some(last) = *self.last_scale_down.read() {
-            if now.duration_since(last) < self.config.scale_down_cooldown {
-                return ScalingDecision::NoChange {
-                    reason: "scale-down cooldown active",
-                };
+        {
+            let last_scale_down = self.last_scale_down.read();
+            if let Some(last) = *last_scale_down {
+                if now.duration_since(last) < self.config.scale_down_cooldown {
+                    return ScalingDecision::NoChange {
+                        reason: "scale-down cooldown active",
+                    };
+                }
             }
         }
 
         // Calculate utilisation
         let utilisation = if metrics.total_capacity > 0 {
-            metrics.total_load as f64 / metrics.total_capacity as f64
+            f64::from(metrics.total_load) / f64::from(metrics.total_capacity)
         } else {
             // No capacity, definitely need to scale up
             1.0
@@ -60,8 +66,13 @@ impl ScalingPolicy {
                 };
             }
 
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                clippy::as_conversions
+            )]
             let target_capacity =
-                (metrics.total_load as f64 / self.config.target_utilisation).ceil() as u32;
+                (f64::from(metrics.total_load) / self.config.target_utilisation).ceil() as u32;
             let needed_additional = target_capacity.saturating_sub(metrics.total_capacity);
 
             // Estimate workers needed (assuming average capacity)
@@ -126,13 +137,13 @@ impl ScalingPolicy {
     }
 
     /// Returns the configuration.
-    pub fn config(&self) -> &ScalingConfig {
+    pub const fn config(&self) -> &ScalingConfig {
         &self.config
     }
 }
 
 /// Scaling decision.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScalingDecision {
     /// Scale up by adding workers.
     ScaleUp { count: u32, reason: String },
@@ -145,19 +156,19 @@ pub enum ScalingDecision {
 impl ScalingDecision {
     /// Returns true if this is a scale-up decision.
     #[must_use]
-    pub fn is_scale_up(&self) -> bool {
+    pub const fn is_scale_up(&self) -> bool {
         matches!(self, Self::ScaleUp { .. })
     }
 
     /// Returns true if this is a scale-down decision.
     #[must_use]
-    pub fn is_scale_down(&self) -> bool {
+    pub const fn is_scale_down(&self) -> bool {
         matches!(self, Self::ScaleDown { .. })
     }
 
     /// Returns true if no change is needed.
     #[must_use]
-    pub fn is_no_change(&self) -> bool {
+    pub const fn is_no_change(&self) -> bool {
         matches!(self, Self::NoChange { .. })
     }
 }
@@ -184,7 +195,7 @@ impl ClusterMetrics {
         if self.total_capacity == 0 {
             return 0.0;
         }
-        self.total_load as f64 / self.total_capacity as f64
+        f64::from(self.total_load) / f64::from(self.total_capacity)
     }
 }
 

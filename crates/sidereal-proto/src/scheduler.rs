@@ -8,7 +8,7 @@
 use rkyv::{Archive, Deserialize, Serialize};
 
 /// Scheduler message types.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum SchedulerMessage {
     // Worker -> Scheduler
     /// Worker registration request.
@@ -36,7 +36,7 @@ pub enum SchedulerMessage {
 }
 
 /// Worker registration request.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct RegisterRequest {
     /// Unique worker identifier.
     pub worker_id: String,
@@ -74,7 +74,7 @@ impl RegisterRequest {
 
     /// Sets the vsock CID.
     #[must_use]
-    pub fn with_vsock_cid(mut self, cid: u32) -> Self {
+    pub const fn with_vsock_cid(mut self, cid: u32) -> Self {
         self.vsock_cid = Some(cid);
         self
     }
@@ -88,14 +88,14 @@ impl RegisterRequest {
 
     /// Sets the worker capacity.
     #[must_use]
-    pub fn with_capacity(mut self, capacity: Capacity) -> Self {
+    pub const fn with_capacity(mut self, capacity: Capacity) -> Self {
         self.capacity = capacity;
         self
     }
 }
 
 /// Registration response from scheduler.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct RegisterResponse {
     /// Whether registration was successful.
     pub success: bool,
@@ -110,7 +110,7 @@ pub struct RegisterResponse {
 impl RegisterResponse {
     /// Creates a successful registration response.
     #[must_use]
-    pub fn success(heartbeat_interval_secs: u32) -> Self {
+    pub const fn success(heartbeat_interval_secs: u32) -> Self {
         Self {
             success: true,
             error_code: None,
@@ -132,7 +132,7 @@ impl RegisterResponse {
 }
 
 /// Worker heartbeat request.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct HeartbeatRequest {
     /// Worker identifier.
     pub worker_id: String,
@@ -164,7 +164,7 @@ impl HeartbeatRequest {
 }
 
 /// Heartbeat response from scheduler.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct HeartbeatResponse {
     /// Whether the heartbeat was accepted.
     pub accepted: bool,
@@ -175,7 +175,7 @@ pub struct HeartbeatResponse {
 impl HeartbeatResponse {
     /// Creates an accepted heartbeat response.
     #[must_use]
-    pub fn accepted() -> Self {
+    pub const fn accepted() -> Self {
         Self {
             accepted: true,
             commands: Vec::new(),
@@ -184,7 +184,7 @@ impl HeartbeatResponse {
 
     /// Creates a response with commands.
     #[must_use]
-    pub fn with_commands(commands: Vec<WorkerCommand>) -> Self {
+    pub const fn with_commands(commands: Vec<WorkerCommand>) -> Self {
         Self {
             accepted: true,
             commands,
@@ -193,7 +193,7 @@ impl HeartbeatResponse {
 }
 
 /// Commands that can be sent to workers via heartbeat response.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum WorkerCommand {
     /// Update heartbeat interval.
     SetHeartbeatInterval { interval_secs: u32 },
@@ -202,7 +202,7 @@ pub enum WorkerCommand {
 }
 
 /// Worker deregistration request.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct DeregisterRequest {
     /// Worker identifier.
     pub worker_id: String,
@@ -222,7 +222,7 @@ pub enum DeregisterReason {
 }
 
 /// Status update request from worker.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StatusUpdateRequest {
     /// Worker identifier.
     pub worker_id: String,
@@ -250,7 +250,7 @@ pub enum WorkerStatusProto {
 }
 
 /// Drain request from scheduler to worker.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct DrainRequest {
     /// Maximum time to complete in-flight requests (seconds).
     pub timeout_secs: u32,
@@ -261,7 +261,7 @@ pub struct DrainRequest {
 impl DrainRequest {
     /// Creates a new drain request.
     #[must_use]
-    pub fn new(timeout_secs: u32) -> Self {
+    pub const fn new(timeout_secs: u32) -> Self {
         Self {
             timeout_secs,
             reason: DrainReason::ScaleDown,
@@ -270,7 +270,7 @@ impl DrainRequest {
 
     /// Creates a drain request for shutdown.
     #[must_use]
-    pub fn shutdown(timeout_secs: u32) -> Self {
+    pub const fn shutdown(timeout_secs: u32) -> Self {
         Self {
             timeout_secs,
             reason: DrainReason::Shutdown,
@@ -292,7 +292,7 @@ pub enum DrainReason {
 }
 
 /// Worker capacity information.
-#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Archive, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Capacity {
     /// Maximum concurrent invocations.
     pub max_concurrent: u32,
@@ -344,13 +344,14 @@ pub enum SchedulerErrorCode {
 impl SchedulerErrorCode {
     /// Returns the numeric value of this error code.
     #[must_use]
+    #[allow(clippy::as_conversions)]
     pub const fn as_u8(self) -> u8 {
         self as u8
     }
 
     /// Creates an error code from a numeric value.
     #[must_use]
-    pub fn from_u8(value: u8) -> Option<Self> {
+    pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
             60 => Some(Self::WorkerNotFound),
             61 => Some(Self::WorkerAlreadyRegistered),

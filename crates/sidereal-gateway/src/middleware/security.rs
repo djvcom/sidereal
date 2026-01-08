@@ -1,8 +1,8 @@
 //! Security middleware for header sanitisation and response headers.
 
 use axum::http::header::{
-    HeaderName, CONTENT_SECURITY_POLICY, STRICT_TRANSPORT_SECURITY, X_CONTENT_TYPE_OPTIONS,
-    X_FRAME_OPTIONS,
+    HeaderName, HeaderValue, CONTENT_SECURITY_POLICY, STRICT_TRANSPORT_SECURITY,
+    X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS,
 };
 use http::{Request, Response};
 use std::task::{Context, Poll};
@@ -25,7 +25,7 @@ const STRIP_HEADERS: &[&str] = &[
 pub struct SecurityLayer;
 
 impl SecurityLayer {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -80,21 +80,19 @@ where
             // Strict-Transport-Security (HSTS)
             headers.insert(
                 STRICT_TRANSPORT_SECURITY,
-                "max-age=31536000; includeSubDomains".parse().unwrap(),
+                HeaderValue::from_static("max-age=31536000; includeSubDomains"),
             );
 
             // Prevent MIME sniffing
-            headers.insert(X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+            headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
 
             // Prevent clickjacking
-            headers.insert(X_FRAME_OPTIONS, "DENY".parse().unwrap());
+            headers.insert(X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
 
             // Content Security Policy
             headers.insert(
                 CONTENT_SECURITY_POLICY,
-                "default-src 'none'; frame-ancestors 'none'"
-                    .parse()
-                    .unwrap(),
+                HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
             );
 
             Ok(response)

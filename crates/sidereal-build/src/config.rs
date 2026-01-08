@@ -29,7 +29,7 @@ pub struct ProjectConfig {
 }
 
 fn default_version() -> String {
-    "0.1.0".to_string()
+    "0.1.0".to_owned()
 }
 
 /// Development server configuration.
@@ -48,7 +48,7 @@ impl Default for DevConfig {
     }
 }
 
-fn default_port() -> u16 {
+const fn default_port() -> u16 {
     7850
 }
 
@@ -91,6 +91,7 @@ pub struct RedisConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

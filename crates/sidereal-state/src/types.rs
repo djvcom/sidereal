@@ -112,7 +112,8 @@ impl fmt::Debug for LockGuard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LockGuard")
             .field("resource", &self.resource)
+            .field("token", &self.token)
             .field("released", &self.released.load(Ordering::SeqCst))
-            .finish()
+            .finish_non_exhaustive()
     }
 }

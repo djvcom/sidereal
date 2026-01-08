@@ -81,7 +81,7 @@ impl VmManager {
         let kvm_path = Path::new("/dev/kvm");
         if !kvm_path.exists() {
             return Err(FirecrackerError::KvmNotAvailable(
-                "/dev/kvm does not exist".to_string(),
+                "/dev/kvm does not exist".to_owned(),
             ));
         }
 
@@ -91,14 +91,13 @@ impl VmManager {
                 let mode = meta.mode();
                 if mode & 0o006 == 0 {
                     return Err(FirecrackerError::KvmNotAvailable(
-                        "/dev/kvm is not accessible (check permissions)".to_string(),
+                        "/dev/kvm is not accessible (check permissions)".to_owned(),
                     ));
                 }
                 Ok(())
             }
             Err(e) => Err(FirecrackerError::KvmNotAvailable(format!(
-                "Cannot access /dev/kvm: {}",
-                e
+                "Cannot access /dev/kvm: {e}"
             ))),
         }
     }
@@ -115,8 +114,8 @@ impl VmManager {
         }
 
         let vm_id = uuid::Uuid::new_v4().to_string();
-        let api_socket = self.work_dir.join(format!("{}.sock", vm_id));
-        let vsock_uds_path = self.work_dir.join(format!("{}_vsock.sock", vm_id));
+        let api_socket = self.work_dir.join(format!("{vm_id}.sock"));
+        let vsock_uds_path = self.work_dir.join(format!("{vm_id}_vsock.sock"));
 
         info!(vm_id = %vm_id, "Starting Firecracker VM");
 
@@ -142,8 +141,7 @@ impl VmManager {
                 String::new()
             };
             return Err(FirecrackerError::VmStartFailed(format!(
-                "Process exited immediately with status {}: {}",
-                status, stderr
+                "Process exited immediately with status {status}: {stderr}"
             )));
         }
 
@@ -157,11 +155,11 @@ impl VmManager {
         if !api_socket.exists() {
             let _ = process.kill().await;
             return Err(FirecrackerError::VmStartFailed(
-                "API socket not created".to_string(),
+                "API socket not created".to_owned(),
             ));
         }
 
-        let mut instance = VmInstance {
+        let instance = VmInstance {
             process,
             api_socket,
             vsock_uds_path,
@@ -183,16 +181,16 @@ impl VmInstance {
 
         let method = method
             .parse::<Method>()
-            .map_err(|e| FirecrackerError::VmConfigFailed(format!("Invalid HTTP method: {}", e)))?;
+            .map_err(|e| FirecrackerError::VmConfigFailed(format!("Invalid HTTP method: {e}")))?;
 
-        let req_body = body.unwrap_or("").to_string();
+        let req_body = body.unwrap_or("").to_owned();
         let request = Request::builder()
             .method(method)
             .uri(url)
             .header("Content-Type", "application/json")
             .body(Full::new(Bytes::from(req_body)))
             .map_err(|e| {
-                FirecrackerError::VmConfigFailed(format!("Failed to build request: {}", e))
+                FirecrackerError::VmConfigFailed(format!("Failed to build request: {e}"))
             })?;
 
         debug!("Sending {} {}", request.method(), path);
@@ -200,15 +198,16 @@ impl VmInstance {
         let response = client
             .request(request)
             .await
-            .map_err(|e| FirecrackerError::VmConfigFailed(format!("API request failed: {}", e)))?;
+            .map_err(|e| FirecrackerError::VmConfigFailed(format!("API request failed: {e}")))?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.collect().await.map_err(|e| {
-                FirecrackerError::VmConfigFailed(format!("Failed to read response: {}", e))
+                FirecrackerError::VmConfigFailed(format!("Failed to read response: {e}"))
             })?;
             let body_bytes = body.to_bytes();
             let message = String::from_utf8_lossy(&body_bytes).to_string();
+            #[allow(clippy::as_conversions)]
             return Err(FirecrackerError::ApiError {
                 status: status.as_u16(),
                 message,
@@ -219,7 +218,7 @@ impl VmInstance {
     }
 
     /// Configure the VM (kernel, drives, vsock, etc.).
-    async fn configure(&mut self) -> Result<()> {
+    async fn configure(&self) -> Result<()> {
         debug!("Configuring VM");
 
         let boot_source = api::BootSource {
@@ -234,7 +233,7 @@ impl VmInstance {
         .await?;
 
         let drive = api::Drive {
-            drive_id: "rootfs".to_string(),
+            drive_id: "rootfs".to_owned(),
             path_on_host: self.config.rootfs_path.display().to_string(),
             is_root_device: true,
             is_read_only: false,
@@ -258,7 +257,7 @@ impl VmInstance {
         .await?;
 
         let vsock = api::Vsock {
-            vsock_id: "vsock0".to_string(),
+            vsock_id: "vsock0".to_owned(),
             guest_cid: self.config.vsock_cid,
             uds_path: self.vsock_uds_path.display().to_string(),
         };
@@ -272,7 +271,7 @@ impl VmInstance {
     /// Boot the VM.
     async fn boot(&self) -> Result<()> {
         let action = api::InstanceActionInfo {
-            action_type: "InstanceStart".to_string(),
+            action_type: "InstanceStart".to_owned(),
         };
         self.api_request("PUT", "/actions", Some(&serde_json::to_string(&action)?))
             .await?;
@@ -282,7 +281,7 @@ impl VmInstance {
     }
 
     /// Get the vsock CID for this VM.
-    pub fn cid(&self) -> u32 {
+    pub const fn cid(&self) -> u32 {
         self.config.vsock_cid
     }
 
@@ -303,7 +302,7 @@ impl VmInstance {
 
         while tokio::time::Instant::now() < deadline {
             match client.ping().await {
-                Ok(_) => {
+                Ok(()) => {
                     info!("VM is ready");
                     return Ok(());
                 }
@@ -323,7 +322,7 @@ impl VmInstance {
 
         let client = self.vsock_client();
         match client.shutdown().await {
-            Ok(_) => {
+            Ok(()) => {
                 tokio::time::sleep(SHUTDOWN_GRACE_PERIOD).await;
             }
             Err(e) => {
