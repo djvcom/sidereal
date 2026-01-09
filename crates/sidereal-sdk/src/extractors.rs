@@ -24,7 +24,7 @@
 //!     secrets: Secrets,
 //!     Kv(store): Kv,
 //! ) -> HttpResponse<Order> {
-//!     let _api_key = secrets.get("STRIPE_API_KEY");
+//!     let _api_key = secrets.0.require("STRIPE_API_KEY").await;
 //!     HttpResponse::ok(Order { id: "123".into() })
 //! }
 //! ```
@@ -35,6 +35,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::de::DeserializeOwned;
+use sidereal_secrets::{SecretsBackend, SecretsProvider};
 use sidereal_state::{KvBackend, LockBackend, LockGuard, QueueBackend, StateProvider};
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,12 +47,21 @@ use crate::config::{ConfigError, ConfigManager};
 pub struct AppState {
     pub(crate) config: Option<ConfigManager>,
     pub(crate) state: StateProvider,
+    pub(crate) secrets: SecretsProvider,
 }
 
 impl AppState {
-    /// Create a new AppState with optional configuration and state provider.
-    pub const fn new(config: Option<ConfigManager>, state: StateProvider) -> Self {
-        Self { config, state }
+    /// Create a new AppState with optional configuration, state provider, and secrets provider.
+    pub fn new(
+        config: Option<ConfigManager>,
+        state: StateProvider,
+        secrets: SecretsProvider,
+    ) -> Self {
+        Self {
+            config,
+            state,
+            secrets,
+        }
     }
 }
 
@@ -175,6 +185,47 @@ fn derive_section_name(type_name: &str) -> String {
     name.to_lowercase()
 }
 
+/// Client for retrieving secrets from the configured backend.
+#[derive(Clone)]
+pub struct SecretsClient {
+    backend: Arc<dyn SecretsBackend>,
+    context: sidereal_secrets::SecretContext,
+}
+
+impl SecretsClient {
+    /// Creates a new secrets client.
+    pub fn new(backend: Arc<dyn SecretsBackend>, context: sidereal_secrets::SecretContext) -> Self {
+        Self { backend, context }
+    }
+
+    /// Get a secret by name.
+    ///
+    /// Searches through scopes based on the configured context
+    /// (environment → project → global).
+    pub async fn get(&self, name: &str) -> Result<Option<String>, SecretError> {
+        match self.backend.get(name, &self.context).await {
+            Ok(Some(value)) => Ok(Some(value.expose().to_string())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(SecretError::Backend(e.to_string())),
+        }
+    }
+
+    /// Get a secret by name, returning an error if not found.
+    pub async fn require(&self, name: &str) -> Result<String, SecretError> {
+        self.get(name)
+            .await?
+            .ok_or_else(|| SecretError::NotFound(name.to_string()))
+    }
+
+    /// Check if a secret exists.
+    pub async fn exists(&self, name: &str) -> Result<bool, SecretError> {
+        self.backend
+            .exists(name, &self.context)
+            .await
+            .map_err(|e| SecretError::Backend(e.to_string()))
+    }
+}
+
 /// Secrets accessor for retrieving sensitive configuration.
 ///
 /// # Example
@@ -193,56 +244,68 @@ fn derive_section_name(type_name: &str) -> String {
 ///     req: HttpRequest<PaymentRequest>,
 ///     secrets: Secrets,
 /// ) -> HttpResponse<PaymentResponse> {
-///     let _api_key = secrets.get("STRIPE_API_KEY");
+///     let _api_key = secrets.0.require("STRIPE_API_KEY").await;
 ///     HttpResponse::ok(PaymentResponse { success: true })
 /// }
 /// ```
-#[derive(Debug, Clone)]
-pub struct Secrets;
-
-impl Secrets {
-    /// Get a secret by name.
-    ///
-    /// Returns an error if the secret is not found.
-    pub fn get(&self, name: &str) -> Result<String, SecretError> {
-        std::env::var(name).map_err(|_| SecretError::NotFound(name.to_owned()))
-    }
-
-    /// Get a secret by name, returning None if not found.
-    pub fn get_optional(&self, name: &str) -> Option<String> {
-        std::env::var(name).ok()
-    }
-}
+#[derive(Clone)]
+pub struct Secrets(pub SecretsClient);
 
 /// Errors from secret retrieval.
 #[derive(Debug, thiserror::Error)]
 pub enum SecretError {
+    /// Secret not found.
     #[error("secret not found: {0}")]
     NotFound(String),
+
+    /// Backend error.
+    #[error("secrets backend error: {0}")]
+    Backend(String),
+
+    /// Secrets not configured.
+    #[error("secrets not configured")]
+    NotConfigured,
 }
 
 /// Rejection type for Secrets extractor failures.
 #[derive(Debug)]
-pub struct SecretsRejection;
+pub enum SecretsRejection {
+    /// App state not available.
+    NotAvailable,
+    /// Secrets backend not configured.
+    NotConfigured,
+}
 
 impl IntoResponse for SecretsRejection {
     fn into_response(self) -> Response {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Secrets accessor not available",
-        )
-            .into_response()
+        let message = match self {
+            Self::NotAvailable => "Secrets accessor not available",
+            Self::NotConfigured => "Secrets backend not configured",
+        };
+        (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
     }
 }
 
 impl<S> FromRequestParts<S> for Secrets
 where
     S: Send + Sync,
+    Arc<AppState>: FromRequestParts<S>,
 {
     type Rejection = SecretsRejection;
 
-    async fn from_request_parts(_parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Ok(Self)
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let app_state = Arc::<AppState>::from_request_parts(parts, state)
+            .await
+            .map_err(|_| SecretsRejection::NotAvailable)?;
+
+        let backend = app_state
+            .secrets
+            .backend()
+            .map_err(|_| SecretsRejection::NotConfigured)?;
+
+        let context = app_state.secrets.context().clone();
+
+        Ok(Self(SecretsClient::new(backend, context)))
     }
 }
 

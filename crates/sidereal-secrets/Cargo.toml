@@ -1,0 +1,46 @@
+[package]
+name = "sidereal-secrets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Secure secrets management for Sidereal"
+
+[dependencies]
+# Core
+async-trait.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+tracing.workspace = true
+serde = { workspace = true, features = ["derive"] }
+figment = { workspace = true, optional = true }
+
+# Secret handling
+secrecy = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+
+# Version generation
+uuid = { workspace = true, features = ["v4"] }
+
+# Native backend (optional)
+age = { version = "0.10", optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"], optional = true }
+chrono = { version = "0.4", optional = true }
+subtle = "2.6.1"
+
+[dev-dependencies]
+futures = "0.3.31"
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = ["memory"]
+memory = []
+env = []
+native = ["age", "sqlx", "chrono"]
+config = ["figment"]
+full = ["memory", "env", "native", "config"]
+
+[lints]
+workspace = true

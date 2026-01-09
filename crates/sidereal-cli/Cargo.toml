@@ -26,6 +26,8 @@ opentelemetry-configuration.workspace = true
 
 # Internal crates
 sidereal-firecracker.workspace = true
+sidereal-secrets = { version = "0.1.0", path = "../sidereal-secrets", features = ["native", "config"] }
+dirs = "6.0.0"
 
 [lints]
 workspace = true

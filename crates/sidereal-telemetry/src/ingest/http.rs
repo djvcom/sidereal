@@ -74,7 +74,6 @@ impl ContentType {
     }
 }
 
-
 /// Create the OTLP HTTP router with default body size limit.
 pub fn otlp_http_router(state: OtlpHttpState) -> Router {
     otlp_http_router_with_limit(state, DEFAULT_MAX_BODY_SIZE)

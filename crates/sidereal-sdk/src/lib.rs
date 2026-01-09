@@ -53,7 +53,7 @@
 //!     Config(stripe): Config<StripeConfig>,
 //!     secrets: Secrets,
 //! ) -> HttpResponse<Order> {
-//!     let _api_key = secrets.get("STRIPE_API_KEY");
+//!     let _api_key = secrets.0.require("STRIPE_API_KEY").await;
 //!     HttpResponse::ok(Order { id: "123".into() })
 //! }
 //! ```

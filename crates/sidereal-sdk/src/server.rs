@@ -39,6 +39,7 @@ use axum::{
     routing::post,
     Router,
 };
+use sidereal_secrets::{SecretsConfig, SecretsProvider};
 use sidereal_state::{StateConfig, StateProvider};
 use std::collections::HashSet;
 use std::net::SocketAddr;
@@ -159,6 +160,23 @@ pub async fn run(config: ServerConfig) -> Result<(), ServerError> {
         }
     };
 
+    let secrets_config = config_manager
+        .as_ref()
+        .and_then(|cm| cm.section::<SecretsConfig>("secrets").ok())
+        .unwrap_or_default();
+
+    let secrets_provider = match SecretsProvider::from_config(&secrets_config).await {
+        Ok(sp) => {
+            eprintln!("Secrets provider initialised");
+            sp
+        }
+        Err(e) => {
+            eprintln!("Warning: Could not initialise secrets provider: {e}");
+            eprintln!("  Secrets extractor will not be available");
+            SecretsProvider::default()
+        }
+    };
+
     print_startup_info(
         &http_functions,
         &queue_functions,
@@ -166,7 +184,11 @@ pub async fn run(config: ServerConfig) -> Result<(), ServerError> {
         &router_services,
     );
 
-    let state = Arc::new(AppState::new(config_manager.clone(), state_provider));
+    let state = Arc::new(AppState::new(
+        config_manager.clone(),
+        state_provider,
+        secrets_provider,
+    ));
 
     let mut background_tasks = JoinSet::new();
     for service in &background_services {

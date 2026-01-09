@@ -47,6 +47,107 @@ enum Commands {
         #[arg(long)]
         skip_build: bool,
     },
+
+    /// Manage secrets
+    Secrets {
+        #[command(subcommand)]
+        command: SecretsCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum SecretsCommands {
+    /// Get a secret value
+    Get {
+        /// Secret name
+        name: String,
+
+        /// Project scope
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Environment scope
+        #[arg(long)]
+        env: Option<String>,
+    },
+
+    /// Set a secret value
+    Set {
+        /// Secret name
+        name: String,
+
+        /// Secret value (reads from stdin if not provided)
+        value: Option<String>,
+
+        /// Scope to store the secret (global, project, or env)
+        #[arg(long, default_value = "global")]
+        scope: String,
+
+        /// Project for project/env scope
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Environment for env scope
+        #[arg(long)]
+        env: Option<String>,
+    },
+
+    /// Delete a secret
+    Delete {
+        /// Secret name
+        name: String,
+
+        /// Scope to delete from (global, project, or env)
+        #[arg(long, default_value = "global")]
+        scope: String,
+
+        /// Project for project/env scope
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Environment for env scope
+        #[arg(long)]
+        env: Option<String>,
+    },
+
+    /// List secrets
+    List {
+        /// Prefix to filter by
+        prefix: Option<String>,
+
+        /// Scope to list from (global, project, or env)
+        #[arg(long, default_value = "global")]
+        scope: String,
+
+        /// Project for project/env scope
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Environment for env scope
+        #[arg(long)]
+        env: Option<String>,
+    },
+
+    /// Show version history for a secret
+    Versions {
+        /// Secret name
+        name: String,
+
+        /// Scope (global, project, or env)
+        #[arg(long, default_value = "global")]
+        scope: String,
+
+        /// Project for project/env scope
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Environment for env scope
+        #[arg(long)]
+        env: Option<String>,
+    },
+
+    /// Show secrets configuration info
+    Info,
 }
 
 #[tokio::main]
@@ -74,6 +175,56 @@ async fn main() {
             };
             commands::deploy::run(args).await.map_err(Into::into)
         }
+        Commands::Secrets { command } => match command {
+            SecretsCommands::Get { name, project, env } => {
+                commands::secrets::get(&name, project.as_deref(), env.as_deref()).await
+            }
+            SecretsCommands::Set {
+                name,
+                value,
+                scope,
+                project,
+                env,
+            } => {
+                commands::secrets::set(
+                    &name,
+                    value.as_deref(),
+                    &scope,
+                    project.as_deref(),
+                    env.as_deref(),
+                )
+                .await
+            }
+            SecretsCommands::Delete {
+                name,
+                scope,
+                project,
+                env,
+            } => commands::secrets::delete(&name, &scope, project.as_deref(), env.as_deref()).await,
+            SecretsCommands::List {
+                prefix,
+                scope,
+                project,
+                env,
+            } => {
+                commands::secrets::list(
+                    prefix.as_deref(),
+                    &scope,
+                    project.as_deref(),
+                    env.as_deref(),
+                )
+                .await
+            }
+            SecretsCommands::Versions {
+                name,
+                scope,
+                project,
+                env,
+            } => {
+                commands::secrets::versions(&name, &scope, project.as_deref(), env.as_deref()).await
+            }
+            SecretsCommands::Info => commands::secrets::info().await,
+        },
     };
 
     if let Err(e) = result {
