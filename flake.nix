@@ -57,11 +57,23 @@
             # musl for static cross-compilation
             pkgs.musl
 
+            # Build dependencies for native crates
+            pkgs.pkg-config
+            pkgs.openssl
+
+            # Sandbox runtime (bubblewrap)
+            pkgs.bubblewrap
+
             # Nix tooling
             pkgs.nixfmt-rfc-style
             pkgs.statix
             pkgs.deadnix
           ];
+
+          # Rust 1.90+ uses rust-lld by default, which lacks NixOS rpath handling.
+          # Disable lld entirely and use the traditional GNU linker.
+          # Also add --copy-dt-needed-entries to handle DSO ordering issues.
+          RUSTFLAGS = "-Clinker-features=-lld -Clink-arg=-Wl,--copy-dt-needed-entries";
 
           RUST_BACKTRACE = "1";
 
