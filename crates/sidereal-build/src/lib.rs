@@ -1,43 +1,78 @@
-//! Build-time validation for Sidereal projects.
+//! Sandboxed build service for Sidereal projects.
 //!
-//! This crate provides configuration parsing and validation for use in
-//! `build.rs` scripts.
+//! This crate provides:
+//! - Sandboxed compilation using bubblewrap
+//! - Dependency validation and auditing
+//! - Build caching with per-commit isolation
+//! - Artifact generation (rootfs for Firecracker)
 //!
-//! # Example
+//! # Architecture
 //!
-//! ```ignore
-//! // In build.rs
-//! fn main() {
-//!     sidereal_build::configure()
-//!         .config_path("sidereal.toml")
-//!         .validate()
-//!         .expect("Sidereal validation failed");
-//! }
+//! The build service receives requests from Forge (git integration layer),
+//! compiles Rust code in isolation, and produces deployment artifacts.
+//!
+//! ```text
+//! ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+//! │  HTTP API    │───▶│ Build Queue  │───▶│   Executor   │
+//! └──────────────┘    └──────────────┘    └──────────────┘
+//!                                                │
+//!         ┌──────────────────────────────────────┤
+//!         ▼                                      ▼
+//!  ┌──────────────┐                      ┌──────────────┐
+//!  │    Source    │                      │   Sandbox    │
+//!  │   Checkout   │                      │  (bwrap)     │
+//!  └──────────────┘                      └──────────────┘
 //! ```
 
+pub mod api;
+pub mod artifact;
 mod config;
+pub mod discovery;
+pub mod env;
+pub mod error;
+pub mod queue;
+pub mod sandbox;
+pub mod service;
+pub mod source;
+pub mod types;
 
+// Re-export configuration types (legacy build.rs support)
 pub use config::{DevConfig, ProjectConfig, QueueConfig, ResourcesConfig, SiderealConfig};
 
+// Re-export error types
+pub use error::{BuildError, BuildResult, BuildStage, CancelReason};
+
+// Re-export core types
+pub use types::{
+    ArtifactId, BuildId, BuildMetadata, BuildRequest, BuildStatus, FunctionMetadata, ProjectId,
+};
+
+// Re-export environment validation
+pub use env::EnvironmentCheck;
+
+// Re-export queue types
+pub use queue::{BuildHandle, BuildQueue};
+
+// Re-export source types
+pub use source::{SourceCheckout, SourceManager};
+
+// Re-export sandbox types
+pub use sandbox::{CompileOutput, SandboxConfig, SandboxedCompiler};
+
+// Re-export artifact types
+pub use artifact::{Artifact, ArtifactBuilder, ArtifactManifest, RootfsBuilder};
+
+// Re-export API types
+pub use api::{router as api_router, AppState as ApiAppState};
+
+// Re-export service types
+pub use service::{BuildWorker, ServiceConfig};
+
 use std::path::PathBuf;
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum BuildError {
-    #[error("Configuration file not found: {0}")]
-    ConfigNotFound(PathBuf),
-
-    #[error("Failed to read configuration: {0}")]
-    ReadError(#[from] std::io::Error),
-
-    #[error("Failed to parse configuration: {0}")]
-    ParseError(#[from] toml::de::Error),
-
-    #[error("Validation error: {0}")]
-    ValidationError(String),
-}
 
 /// Builder for configuring and running build-time validation.
+///
+/// This is primarily for use in `build.rs` scripts.
 #[must_use]
 pub struct ConfigureBuilder {
     config_path: PathBuf,
@@ -67,7 +102,8 @@ impl ConfigureBuilder {
         }
 
         let content = std::fs::read_to_string(&self.config_path)?;
-        let config: SiderealConfig = toml::from_str(&content)?;
+        let config: SiderealConfig =
+            toml::from_str(&content).map_err(|e| BuildError::ConfigParse(e.to_string()))?;
 
         // Emit rerun-if-changed for cargo
         println!("cargo::rerun-if-changed={}", self.config_path.display());

@@ -3,12 +3,59 @@ name = "sidereal-build"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Build-time validation for Sidereal projects"
+description = "Sandboxed build service for Sidereal projects"
 
 [dependencies]
-serde.workspace = true
-toml.workspace = true
-thiserror.workspace = true
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
+
+# HTTP
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Serialisation
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# Git operations (pure Rust, no openssl)
+gix = { version = "0.77", default-features = false, features = ["blocking-network-client", "worktree-mutation"] }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Concurrency
+dashmap = { workspace = true }
+
+# Cryptography (artifact signing)
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+sha2 = "0.10"
+rand = { workspace = true }
+
+# Utilities
+uuid = { workspace = true, features = ["v4"] }
+tracing = { workspace = true }
+
+# Cargo manifest parsing
+cargo_toml = "0.21"
+
+# Configuration
+figment = { workspace = true, features = ["toml", "env"] }
+hex = "0.4.3"
+object_store = { version = "0.12", features = ["aws", "gcp"] }
+futures = "0.3.31"
+bytes = "1.11.0"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[features]
+default = []
+aws = []
+gcp = []
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
