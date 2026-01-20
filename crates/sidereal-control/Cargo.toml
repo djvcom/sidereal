@@ -1,0 +1,65 @@
+[package]
+name = "sidereal-control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Deployment orchestration and control plane for Sidereal"
+
+[[bin]]
+name = "sidereal-control"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Sibling crates
+sidereal-proto = { workspace = true }
+sidereal-firecracker = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# HTTP server
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["trace", "cors"] }
+
+# HTTP client (for scheduler)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Serialisation
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Configuration
+figment = { workspace = true, features = ["toml", "env"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json"] }
+
+# Observability
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# Object storage for artifact downloads
+object_store = { version = "0.12", features = ["aws", "gcp"] }
+
+# Utilities
+ulid = "1.1"
+thiserror = { workspace = true }
+dashmap = { workspace = true }
+async-trait = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+toml.workspace = true
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []
+
+[lints]
+workspace = true
