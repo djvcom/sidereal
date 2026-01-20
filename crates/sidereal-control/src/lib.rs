@@ -67,6 +67,7 @@ pub mod deployment;
 pub mod error;
 pub mod provisioner;
 pub mod scheduler;
+pub mod service;
 pub mod state;
 pub mod store;
 pub mod strategy;

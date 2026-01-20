@@ -5,7 +5,7 @@
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use sidereal_control::ControlConfig;
+use sidereal_control::{service::ControlService, ControlConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    info!("Sidereal control service starting");
+    info!("sidereal control service starting");
 
     let config = ControlConfig::load().unwrap_or_else(|e| {
         info!(error = %e, "failed to load config, using defaults");
@@ -26,10 +26,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         listen_addr = %config.server.listen_addr,
         database = %config.database.url,
         scheduler = %config.scheduler.url,
+        provisioner = ?config.provisioner.provisioner_type,
         "configuration loaded"
     );
 
-    info!("sidereal-control service not yet fully implemented");
+    let service = ControlService::new(config);
+
+    service.run().await?;
 
     Ok(())
 }

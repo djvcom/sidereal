@@ -10,8 +10,7 @@ use tracing::info;
 
 use crate::deployment::DeploymentRequest;
 use crate::error::ControlError;
-use crate::provisioner::WorkerProvisioner;
-use crate::store::{DeploymentFilter, DeploymentStore};
+use crate::store::DeploymentFilter;
 use crate::types::{FunctionMetadata, PersistedState, ProjectId};
 
 use super::AppState;
@@ -87,14 +86,10 @@ pub struct ErrorResponse {
 }
 
 /// Create a new deployment.
-pub async fn create_deployment<S, P>(
-    State(state): State<AppState<S, P>>,
+pub async fn create_deployment(
+    State(state): State<AppState>,
     Json(request): Json<CreateDeploymentRequest>,
-) -> Result<(StatusCode, Json<CreateDeploymentResponse>), (StatusCode, Json<ErrorResponse>)>
-where
-    S: DeploymentStore + 'static,
-    P: WorkerProvisioner + 'static,
-{
+) -> Result<(StatusCode, Json<CreateDeploymentResponse>), (StatusCode, Json<ErrorResponse>)> {
     let deployment_request = DeploymentRequest {
         project_id: ProjectId::new(&request.project_id),
         environment: request.environment.clone(),
@@ -133,14 +128,10 @@ where
 }
 
 /// Get a deployment by ID.
-pub async fn get_deployment<S, P>(
-    State(state): State<AppState<S, P>>,
+pub async fn get_deployment(
+    State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<DeploymentResponse>, (StatusCode, Json<ErrorResponse>)>
-where
-    S: DeploymentStore + 'static,
-    P: WorkerProvisioner + 'static,
-{
+) -> Result<Json<DeploymentResponse>, (StatusCode, Json<ErrorResponse>)> {
     let deployment_id = crate::types::DeploymentId::new(&id);
 
     match state.manager.get(&deployment_id).await {
@@ -164,14 +155,10 @@ where
 }
 
 /// List deployments with optional filters.
-pub async fn list_deployments<S, P>(
-    State(state): State<AppState<S, P>>,
+pub async fn list_deployments(
+    State(state): State<AppState>,
     Query(query): Query<ListDeploymentsQuery>,
-) -> Result<Json<Vec<DeploymentResponse>>, (StatusCode, Json<ErrorResponse>)>
-where
-    S: DeploymentStore + 'static,
-    P: WorkerProvisioner + 'static,
-{
+) -> Result<Json<Vec<DeploymentResponse>>, (StatusCode, Json<ErrorResponse>)> {
     let mut filter = DeploymentFilter::new();
 
     if let Some(project_id) = query.project_id {
@@ -207,14 +194,10 @@ where
 }
 
 /// Terminate a deployment.
-pub async fn terminate_deployment<S, P>(
-    State(state): State<AppState<S, P>>,
+pub async fn terminate_deployment(
+    State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)>
-where
-    S: DeploymentStore + 'static,
-    P: WorkerProvisioner + 'static,
-{
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     let deployment_id = crate::types::DeploymentId::new(&id);
 
     info!(deployment_id = %id, "terminating deployment via API");
@@ -276,14 +259,14 @@ mod tests {
     use super::*;
     use crate::config::{ArtifactConfig, DeploymentConfig};
     use crate::deployment::DeploymentManager;
-    use crate::provisioner::MockProvisioner;
+    use crate::provisioner::{MockProvisioner, WorkerProvisioner};
     use crate::scheduler::SchedulerClient;
-    use crate::store::MemoryStore;
+    use crate::store::{DeploymentStore, MemoryStore};
     use std::sync::Arc;
 
-    fn make_app_state() -> AppState<MemoryStore, MockProvisioner> {
-        let store = Arc::new(MemoryStore::new());
-        let provisioner = Arc::new(MockProvisioner::default());
+    fn make_app_state() -> AppState {
+        let store: Arc<dyn DeploymentStore> = Arc::new(MemoryStore::new());
+        let provisioner: Arc<dyn WorkerProvisioner> = Arc::new(MockProvisioner::default());
         let scheduler = SchedulerClient::with_url("http://localhost:8082").unwrap();
         let artifact_config = ArtifactConfig::default();
         let deployment_config = DeploymentConfig::default();

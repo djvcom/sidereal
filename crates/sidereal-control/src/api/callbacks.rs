@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 use crate::deployment::DeploymentRequest;
-use crate::provisioner::WorkerProvisioner;
-use crate::store::DeploymentStore;
 use crate::types::{FunctionMetadata, ProjectId};
 
 use super::AppState;
@@ -47,14 +45,10 @@ pub struct BuildCompletedResponse {
 }
 
 /// Handle build completion callback from sidereal-build.
-pub async fn build_completed<S, P>(
-    State(state): State<AppState<S, P>>,
+pub async fn build_completed(
+    State(state): State<AppState>,
     Json(request): Json<BuildCompletedRequest>,
-) -> (StatusCode, Json<BuildCompletedResponse>)
-where
-    S: DeploymentStore + 'static,
-    P: WorkerProvisioner + 'static,
-{
+) -> (StatusCode, Json<BuildCompletedResponse>) {
     info!(
         build_id = %request.build_id,
         project_id = %request.project_id,
@@ -126,14 +120,14 @@ mod tests {
     use super::*;
     use crate::config::{ArtifactConfig, DeploymentConfig};
     use crate::deployment::DeploymentManager;
-    use crate::provisioner::MockProvisioner;
+    use crate::provisioner::{MockProvisioner, WorkerProvisioner};
     use crate::scheduler::SchedulerClient;
-    use crate::store::MemoryStore;
+    use crate::store::{DeploymentStore, MemoryStore};
     use std::sync::Arc;
 
-    fn make_app_state() -> AppState<MemoryStore, MockProvisioner> {
-        let store = Arc::new(MemoryStore::new());
-        let provisioner = Arc::new(MockProvisioner::default());
+    fn make_app_state() -> AppState {
+        let store: Arc<dyn DeploymentStore> = Arc::new(MemoryStore::new());
+        let provisioner: Arc<dyn WorkerProvisioner> = Arc::new(MockProvisioner::default());
         let scheduler = SchedulerClient::with_url("http://localhost:8082").unwrap();
         let artifact_config = ArtifactConfig::default();
         let deployment_config = DeploymentConfig::default();

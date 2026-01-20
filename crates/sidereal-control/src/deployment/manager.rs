@@ -54,28 +54,20 @@ struct DeploymentWorkers {
 }
 
 /// Orchestrates deployment lifecycle operations.
-pub struct DeploymentManager<S, P>
-where
-    S: DeploymentStore,
-    P: WorkerProvisioner,
-{
-    store: Arc<S>,
-    provisioner: Arc<P>,
+pub struct DeploymentManager {
+    store: Arc<dyn DeploymentStore>,
+    provisioner: Arc<dyn WorkerProvisioner>,
     _scheduler: SchedulerClient,
     artifact_config: ArtifactConfig,
     deployment_config: DeploymentConfig,
     workers: RwLock<HashMap<String, DeploymentWorkers>>,
 }
 
-impl<S, P> DeploymentManager<S, P>
-where
-    S: DeploymentStore,
-    P: WorkerProvisioner,
-{
+impl DeploymentManager {
     /// Create a new deployment manager.
     pub fn new(
-        store: Arc<S>,
-        provisioner: Arc<P>,
+        store: Arc<dyn DeploymentStore>,
+        provisioner: Arc<dyn WorkerProvisioner>,
         scheduler: SchedulerClient,
         artifact_config: ArtifactConfig,
         deployment_config: DeploymentConfig,
@@ -363,11 +355,7 @@ where
     }
 }
 
-impl<S, P> std::fmt::Debug for DeploymentManager<S, P>
-where
-    S: DeploymentStore,
-    P: WorkerProvisioner,
-{
+impl std::fmt::Debug for DeploymentManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeploymentManager").finish_non_exhaustive()
     }
@@ -398,9 +386,9 @@ mod tests {
         }
     }
 
-    async fn create_manager() -> DeploymentManager<MemoryStore, MockProvisioner> {
-        let store = Arc::new(MemoryStore::new());
-        let provisioner = Arc::new(MockProvisioner::default());
+    async fn create_manager() -> DeploymentManager {
+        let store: Arc<dyn DeploymentStore> = Arc::new(MemoryStore::new());
+        let provisioner: Arc<dyn WorkerProvisioner> = Arc::new(MockProvisioner::default());
         let scheduler = SchedulerClient::with_url("http://localhost:8082").unwrap();
         let artifact_config = ArtifactConfig::default();
         let deployment_config = DeploymentConfig::default();

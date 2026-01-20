@@ -18,65 +18,41 @@ use axum::{
 };
 
 use crate::deployment::DeploymentManager;
-use crate::provisioner::WorkerProvisioner;
 use crate::store::DeploymentStore;
 
 pub use callbacks::BuildCompletedRequest;
 pub use deployments::{CreateDeploymentRequest, DeploymentResponse, ListDeploymentsQuery};
 
 /// Shared application state for the control service.
-pub struct AppState<S, P>
-where
-    S: DeploymentStore,
-    P: WorkerProvisioner,
-{
+#[derive(Clone)]
+pub struct AppState {
     /// Deployment manager for orchestrating deployments.
-    pub manager: Arc<DeploymentManager<S, P>>,
+    pub manager: Arc<DeploymentManager>,
     /// Deployment store for direct queries.
-    pub store: Arc<S>,
-}
-
-impl<S, P> Clone for AppState<S, P>
-where
-    S: DeploymentStore,
-    P: WorkerProvisioner,
-{
-    fn clone(&self) -> Self {
-        Self {
-            manager: Arc::clone(&self.manager),
-            store: Arc::clone(&self.store),
-        }
-    }
+    pub store: Arc<dyn DeploymentStore>,
 }
 
 /// Creates the API router.
-pub fn router<S, P>(state: AppState<S, P>) -> Router
-where
-    S: DeploymentStore + 'static,
-    P: WorkerProvisioner + 'static,
-{
+pub fn router(state: AppState) -> Router {
     Router::new()
         // Health endpoints
         .route("/health", get(health_check))
-        .route("/ready", get(readiness_check::<S, P>))
+        .route("/ready", get(readiness_check))
         // Deployment management
-        .route("/deployments", post(deployments::create_deployment::<S, P>))
-        .route("/deployments", get(deployments::list_deployments::<S, P>))
+        .route("/deployments", post(deployments::create_deployment))
+        .route("/deployments", get(deployments::list_deployments))
+        .route("/deployments/{id}", get(deployments::get_deployment))
         .route(
             "/deployments/{id}",
-            get(deployments::get_deployment::<S, P>),
-        )
-        .route(
-            "/deployments/{id}",
-            delete(deployments::terminate_deployment::<S, P>),
+            delete(deployments::terminate_deployment),
         )
         // Callbacks
         .route(
             "/callbacks/build-completed",
-            post(callbacks::build_completed::<S, P>),
+            post(callbacks::build_completed),
         )
         // Metrics
-        .route("/metrics", get(metrics::<S, P>))
+        .route("/metrics", get(metrics))
         .with_state(state)
 }
 
@@ -86,13 +62,9 @@ async fn health_check() -> axum::Json<HealthResponse> {
 }
 
 /// Readiness check endpoint.
-async fn readiness_check<S, P>(
-    axum::extract::State(state): axum::extract::State<AppState<S, P>>,
-) -> (axum::http::StatusCode, axum::Json<ReadyResponse>)
-where
-    S: DeploymentStore + 'static,
-    P: WorkerProvisioner + 'static,
-{
+async fn readiness_check(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> (axum::http::StatusCode, axum::Json<ReadyResponse>) {
     let filter =
         crate::store::DeploymentFilter::new().with_state(crate::types::PersistedState::Active);
 
@@ -115,11 +87,7 @@ where
 }
 
 /// Metrics endpoint.
-async fn metrics<S, P>(axum::extract::State(state): axum::extract::State<AppState<S, P>>) -> String
-where
-    S: DeploymentStore + 'static,
-    P: WorkerProvisioner + 'static,
-{
+async fn metrics(axum::extract::State(state): axum::extract::State<AppState>) -> String {
     let mut output = String::new();
 
     let states = [
@@ -169,16 +137,16 @@ mod tests {
     use super::*;
     use crate::config::{ArtifactConfig, DeploymentConfig};
     use crate::deployment::DeploymentManager;
-    use crate::provisioner::MockProvisioner;
+    use crate::provisioner::{MockProvisioner, WorkerProvisioner};
     use crate::scheduler::SchedulerClient;
     use crate::store::MemoryStore;
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
 
-    fn make_app_state() -> AppState<MemoryStore, MockProvisioner> {
-        let store = Arc::new(MemoryStore::new());
-        let provisioner = Arc::new(MockProvisioner::default());
+    fn make_app_state() -> AppState {
+        let store: Arc<dyn DeploymentStore> = Arc::new(MemoryStore::new());
+        let provisioner: Arc<dyn WorkerProvisioner> = Arc::new(MockProvisioner::default());
         let scheduler = SchedulerClient::with_url("http://localhost:8082").unwrap();
         let artifact_config = ArtifactConfig::default();
         let deployment_config = DeploymentConfig::default();
