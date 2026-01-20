@@ -63,15 +63,19 @@
 
 pub mod config;
 pub mod error;
+pub mod provisioner;
 pub mod scheduler;
 pub mod state;
 pub mod store;
 pub mod strategy;
 pub mod types;
 
-// Re-export commonly used types at the crate root
 pub use config::ControlConfig;
 pub use error::{ControlError, ControlResult};
+pub use provisioner::{
+    create_provisioner, FirecrackerProvisioner, MockProvisioner, ProvisionRequest,
+    ProvisionedWorker, WorkerProvisioner,
+};
 pub use scheduler::SchedulerClient;
 pub use state::{
     Active, AnyDeployment, Deployment, DeploymentState, Failed, Pending, Registering, Superseded,

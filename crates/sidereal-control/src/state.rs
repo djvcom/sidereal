@@ -17,10 +17,6 @@ use std::marker::PhantomData;
 use crate::error::{ControlError, ControlResult};
 use crate::types::{DeploymentData, DeploymentId, PersistedState};
 
-// =============================================================================
-// State marker types (zero-sized)
-// =============================================================================
-
 /// Marker trait for deployment states.
 pub trait DeploymentState: private::Sealed + Send + Sync {
     /// Get the persisted state representation.
@@ -58,7 +54,6 @@ pub struct Failed;
 #[derive(Debug, Clone, Copy)]
 pub struct Terminated;
 
-// Implement the sealed trait
 impl private::Sealed for Pending {}
 impl private::Sealed for Registering {}
 impl private::Sealed for Active {}
@@ -66,7 +61,6 @@ impl private::Sealed for Superseded {}
 impl private::Sealed for Failed {}
 impl private::Sealed for Terminated {}
 
-// Implement DeploymentState for each state
 impl DeploymentState for Pending {
     fn persisted() -> PersistedState {
         PersistedState::Pending
@@ -120,10 +114,6 @@ impl DeploymentState for Terminated {
         "terminated"
     }
 }
-
-// =============================================================================
-// Deployment struct parameterised by state
-// =============================================================================
 
 /// A deployment in a specific state.
 ///
@@ -189,10 +179,6 @@ impl<S: DeploymentState> Deployment<S> {
         }
     }
 }
-
-// =============================================================================
-// State transitions
-// =============================================================================
 
 impl Deployment<Pending> {
     /// Create a new deployment in the pending state.
@@ -261,10 +247,6 @@ impl Deployment<Active> {
         self.transition()
     }
 }
-
-// =============================================================================
-// Loading from persisted state
-// =============================================================================
 
 /// A type-erased deployment that can be in any state.
 ///

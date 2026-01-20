@@ -76,10 +76,7 @@ pub struct ServerConfig {
 }
 
 fn default_listen_addr() -> SocketAddr {
-    "0.0.0.0:8083".parse().unwrap_or_else(|_| {
-        // Fallback that should never happen
-        std::net::SocketAddr::from(([0, 0, 0, 0], 8083))
-    })
+    SocketAddr::from(([0, 0, 0, 0], 8083))
 }
 
 const fn default_request_timeout_secs() -> u64 {

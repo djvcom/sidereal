@@ -109,15 +109,13 @@ impl DeploymentStore for MemoryStore {
 
         results.sort_by(|a, b| b.data.created_at.cmp(&a.data.created_at));
 
-        // Safe: u32 always fits in usize on 32-bit and 64-bit platforms
         #[allow(clippy::as_conversions)]
         let offset = filter.offset.unwrap_or(0) as usize;
         let results: Vec<_> = results.into_iter().skip(offset).collect();
 
         if let Some(limit) = filter.limit {
             #[allow(clippy::as_conversions)]
-            let limit_usize = limit as usize;
-            Ok(results.into_iter().take(limit_usize).collect())
+            Ok(results.into_iter().take(limit as usize).collect())
         } else {
             Ok(results)
         }
