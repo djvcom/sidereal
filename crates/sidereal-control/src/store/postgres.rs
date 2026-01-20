@@ -1,5 +1,7 @@
 //! PostgreSQL deployment store implementation.
 
+use std::fmt::Write;
+
 use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
@@ -43,7 +45,7 @@ impl PostgresStore {
     /// Ensure the required tables exist.
     async fn ensure_schema(&self) -> ControlResult<()> {
         sqlx::query(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS deployments (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
@@ -56,47 +58,47 @@ impl PostgresStore {
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS active_deployments (
                 project_id TEXT NOT NULL,
                 environment TEXT NOT NULL,
                 deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
                 PRIMARY KEY (project_id, environment)
             )
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE INDEX IF NOT EXISTS idx_deployments_project_env
             ON deployments (project_id, environment)
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE INDEX IF NOT EXISTS idx_deployments_state
             ON deployments (state)
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE INDEX IF NOT EXISTS idx_deployments_created_at
             ON deployments (created_at DESC)
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await?;
@@ -151,13 +153,13 @@ impl DeploymentStore for PostgresStore {
         })?;
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO deployments (
                 id, project_id, environment, commit_sha, artifact_url,
                 functions, state, error, created_at, updated_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            "#,
+            ",
         )
         .bind(record.data.id.as_str())
         .bind(record.data.project_id.as_str())
@@ -177,12 +179,12 @@ impl DeploymentStore for PostgresStore {
 
     async fn get(&self, id: &DeploymentId) -> ControlResult<Option<DeploymentRecord>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT id, project_id, environment, commit_sha, artifact_url,
                    functions, state, error, created_at, updated_at
             FROM deployments
             WHERE id = $1
-            "#,
+            ",
         )
         .bind(id.as_str())
         .fetch_optional(&self.pool)
@@ -201,11 +203,11 @@ impl DeploymentStore for PostgresStore {
         error: Option<&str>,
     ) -> ControlResult<()> {
         let result = sqlx::query(
-            r#"
+            r"
             UPDATE deployments
             SET state = $1, error = $2, updated_at = NOW()
             WHERE id = $3
-            "#,
+            ",
         )
         .bind(state.as_str())
         .bind(error)
@@ -222,39 +224,39 @@ impl DeploymentStore for PostgresStore {
 
     async fn list(&self, filter: &DeploymentFilter) -> ControlResult<Vec<DeploymentRecord>> {
         let mut query = String::from(
-            r#"
+            r"
             SELECT id, project_id, environment, commit_sha, artifact_url,
                    functions, state, error, created_at, updated_at
             FROM deployments
             WHERE 1=1
-            "#,
+            ",
         );
 
         let mut params: Vec<String> = Vec::new();
 
         if let Some(ref project_id) = filter.project_id {
             params.push(project_id.as_str().to_owned());
-            query.push_str(&format!(" AND project_id = ${}", params.len()));
+            let _ = write!(query, " AND project_id = ${}", params.len());
         }
 
         if let Some(ref environment) = filter.environment {
             params.push(environment.clone());
-            query.push_str(&format!(" AND environment = ${}", params.len()));
+            let _ = write!(query, " AND environment = ${}", params.len());
         }
 
         if let Some(state) = filter.state {
             params.push(state.as_str().to_owned());
-            query.push_str(&format!(" AND state = ${}", params.len()));
+            let _ = write!(query, " AND state = ${}", params.len());
         }
 
         query.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            query.push_str(&format!(" LIMIT {limit}"));
+            let _ = write!(query, " LIMIT {limit}");
         }
 
         if let Some(offset) = filter.offset {
-            query.push_str(&format!(" OFFSET {offset}"));
+            let _ = write!(query, " OFFSET {offset}");
         }
 
         let mut sqlx_query = sqlx::query(&query);
@@ -273,13 +275,13 @@ impl DeploymentStore for PostgresStore {
         environment: &str,
     ) -> ControlResult<Option<DeploymentRecord>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT d.id, d.project_id, d.environment, d.commit_sha, d.artifact_url,
                    d.functions, d.state, d.error, d.created_at, d.updated_at
             FROM deployments d
             INNER JOIN active_deployments a ON d.id = a.deployment_id
             WHERE a.project_id = $1 AND a.environment = $2
-            "#,
+            ",
         )
         .bind(project_id.as_str())
         .bind(environment)
@@ -299,12 +301,12 @@ impl DeploymentStore for PostgresStore {
         deployment_id: &DeploymentId,
     ) -> ControlResult<()> {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO active_deployments (project_id, environment, deployment_id)
             VALUES ($1, $2, $3)
             ON CONFLICT (project_id, environment) DO UPDATE
             SET deployment_id = EXCLUDED.deployment_id
-            "#,
+            ",
         )
         .bind(project_id.as_str())
         .bind(environment)
@@ -317,10 +319,10 @@ impl DeploymentStore for PostgresStore {
 
     async fn clear_active(&self, project_id: &ProjectId, environment: &str) -> ControlResult<()> {
         sqlx::query(
-            r#"
+            r"
             DELETE FROM active_deployments
             WHERE project_id = $1 AND environment = $2
-            "#,
+            ",
         )
         .bind(project_id.as_str())
         .bind(environment)
@@ -332,9 +334,9 @@ impl DeploymentStore for PostgresStore {
 
     async fn delete(&self, id: &DeploymentId) -> ControlResult<()> {
         let result = sqlx::query(
-            r#"
+            r"
             DELETE FROM deployments WHERE id = $1
-            "#,
+            ",
         )
         .bind(id.as_str())
         .execute(&self.pool)

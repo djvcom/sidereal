@@ -63,6 +63,7 @@
 
 pub mod config;
 pub mod error;
+pub mod scheduler;
 pub mod state;
 pub mod store;
 pub mod strategy;
@@ -71,6 +72,7 @@ pub mod types;
 // Re-export commonly used types at the crate root
 pub use config::ControlConfig;
 pub use error::{ControlError, ControlResult};
+pub use scheduler::SchedulerClient;
 pub use state::{
     Active, AnyDeployment, Deployment, DeploymentState, Failed, Pending, Registering, Superseded,
     Terminated,

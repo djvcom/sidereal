@@ -39,8 +39,7 @@ impl DeploymentStore for MemoryStore {
         let key = record.data.id.as_str().to_owned();
         if deployments.contains_key(&key) {
             return Err(ControlError::internal(format!(
-                "deployment {} already exists",
-                key
+                "deployment {key} already exists"
             )));
         }
 
@@ -110,11 +109,15 @@ impl DeploymentStore for MemoryStore {
 
         results.sort_by(|a, b| b.data.created_at.cmp(&a.data.created_at));
 
+        // Safe: u32 always fits in usize on 32-bit and 64-bit platforms
+        #[allow(clippy::as_conversions)]
         let offset = filter.offset.unwrap_or(0) as usize;
         let results: Vec<_> = results.into_iter().skip(offset).collect();
 
         if let Some(limit) = filter.limit {
-            Ok(results.into_iter().take(limit as usize).collect())
+            #[allow(clippy::as_conversions)]
+            let limit_usize = limit as usize;
+            Ok(results.into_iter().take(limit_usize).collect())
         } else {
             Ok(results)
         }
