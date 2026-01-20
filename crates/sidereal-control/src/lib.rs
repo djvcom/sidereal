@@ -61,6 +61,7 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
+pub mod api;
 pub mod config;
 pub mod deployment;
 pub mod error;
