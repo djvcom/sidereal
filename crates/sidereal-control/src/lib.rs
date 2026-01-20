@@ -64,6 +64,7 @@
 pub mod config;
 pub mod error;
 pub mod state;
+pub mod store;
 pub mod strategy;
 pub mod types;
 
@@ -74,6 +75,7 @@ pub use state::{
     Active, AnyDeployment, Deployment, DeploymentState, Failed, Pending, Registering, Superseded,
     Terminated,
 };
+pub use store::{DeploymentFilter, DeploymentStore, MemoryStore, PostgresStore};
 pub use strategy::DeploymentStrategy;
 pub use types::{
     DeploymentData, DeploymentId, DeploymentRecord, FunctionMetadata, FunctionTrigger,
