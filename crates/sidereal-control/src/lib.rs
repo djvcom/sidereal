@@ -62,6 +62,7 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod deployment;
 pub mod error;
 pub mod provisioner;
 pub mod scheduler;
@@ -71,6 +72,7 @@ pub mod strategy;
 pub mod types;
 
 pub use config::ControlConfig;
+pub use deployment::{DeploymentManager, DeploymentRequest};
 pub use error::{ControlError, ControlResult};
 pub use provisioner::{
     create_provisioner, FirecrackerProvisioner, MockProvisioner, ProvisionRequest,
