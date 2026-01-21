@@ -7,6 +7,7 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
@@ -14,11 +15,17 @@
       self,
       nixpkgs,
       rust-overlay,
+      crane,
     }:
     let
+      supportedSystems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
+
       forAllSystems =
         fn:
-        nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (
+        nixpkgs.lib.genAttrs supportedSystems (
           system:
           fn (
             import nixpkgs {
@@ -40,9 +47,67 @@
             "x86_64-unknown-linux-musl"
           ];
         };
+
+      # Build the sidereal-server package using crane
+      buildSidereal =
+        pkgs:
+        let
+          craneLib = (crane.mkLib pkgs).overrideToolchain (rustToolchain pkgs);
+
+          # Common arguments for crane builds
+          commonArgs = {
+            pname = "sidereal-server";
+            src = craneLib.cleanCargoSource ./.;
+            strictDeps = true;
+
+            buildInputs = [
+              pkgs.openssl
+            ];
+
+            nativeBuildInputs = [
+              pkgs.pkg-config
+            ];
+          };
+
+          # Build workspace dependencies first (for caching)
+          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        in
+        craneLib.buildPackage (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+
+            # Only build the sidereal-server binary
+            cargoExtraArgs = "-p sidereal-server";
+
+            meta = {
+              description = "Sidereal unified server for single-node deployments";
+              homepage = "https://github.com/your-org/sidereal";
+              license = pkgs.lib.licenses.mit;
+              mainProgram = "sidereal-server";
+            };
+          }
+        );
     in
     {
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
+
+      # NixOS module
+      nixosModules = {
+        default = self.nixosModules.sidereal;
+        sidereal = import ./nix/module.nix;
+      };
+
+      # Overlay for adding sidereal packages to nixpkgs
+      overlays.default = final: _prev: {
+        sidereal-server = buildSidereal final;
+      };
+
+      # Packages
+      packages = forAllSystems (pkgs: {
+        default = self.packages.${pkgs.system}.sidereal-server;
+        sidereal-server = buildSidereal pkgs;
+      });
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
