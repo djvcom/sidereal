@@ -54,10 +54,18 @@
         let
           craneLib = (crane.mkLib pkgs).overrideToolchain (rustToolchain pkgs);
 
+          # Source filter that includes Cargo files and READMEs (for include_str!)
+          srcFilter =
+            path: type:
+            (craneLib.filterCargoSources path type) || (builtins.match ".*README\\.md$" path != null);
+
           # Common arguments for crane builds
           commonArgs = {
             pname = "sidereal-server";
-            src = craneLib.cleanCargoSource ./.;
+            src = pkgs.lib.cleanSourceWith {
+              src = ./.;
+              filter = srcFilter;
+            };
             strictDeps = true;
 
             buildInputs = [
