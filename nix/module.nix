@@ -369,7 +369,7 @@ in
         ProtectKernelModules = true;
         ProtectControlGroups = true;
         RestrictSUIDSGID = true;
-        RestrictNamespaces = true;
+        RestrictNamespaces = "user mnt pid net ipc uts";
         LockPersonality = true;
         RestrictRealtime = true;
 
