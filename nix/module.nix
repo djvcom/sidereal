@@ -338,7 +338,10 @@ in
         lib.optional cfg.database.createLocally "postgresql.service"
         ++ lib.optional cfg.valkey.createLocally "redis-sidereal.service";
 
-      path = [ pkgs.openssh ];
+      path = [
+        pkgs.openssh
+        pkgs.bubblewrap
+      ];
 
       environment = {
         RUST_LOG = cfg.logLevel;
