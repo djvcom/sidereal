@@ -3,8 +3,9 @@
 //! Runs all Sidereal services in a single process for single-node deployments.
 
 use clap::Parser;
+use sqlx::postgres::PgPoolOptions;
 use tokio::signal;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 mod config;
@@ -81,6 +82,9 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Run database migrations
+    run_migrations(&config.database.url).await?;
+
     // Create and start services
     let mut services = Services::new(config);
 
@@ -131,4 +135,55 @@ async fn shutdown_signal() {
             info!("Received SIGTERM, initiating shutdown");
         }
     }
+}
+
+/// Run database migrations before starting services.
+async fn run_migrations(database_url: &str) -> anyhow::Result<()> {
+    info!(url = %mask_password(database_url), "Connecting to database");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(database_url)
+        .await;
+
+    let pool = match pool {
+        Ok(pool) => pool,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to connect to database, skipping migrations"
+            );
+            return Ok(());
+        }
+    };
+
+    info!("Running database migrations");
+
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
+
+    info!("Database migrations complete");
+
+    pool.close().await;
+    Ok(())
+}
+
+/// Mask the password in a database URL for logging.
+fn mask_password(url: &str) -> String {
+    if let Some(at_pos) = url.find('@') {
+        if let Some(colon_pos) = url[..at_pos].rfind(':') {
+            if let Some(slash_pos) = url[..colon_pos].rfind('/') {
+                let prefix = &url[..slash_pos + 3];
+                let suffix = &url[at_pos..];
+                if let Some(user_end) = url[slash_pos + 3..colon_pos].find(':') {
+                    let user = &url[slash_pos + 3..slash_pos + 3 + user_end];
+                    return format!("{prefix}{user}:***{suffix}");
+                }
+                return format!("{prefix}***{suffix}");
+            }
+        }
+    }
+    url.to_string()
 }

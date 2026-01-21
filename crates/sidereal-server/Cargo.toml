@@ -30,6 +30,9 @@ toml.workspace = true
 # CLI
 clap = { workspace = true, features = ["derive", "env"] }
 
+# Database migrations
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate"] }
+
 # Error handling
 thiserror.workspace = true
 anyhow.workspace = true
