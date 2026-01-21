@@ -18,6 +18,7 @@ use serde::Deserialize;
 
 use crate::artifact::StorageConfig;
 use crate::error::{BuildError, BuildResult};
+use crate::forge_auth::ForgeAuthConfig;
 
 /// Build service configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -41,6 +42,10 @@ pub struct ServiceConfig {
     /// Storage configuration.
     #[serde(default)]
     pub storage: StorageConfig,
+
+    /// Git forge authentication.
+    #[serde(default)]
+    pub forge_auth: ForgeAuthConfig,
 }
 
 impl ServiceConfig {

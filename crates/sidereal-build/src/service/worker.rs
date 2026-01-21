@@ -12,6 +12,7 @@ use tracing::{error, info, warn};
 use crate::artifact::{Artifact, ArtifactBuilder, ArtifactStore, BuildInput};
 use crate::discovery;
 use crate::error::{BuildError, BuildStage, CancelReason};
+use crate::forge_auth::ForgeAuth;
 use crate::queue::{BuildHandle, BuildQueue};
 use crate::sandbox::{SandboxConfig, SandboxLimits, SandboxedCompiler};
 use crate::source::SourceManager;
@@ -126,8 +127,13 @@ impl BuildWorker {
         paths: &PathsConfig,
         limits: &LimitsConfig,
         artifact_store: Arc<ArtifactStore>,
+        forge_auth: ForgeAuth,
     ) -> Result<Self, BuildError> {
-        let source_manager = Arc::new(SourceManager::new(&paths.checkouts, &paths.caches));
+        let source_manager = Arc::new(SourceManager::new(
+            &paths.checkouts,
+            &paths.caches,
+            forge_auth,
+        ));
 
         let sandbox_config = SandboxConfig {
             limits: SandboxLimits {

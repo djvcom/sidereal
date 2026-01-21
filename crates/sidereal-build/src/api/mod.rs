@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::error::CancelReason;
+use crate::forge_auth::ForgeAuth;
 use crate::queue::BuildQueue;
 use crate::types::{BuildId, BuildRequest, BuildStatus};
 
@@ -22,20 +23,20 @@ use crate::types::{BuildId, BuildRequest, BuildStatus};
 pub struct AppState {
     /// Build queue for managing pending and in-progress builds.
     pub queue: Arc<BuildQueue>,
+    /// Forge authentication configuration.
+    pub forge_auth: ForgeAuth,
 }
 
 /// Creates the API router.
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        // Health endpoints
         .route("/health", get(health_check))
         .route("/ready", get(readiness_check))
-        // Build management
         .route("/builds", post(submit_build))
         .route("/builds/{id}", get(get_build))
         .route("/builds/{id}/cancel", post(cancel_build))
-        // Queue info
         .route("/queue/stats", get(queue_stats))
+        .route("/keys/ssh", get(get_ssh_public_key))
         .with_state(state)
 }
 
@@ -170,6 +171,24 @@ async fn queue_stats(State(state): State<Arc<AppState>>) -> Json<QueueStatsRespo
     })
 }
 
+/// Get the SSH public key for adding to git forges.
+async fn get_ssh_public_key(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SshPublicKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+    match state.forge_auth.public_key() {
+        Some(key) => Ok(Json(SshPublicKeyResponse {
+            public_key: key.to_owned(),
+            key_type: "ed25519".to_owned(),
+        })),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "SSH authentication not configured".to_owned(),
+            }),
+        )),
+    }
+}
+
 // Request types
 
 /// Request to submit a new build.
@@ -292,6 +311,15 @@ pub struct QueueStatsResponse {
     pub in_progress: usize,
 }
 
+/// Response for SSH public key.
+#[derive(Serialize)]
+pub struct SshPublicKeyResponse {
+    /// The public key in OpenSSH format.
+    pub public_key: String,
+    /// Key type (e.g., "ed25519").
+    pub key_type: String,
+}
+
 /// Error response.
 #[derive(Serialize)]
 pub struct ErrorResponse {
@@ -309,6 +337,7 @@ mod tests {
     fn make_app_state() -> Arc<AppState> {
         Arc::new(AppState {
             queue: Arc::new(BuildQueue::new(100)),
+            forge_auth: ForgeAuth::None,
         })
     }
 

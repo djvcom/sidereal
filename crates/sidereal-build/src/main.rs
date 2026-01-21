@@ -12,7 +12,7 @@ use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use sidereal_build::{
-    api, artifact::ArtifactStore, service::BuildWorker, BuildQueue, ServiceConfig,
+    api, artifact::ArtifactStore, service::BuildWorker, BuildQueue, ForgeAuth, ServiceConfig,
 };
 
 #[tokio::main]
@@ -50,22 +50,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "build queue initialised"
     );
 
-    // Create cancellation token for graceful shutdown
     let cancel = CancellationToken::new();
 
-    // Spawn build workers
+    let forge_auth = ForgeAuth::from_config(&config.forge_auth)?;
+
     let worker_handles = spawn_workers(
         config.worker.count,
         &queue,
         &config,
         &artifact_store,
         &cancel,
+        &forge_auth,
     )?;
     info!(count = config.worker.count, "build workers started");
 
-    // Create API state and router
     let state = Arc::new(api::AppState {
         queue: Arc::clone(&queue),
+        forge_auth: forge_auth.clone(),
     });
     let app = api::router(state);
 
@@ -105,6 +106,7 @@ fn spawn_workers(
     config: &ServiceConfig,
     artifact_store: &Arc<ArtifactStore>,
     cancel: &CancellationToken,
+    forge_auth: &ForgeAuth,
 ) -> Result<Vec<tokio::task::JoinHandle<()>>, sidereal_build::BuildError> {
     let mut handles = Vec::with_capacity(count);
     for id in 0..count {
@@ -114,6 +116,7 @@ fn spawn_workers(
             &config.paths,
             &config.limits,
             Arc::clone(artifact_store),
+            forge_auth.clone(),
         )?;
         let cancel = cancel.clone();
         handles.push(tokio::spawn(async move {

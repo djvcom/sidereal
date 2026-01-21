@@ -51,6 +51,10 @@ let
     build = {
       enabled = cfg.build.enable;
       inherit (cfg.build) workers;
+      forge_auth = lib.mkIf (cfg.build.forgeAuth.type != "none") {
+        type = cfg.build.forgeAuth.type;
+        key_path = cfg.build.forgeAuth.sshKeyPath;
+      };
     };
 
     database = {
@@ -168,6 +172,20 @@ in
         default = 2;
         description = "Number of concurrent build workers.";
       };
+
+      forgeAuth = {
+        type = lib.mkOption {
+          type = lib.types.enum [ "ssh" "none" ];
+          default = "ssh";
+          description = "Git forge authentication type.";
+        };
+
+        sshKeyPath = lib.mkOption {
+          type = lib.types.path;
+          default = "${cfg.dataDir}/ssh/id_ed25519";
+          description = "Path to the SSH private key for git operations.";
+        };
+      };
     };
 
     # Database configuration
@@ -274,13 +292,13 @@ in
 
     users.groups.${cfg.group} = { };
 
-    # Create required directories
     systemd.tmpfiles.rules = [
       "d ${cfg.socketDir} 0750 ${cfg.user} ${cfg.group} -"
       "d ${cfg.dataDir} 0750 ${cfg.user} ${cfg.group} -"
       "d ${cfg.dataDir}/checkouts 0750 ${cfg.user} ${cfg.group} -"
       "d ${cfg.dataDir}/caches 0750 ${cfg.user} ${cfg.group} -"
       "d ${cfg.dataDir}/artifacts 0750 ${cfg.user} ${cfg.group} -"
+      "d ${cfg.dataDir}/ssh 0700 ${cfg.user} ${cfg.group} -"
     ];
 
     # PostgreSQL setup (if createLocally is true)

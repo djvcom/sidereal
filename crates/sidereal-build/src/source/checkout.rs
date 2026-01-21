@@ -9,6 +9,7 @@ use tokio::task;
 use tracing::{debug, info, instrument, warn};
 
 use crate::error::{BuildError, BuildResult};
+use crate::forge_auth::ForgeAuth;
 use crate::types::ProjectId;
 
 /// A checked-out source directory ready for building.
@@ -36,6 +37,7 @@ impl SourceCheckout {
 pub struct SourceManager {
     checkout_dir: PathBuf,
     cache_dir: PathBuf,
+    forge_auth: ForgeAuth,
 }
 
 impl SourceManager {
@@ -43,10 +45,16 @@ impl SourceManager {
     ///
     /// - `checkout_dir`: Directory for active checkouts (cleaned after build)
     /// - `cache_dir`: Directory for cached repositories (persisted)
-    pub fn new(checkout_dir: impl Into<PathBuf>, cache_dir: impl Into<PathBuf>) -> Self {
+    /// - `forge_auth`: Authentication for git operations
+    pub fn new(
+        checkout_dir: impl Into<PathBuf>,
+        cache_dir: impl Into<PathBuf>,
+        forge_auth: ForgeAuth,
+    ) -> Self {
         Self {
             checkout_dir: checkout_dir.into(),
             cache_dir: cache_dir.into(),
+            forge_auth,
         }
     }
 
@@ -69,9 +77,16 @@ impl SourceManager {
         let project_id = project_id.clone();
         let checkout_dir = self.checkout_dir.clone();
         let cache_dir = self.cache_dir.clone();
+        let ssh_command = self.forge_auth.ssh_command();
 
         // Run blocking git operations in a separate thread
         task::spawn_blocking(move || {
+            // Set GIT_SSH_COMMAND if SSH authentication is configured
+            if let Some(ref cmd) = ssh_command {
+                std::env::set_var("GIT_SSH_COMMAND", cmd);
+                debug!(ssh_command = %cmd, "Using SSH command for git operations");
+            }
+
             checkout_sync(&project_id, &repo_url, &commit, &checkout_dir, &cache_dir)
         })
         .await

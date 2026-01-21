@@ -30,6 +30,7 @@ mod config;
 pub mod discovery;
 pub mod env;
 pub mod error;
+pub mod forge_auth;
 pub mod queue;
 pub mod sandbox;
 pub mod service;
@@ -67,6 +68,9 @@ pub use api::{router as api_router, AppState as ApiAppState};
 
 // Re-export service types
 pub use service::{BuildWorker, ServiceConfig};
+
+// Re-export forge authentication types
+pub use forge_auth::{ForgeAuth, ForgeAuthConfig};
 
 use std::path::PathBuf;
 

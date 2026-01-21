@@ -67,6 +67,15 @@ pub async fn proxy_control_root(
     proxy_to_socket(&state.control_socket, path, request).await
 }
 
+/// Proxy a request to the build service keys endpoint.
+pub async fn proxy_keys(
+    State(state): State<Arc<ProxyState>>,
+    Path(path): Path<String>,
+    request: Request,
+) -> Result<Response, GatewayError> {
+    proxy_to_socket(&state.build_socket, &format!("/keys/{path}"), request).await
+}
+
 /// Forward an HTTP request to a Unix socket.
 async fn proxy_to_socket(
     socket_path: &std::path::Path,

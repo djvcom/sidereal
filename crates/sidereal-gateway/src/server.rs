@@ -125,10 +125,10 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         .layer(SecurityLayer::new())
         .with_state(state);
 
-    // Add API proxy routes if configured
     if let Some(ref api_config) = config.api {
         use crate::proxy::{
-            proxy_build, proxy_build_root, proxy_control, proxy_control_root, ProxyState,
+            proxy_build, proxy_build_root, proxy_control, proxy_control_root, proxy_keys,
+            ProxyState,
         };
         use axum::routing::any;
 
@@ -138,12 +138,11 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         });
 
         let api_router = Router::new()
-            // Build service routes
             .route("/api/builds", any(proxy_build_root))
             .route("/api/builds/{*path}", any(proxy_build))
-            // Control service routes
             .route("/api/deployments", any(proxy_control_root))
             .route("/api/deployments/{*path}", any(proxy_control))
+            .route("/api/keys/{*path}", any(proxy_keys))
             .with_state(proxy_state);
 
         router = api_router.merge(router);
