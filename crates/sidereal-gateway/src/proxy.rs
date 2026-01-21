@@ -29,7 +29,7 @@ pub async fn proxy_build(
     Path(path): Path<String>,
     request: Request,
 ) -> Result<Response, GatewayError> {
-    proxy_to_socket(&state.build_socket, &format!("/{path}"), request).await
+    proxy_to_socket(&state.build_socket, &format!("/builds/{path}"), request).await
 }
 
 /// Proxy a request to the build service root.
@@ -38,9 +38,9 @@ pub async fn proxy_build_root(
     request: Request,
 ) -> Result<Response, GatewayError> {
     let uri_path = request.uri().path().to_owned();
-    let path = uri_path.strip_prefix("/api/builds").unwrap_or(&uri_path);
-    let path = if path.is_empty() { "/builds" } else { path };
-    proxy_to_socket(&state.build_socket, path, request).await
+    let suffix = uri_path.strip_prefix("/api/builds").unwrap_or(&uri_path);
+    let path = format!("/builds{suffix}");
+    proxy_to_socket(&state.build_socket, &path, request).await
 }
 
 /// Proxy a request to the control service.
@@ -49,7 +49,12 @@ pub async fn proxy_control(
     Path(path): Path<String>,
     request: Request,
 ) -> Result<Response, GatewayError> {
-    proxy_to_socket(&state.control_socket, &format!("/{path}"), request).await
+    proxy_to_socket(
+        &state.control_socket,
+        &format!("/deployments/{path}"),
+        request,
+    )
+    .await
 }
 
 /// Proxy a request to the control service root.
