@@ -51,7 +51,8 @@ let
     build = {
       enabled = cfg.build.enable;
       inherit (cfg.build) workers;
-    } // lib.optionalAttrs (cfg.build.forgeAuth.type != "none") {
+    }
+    // lib.optionalAttrs (cfg.build.forgeAuth.type != "none") {
       forge_auth = {
         type = cfg.build.forgeAuth.type;
         key_path = cfg.build.forgeAuth.sshKeyPath;
@@ -176,7 +177,10 @@ in
 
       forgeAuth = {
         type = lib.mkOption {
-          type = lib.types.enum [ "ssh" "none" ];
+          type = lib.types.enum [
+            "ssh"
+            "none"
+          ];
           default = "ssh";
           description = "Git forge authentication type.";
         };
@@ -280,6 +284,20 @@ in
       default = "info";
       description = "Log level for the Sidereal services.";
     };
+
+    rustToolchain = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.rust-bin.stable.latest.default or pkgs.rustc;
+      defaultText = lib.literalExpression "pkgs.rust-bin.stable.latest.default or pkgs.rustc";
+      description = ''
+        Rust toolchain package to use for building.
+
+        This should be a complete toolchain that provides both rustc and cargo.
+        Use fenix or rust-overlay to provide a specific version:
+
+          services.sidereal.rustToolchain = fenix.packages.''${system}.stable.toolchain;
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -341,8 +359,7 @@ in
       path = [
         pkgs.openssh
         pkgs.bubblewrap
-        pkgs.cargo
-        pkgs.rustc
+        cfg.rustToolchain
       ];
 
       environment = {

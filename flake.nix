@@ -7,6 +7,10 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     crane.url = "github:ipetkov/crane";
   };
 
@@ -15,6 +19,7 @@
       self,
       nixpkgs,
       rust-overlay,
+      fenix,
       crane,
     }:
     let
@@ -106,10 +111,16 @@
         sidereal = import ./nix/module.nix;
       };
 
-      # Overlay for adding sidereal packages to nixpkgs
-      overlays.default = final: _prev: {
-        sidereal-server = buildSidereal final;
-      };
+      # Overlay for adding sidereal packages to nixpkgs (includes rust-overlay)
+      overlays.default = nixpkgs.lib.composeManyExtensions [
+        rust-overlay.overlays.default
+        (final: _prev: {
+          sidereal-server = buildSidereal final;
+        })
+      ];
+
+      # Expose fenix for consuming flakes to use for rustToolchain
+      fenixPackages = fenix.packages;
 
       # Packages
       packages = forAllSystems (pkgs: {
