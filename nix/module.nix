@@ -286,13 +286,23 @@ in
     };
 
     rustToolchain = lib.mkOption {
-      type = lib.types.package;
-      default = pkgs.rust-bin.stable.latest.default or pkgs.rustc;
-      defaultText = lib.literalExpression "pkgs.rust-bin.stable.latest.default or pkgs.rustc";
+      type = lib.types.either lib.types.package (lib.types.listOf lib.types.package);
+      default =
+        if pkgs ? rust-bin then
+          pkgs.rust-bin.stable.latest.default
+        else
+          [
+            pkgs.cargo
+            pkgs.rustc
+          ];
+      defaultText = lib.literalExpression "pkgs.rust-bin.stable.latest.default or [ pkgs.cargo pkgs.rustc ]";
       description = ''
-        Rust toolchain package to use for building.
+        Rust toolchain package(s) to use for building.
 
-        This should be a complete toolchain that provides both rustc and cargo.
+        This should provide both rustc and cargo. Can be either:
+        - A single package (e.g., from rust-overlay or fenix)
+        - A list of packages (e.g., [ pkgs.cargo pkgs.rustc ])
+
         Use fenix or rust-overlay to provide a specific version:
 
           services.sidereal.rustToolchain = fenix.packages.''${system}.stable.toolchain;
@@ -359,8 +369,8 @@ in
       path = [
         pkgs.openssh
         pkgs.bubblewrap
-        cfg.rustToolchain
-      ];
+      ]
+      ++ (if builtins.isList cfg.rustToolchain then cfg.rustToolchain else [ cfg.rustToolchain ]);
 
       environment = {
         RUST_LOG = cfg.logLevel;
