@@ -364,7 +364,7 @@ in
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
-        PrivateDevices = true;
+        PrivateDevices = false;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
