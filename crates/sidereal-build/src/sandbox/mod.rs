@@ -4,6 +4,8 @@
 
 mod bubblewrap;
 mod compile;
+mod fetch;
 
 pub use bubblewrap::{BubblewrapBuilder, SandboxLimits};
 pub use compile::{CompileOutput, SandboxConfig, SandboxedCompiler};
+pub use fetch::{fetch_dependencies, FetchConfig, FetchOutput};

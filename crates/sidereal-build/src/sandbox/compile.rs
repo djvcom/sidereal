@@ -68,6 +68,12 @@ impl SandboxedCompiler {
         Self { config }
     }
 
+    /// Return the cargo home directory path.
+    #[must_use]
+    pub fn cargo_home(&self) -> &Path {
+        &self.config.cargo_home
+    }
+
     /// Compile the project in a sandbox.
     #[instrument(skip(self, checkout, cancel), fields(project = %project_id))]
     pub async fn compile(

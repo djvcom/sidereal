@@ -14,7 +14,9 @@ use crate::discovery;
 use crate::error::{BuildError, BuildStage, CancelReason};
 use crate::forge_auth::ForgeAuth;
 use crate::queue::{BuildHandle, BuildQueue};
-use crate::sandbox::{SandboxConfig, SandboxLimits, SandboxedCompiler};
+use crate::sandbox::{
+    fetch_dependencies, FetchConfig, SandboxConfig, SandboxLimits, SandboxedCompiler,
+};
 use crate::source::SourceManager;
 use crate::types::{ArtifactId, BuildRequest, BuildStatus, FunctionMetadata};
 
@@ -331,7 +333,36 @@ impl BuildWorker {
             "source checked out"
         );
 
-        // Phase 2: Compile
+        // Phase 2: Fetch dependencies (outside sandbox, needs network)
+        self.queue
+            .update_status(&request.id, BuildStatus::FetchingDeps);
+
+        if cancel.is_cancelled() {
+            return Err(BuildError::Cancelled {
+                reason: CancelReason::UserRequested,
+            });
+        }
+
+        let fetch_config = FetchConfig {
+            cargo_home: self.compiler.cargo_home().to_owned(),
+            ..FetchConfig::default()
+        };
+
+        let fetch_output = fetch_dependencies(
+            &request.project_id,
+            &checkout,
+            &fetch_config,
+            cancel.clone(),
+        )
+        .await?;
+
+        info!(
+            build_id = %request.id,
+            duration_secs = fetch_output.duration.as_secs_f32(),
+            "dependencies fetched"
+        );
+
+        // Phase 3: Compile (sandboxed)
         self.queue
             .update_status(&request.id, BuildStatus::Compiling { progress: None });
 
