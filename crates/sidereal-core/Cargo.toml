@@ -1,0 +1,36 @@
+[package]
+name = "sidereal-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Core infrastructure for Sidereal (transport, registry)"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true, features = ["net", "sync", "io-util"] }
+
+# Async traits
+async-trait.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Tracing
+tracing.workspace = true
+
+# Configuration
+serde = { workspace = true, features = ["derive"] }
+figment.workspace = true
+
+# Concurrent data structures
+dashmap.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

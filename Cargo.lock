@@ -6176,6 +6176,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sidereal-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dashmap 6.1.0",
+ "figment",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "sidereal-firecracker"
 version = "0.1.0"
 dependencies = [
