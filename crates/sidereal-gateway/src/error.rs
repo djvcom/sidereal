@@ -4,67 +4,88 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
 
+/// Gateway error types with automatic HTTP status code mapping.
 #[derive(Error, Debug)]
 pub enum GatewayError {
+    /// Configuration error during startup or reload.
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// Requested function does not exist.
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
 
+    /// Function name failed validation.
     #[error("Invalid function name: {0}")]
     InvalidFunctionName(String),
 
+    /// Backend URL is malformed.
     #[error("Invalid backend URL: {0}")]
     InvalidBackendUrl(String),
 
+    /// Failed to connect to a backend.
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
 
+    /// Failed to build the outgoing request.
     #[error("Request build failed: {0}")]
     RequestBuildFailed(String),
 
+    /// Backend returned an error.
     #[error("Backend error: {0}")]
     BackendError(String),
 
+    /// Request exceeded the configured timeout.
     #[error("Request timeout")]
     Timeout,
 
+    /// Client exceeded rate limit.
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
 
+    /// Circuit breaker is open due to backend failures.
     #[error("Circuit breaker open")]
     CircuitOpen,
 
+    /// Request body exceeds size limit.
     #[error("Request body too large")]
     PayloadTooLarge,
 
+    /// Request URI exceeds length limit.
     #[error("URI too long")]
     UriTooLong,
 
+    /// Request has too many headers.
     #[error("Too many headers")]
     TooManyHeaders,
 
+    /// Error communicating over vsock.
     #[error("vsock error: {0}")]
     VsockError(String),
 
+    /// Protocol-level error (framing, serialisation).
     #[error("Protocol error: {0}")]
     ProtocolError(String),
 
+    /// Low-level I/O error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Service is being provisioned (workers starting).
     #[error("Service provisioning: {0}")]
     ServiceProvisioning(String),
 
+    /// All workers for a function are unhealthy.
     #[error("All workers unhealthy: {0}")]
     AllWorkersUnhealthy(String),
 
+    /// Error accessing placement data in Valkey.
     #[error("Placement store error: {0}")]
     PlacementStore(String),
 }
 
 impl GatewayError {
+    /// Returns a machine-readable error type identifier.
     pub const fn error_type(&self) -> &'static str {
         match self {
             Self::Config(_) => "config_error",
@@ -89,6 +110,7 @@ impl GatewayError {
         }
     }
 
+    /// Returns the HTTP status code for this error.
     pub const fn status_code(&self) -> StatusCode {
         match self {
             Self::FunctionNotFound(_) => StatusCode::NOT_FOUND,

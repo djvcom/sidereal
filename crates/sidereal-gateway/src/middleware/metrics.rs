@@ -18,6 +18,7 @@ use crate::error::GatewayError;
 pub struct MetricsLayer;
 
 impl MetricsLayer {
+    /// Creates a new metrics recording layer.
     pub const fn new() -> Self {
         Self
     }
@@ -206,10 +207,12 @@ impl MetricsServer {
         })
     }
 
+    /// Returns a handle to the Prometheus metrics recorder.
     pub fn handle(&self) -> PrometheusHandle {
         self.handle.clone()
     }
 
+    /// Runs the metrics HTTP server until cancellation.
     pub async fn run(
         self,
         config: &MetricsConfig,

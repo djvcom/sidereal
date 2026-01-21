@@ -25,6 +25,7 @@ const STRIP_HEADERS: &[&str] = &[
 pub struct SecurityLayer;
 
 impl SecurityLayer {
+    /// Creates a new security layer.
     pub const fn new() -> Self {
         Self
     }

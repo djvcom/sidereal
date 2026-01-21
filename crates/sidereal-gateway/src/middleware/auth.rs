@@ -13,13 +13,18 @@ use crate::config::{AuthAlgorithm, AuthConfig};
 /// Claims extracted from a valid JWT.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
+    /// Subject (user identifier).
     pub sub: String,
+    /// Expiration time (Unix timestamp).
     #[serde(default)]
     pub exp: Option<u64>,
+    /// Issued-at time (Unix timestamp).
     #[serde(default)]
     pub iat: Option<u64>,
+    /// Token issuer.
     #[serde(default)]
     pub iss: Option<String>,
+    /// Token audience.
     #[serde(default)]
     pub aud: Option<String>,
 }
@@ -31,6 +36,7 @@ pub struct AuthLayer {
 }
 
 impl AuthLayer {
+    /// Creates a new authentication layer with the given configuration.
     pub fn new(config: &AuthConfig) -> Self {
         Self {
             config: Arc::new(config.clone()),

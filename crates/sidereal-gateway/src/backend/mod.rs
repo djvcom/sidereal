@@ -22,9 +22,17 @@ use crate::error::GatewayError;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WorkerAddress {
     /// HTTP endpoint (dev mode).
-    Http { url: String },
+    Http {
+        /// Backend URL.
+        url: String,
+    },
     /// vsock endpoint (Firecracker).
-    Vsock { uds_path: PathBuf, port: u32 },
+    Vsock {
+        /// Path to the vsock Unix domain socket.
+        uds_path: PathBuf,
+        /// Vsock port number.
+        port: u32,
+    },
 }
 
 impl std::fmt::Display for WorkerAddress {
@@ -40,16 +48,23 @@ impl std::fmt::Display for WorkerAddress {
 
 /// Request to be dispatched to a worker.
 pub struct DispatchRequest {
+    /// Name of the function to invoke.
     pub function_name: String,
+    /// Request body payload.
     pub payload: Vec<u8>,
+    /// Trace ID for distributed tracing.
     pub trace_id: String,
+    /// HTTP headers to forward.
     pub headers: ::http::HeaderMap,
 }
 
 /// Response from a worker.
 pub struct DispatchResponse {
+    /// HTTP status code.
     pub status: u16,
+    /// Response body payload.
     pub body: Vec<u8>,
+    /// HTTP headers from the response.
     pub headers: ::http::HeaderMap,
 }
 
@@ -82,6 +97,7 @@ impl Default for BackendRegistry {
 }
 
 impl BackendRegistry {
+    /// Creates a new empty backend registry.
     pub fn new() -> Self {
         Self::default()
     }

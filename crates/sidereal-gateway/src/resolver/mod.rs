@@ -23,6 +23,7 @@ static FUNCTION_NAME_PATTERN: LazyLock<Option<Regex>> =
 /// Information about a resolved function.
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
+    /// Function name.
     pub name: String,
     /// Backend addresses for this function (supports load balancing).
     pub backend_addresses: Vec<WorkerAddress>,

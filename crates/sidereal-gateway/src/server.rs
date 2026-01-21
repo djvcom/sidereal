@@ -119,7 +119,7 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         .route("/health", get(health_check))
         .route("/ready", get(readiness_check))
         .route("/{function}", post(handle_function))
-        .route("/{function}/*path", post(handle_function_with_path))
+        .route("/{function}/{*path}", post(handle_function_with_path))
         .layer(MetricsLayer::new())
         .layer(OtelTraceLayer::new())
         .layer(SecurityLayer::new())

@@ -12,14 +12,18 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
 
+/// Errors that can occur when loading or parsing gateway configuration.
 #[derive(Error, Debug)]
 pub enum ConfigError {
+    /// Error from the Figment configuration library.
     #[error("Configuration error: {0}")]
     Figment(Box<FigmentError>),
 
+    /// The specified configuration file was not found.
     #[error("Configuration file not found: {0}")]
     FileNotFound(String),
 
+    /// The configuration is invalid or malformed.
     #[error("Invalid configuration: {0}")]
     Invalid(String),
 }
@@ -30,28 +34,37 @@ impl From<FigmentError> for ConfigError {
     }
 }
 
+/// Top-level gateway configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GatewayConfig {
+    /// HTTP server settings (bind address, TLS, shutdown timeout).
     #[serde(default)]
     pub server: ServerConfig,
 
+    /// Request routing configuration (static, discovery, or scheduler-based).
     pub routing: RoutingConfig,
 
+    /// Middleware configuration (tracing, rate limiting, circuit breaker, auth).
     #[serde(default)]
     pub middleware: MiddlewareConfig,
 
+    /// Request and connection limits.
     #[serde(default)]
     pub limits: LimitsConfig,
 
+    /// Prometheus metrics endpoint configuration.
     #[serde(default)]
     pub metrics: Option<MetricsConfig>,
 }
 
+/// Configuration for the Prometheus metrics endpoint.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MetricsConfig {
+    /// Address to bind the metrics server to.
     #[serde(default = "default_metrics_bind_address")]
     pub bind_address: SocketAddr,
 
+    /// HTTP path for the metrics endpoint.
     #[serde(default = "default_metrics_path")]
     pub path: String,
 }
@@ -74,10 +87,14 @@ fn default_metrics_path() -> String {
 }
 
 impl GatewayConfig {
+    /// Loads configuration from the default path (`gateway.toml`).
     pub fn load() -> Result<Self, ConfigError> {
         Self::load_from("gateway.toml")
     }
 
+    /// Loads configuration from the specified file path.
+    ///
+    /// Environment variables prefixed with `GATEWAY_` override file settings.
     pub fn load_from(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let path = path.as_ref();
 
@@ -94,23 +111,28 @@ impl GatewayConfig {
         figment.extract::<Self>().map_err(ConfigError::from)
     }
 
+    /// Parses configuration from a TOML string.
     pub fn parse(content: &str) -> Result<Self, ConfigError> {
         let figment = Figment::new().merge(InterpolatingToml::string(content));
         figment.extract::<Self>().map_err(ConfigError::from)
     }
 }
 
+/// HTTP server configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
+    /// Address and port to bind the server to.
     #[serde(default = "default_bind_address")]
     pub bind_address: SocketAddr,
 
+    /// Time to wait for in-flight requests during shutdown.
     #[serde(
         default = "default_shutdown_timeout",
         deserialize_with = "deserialize_duration"
     )]
     pub shutdown_timeout: Duration,
 
+    /// TLS configuration (if HTTPS is enabled).
     #[serde(default)]
     pub tls: Option<TlsConfig>,
 }
@@ -125,24 +147,30 @@ impl Default for ServerConfig {
     }
 }
 
+/// TLS/HTTPS configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TlsConfig {
+    /// Path to the TLS certificate file (PEM format).
     pub cert_path: PathBuf,
+    /// Path to the TLS private key file (PEM format).
     pub key_path: PathBuf,
 }
 
 const fn default_bind_address() -> SocketAddr {
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080)
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8422)
 }
 
 const fn default_shutdown_timeout() -> Duration {
     Duration::from_secs(30)
 }
 
+/// Request routing configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum RoutingConfig {
+    /// Static function-to-backend mapping defined in configuration.
     Static {
+        /// Map of function names to their backend configurations.
         #[serde(default)]
         functions: HashMap<String, FunctionBackendConfig>,
 
@@ -150,9 +178,12 @@ pub enum RoutingConfig {
         #[serde(default)]
         load_balance: LoadBalanceStrategyConfig,
     },
+    /// Dynamic discovery from a service registry endpoint.
     Discovery {
+        /// URL of the service discovery endpoint.
         endpoint: String,
     },
+    /// Scheduler-based routing using placement data from Valkey.
     Scheduler(SchedulerResolverConfig),
 }
 
@@ -209,48 +240,73 @@ pub enum LoadBalanceStrategyConfig {
     Random,
 }
 
+/// Backend address for function invocation.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum BackendAddress {
-    Http { url: String },
-    Vsock { uds_path: PathBuf, port: u32 },
+    /// HTTP backend with a URL.
+    Http {
+        /// Backend URL (e.g., `http://127.0.0.1:7850`).
+        url: String,
+    },
+    /// Vsock backend for Firecracker VM communication.
+    Vsock {
+        /// Path to the vsock Unix domain socket.
+        uds_path: PathBuf,
+        /// Vsock port number.
+        port: u32,
+    },
 }
 
+/// Middleware stack configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct MiddlewareConfig {
+    /// OpenTelemetry tracing configuration.
     #[serde(default)]
     pub tracing: TracingConfig,
 
+    /// Per-IP rate limiting configuration.
     #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
 
+    /// Circuit breaker configuration for backend resilience.
     #[serde(default)]
     pub circuit_breaker: Option<CircuitBreakerConfig>,
 
+    /// JWT authentication configuration.
     #[serde(default)]
     pub auth: Option<AuthConfig>,
 }
 
+/// JWT authentication configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthConfig {
+    /// Secret key for HMAC signature verification.
     pub secret: String,
 
+    /// HMAC algorithm to use for verification.
     #[serde(default = "default_auth_algorithm")]
     pub algorithm: AuthAlgorithm,
 
+    /// Expected token issuer (`iss` claim).
     #[serde(default)]
     pub issuer: Option<String>,
 
+    /// Expected token audience (`aud` claim).
     #[serde(default)]
     pub audience: Option<String>,
 }
 
+/// JWT signing algorithm.
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum AuthAlgorithm {
+    /// HMAC with SHA-256.
     #[default]
     HS256,
+    /// HMAC with SHA-384.
     HS384,
+    /// HMAC with SHA-512.
     HS512,
 }
 
@@ -258,8 +314,10 @@ const fn default_auth_algorithm() -> AuthAlgorithm {
     AuthAlgorithm::HS256
 }
 
+/// OpenTelemetry tracing configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TracingConfig {
+    /// Whether tracing is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -276,12 +334,16 @@ const fn default_true() -> bool {
     true
 }
 
+/// Per-IP rate limiting configuration using token bucket algorithm.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RateLimitConfig {
+    /// Maximum sustained request rate per second.
     pub requests_per_second: u32,
+    /// Maximum burst size (bucket capacity).
     pub burst_size: u32,
 }
 
+/// Circuit breaker configuration for backend resilience.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CircuitBreakerConfig {
     /// Number of consecutive failures before opening the circuit.
@@ -319,32 +381,40 @@ const fn default_reset_timeout_ms() -> u32 {
     30_000 // 30 seconds
 }
 
+/// Request and connection limits.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LimitsConfig {
+    /// Maximum request body size in bytes.
     #[serde(default = "default_max_body_size")]
     pub max_body_size: usize,
 
+    /// Maximum total header size in bytes.
     #[serde(default = "default_max_header_size")]
     pub max_header_size: usize,
 
+    /// Maximum URI length in bytes.
     #[serde(default = "default_max_uri_length")]
     pub max_uri_length: usize,
 
+    /// Maximum time to wait for a complete request/response cycle.
     #[serde(
         default = "default_request_timeout",
         deserialize_with = "deserialize_duration"
     )]
     pub request_timeout: Duration,
 
+    /// Maximum time to establish a backend connection.
     #[serde(
         default = "default_connect_timeout",
         deserialize_with = "deserialize_duration"
     )]
     pub connect_timeout: Duration,
 
+    /// Maximum total concurrent connections.
     #[serde(default = "default_max_connections")]
     pub max_connections: usize,
 
+    /// Maximum concurrent connections per client IP.
     #[serde(default = "default_max_connections_per_ip")]
     pub max_connections_per_ip: usize,
 }
@@ -477,17 +547,22 @@ impl EnvVarInterpolator {
     }
 }
 
+/// TOML configuration provider with environment variable interpolation.
+///
+/// Supports `${VAR_NAME}` syntax for embedding environment variable values.
 pub struct InterpolatingToml {
     content: String,
 }
 
 impl InterpolatingToml {
+    /// Creates an interpolating TOML provider from a file path.
     pub fn file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path.as_ref())
             .map_err(|_| ConfigError::FileNotFound(path.as_ref().display().to_string()))?;
         Ok(Self { content })
     }
 
+    /// Creates an interpolating TOML provider from a string.
     pub fn string(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
@@ -586,7 +661,7 @@ mod tests {
 
         assert_eq!(
             config.server.bind_address,
-            "127.0.0.1:8080".parse().unwrap()
+            "127.0.0.1:8422".parse().unwrap()
         );
         assert_eq!(config.limits.max_body_size, 10 * 1024 * 1024);
         assert_eq!(config.limits.request_timeout, Duration::from_secs(30));
