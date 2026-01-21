@@ -365,7 +365,7 @@ in
         ProtectHome = true;
         PrivateTmp = true;
         PrivateDevices = false;
-        ProtectKernelTunables = true;
+        ProtectKernelTunables = false;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
         RestrictSUIDSGID = true;
