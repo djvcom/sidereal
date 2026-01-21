@@ -55,6 +55,39 @@ pub struct GatewayConfig {
     /// Prometheus metrics endpoint configuration.
     #[serde(default)]
     pub metrics: Option<MetricsConfig>,
+
+    /// API proxy configuration for internal services.
+    #[serde(default)]
+    pub api: Option<ApiProxyConfig>,
+}
+
+/// Configuration for proxying API requests to internal services.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiProxyConfig {
+    /// Path to the build service Unix socket.
+    #[serde(default = "default_build_socket")]
+    pub build_socket: PathBuf,
+
+    /// Path to the control service Unix socket.
+    #[serde(default = "default_control_socket")]
+    pub control_socket: PathBuf,
+}
+
+impl Default for ApiProxyConfig {
+    fn default() -> Self {
+        Self {
+            build_socket: default_build_socket(),
+            control_socket: default_control_socket(),
+        }
+    }
+}
+
+fn default_build_socket() -> PathBuf {
+    PathBuf::from("/run/sidereal/build.sock")
+}
+
+fn default_control_socket() -> PathBuf {
+    PathBuf::from("/run/sidereal/control.sock")
 }
 
 /// Configuration for the Prometheus metrics endpoint.

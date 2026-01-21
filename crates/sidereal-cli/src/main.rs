@@ -48,6 +48,17 @@ enum Commands {
         skip_build: bool,
     },
 
+    /// Push project to remote Sidereal platform
+    Push {
+        /// Platform URL (e.g., http://localhost:8422)
+        #[arg(short, long, default_value = "http://localhost:8422")]
+        url: String,
+
+        /// Target environment
+        #[arg(short, long, default_value = "production")]
+        environment: String,
+    },
+
     /// Manage secrets
     Secrets {
         #[command(subcommand)]
@@ -174,6 +185,10 @@ async fn main() {
                 skip_build,
             };
             commands::deploy::run(args).await.map_err(Into::into)
+        }
+        Commands::Push { url, environment } => {
+            let args = commands::push::PushArgs { url, environment };
+            commands::push::run(args).await.map_err(Into::into)
         }
         Commands::Secrets { command } => match command {
             SecretsCommands::Get { name, project, env } => {

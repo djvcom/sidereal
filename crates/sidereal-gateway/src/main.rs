@@ -67,6 +67,7 @@ fn default_config() -> GatewayConfig {
         middleware: Default::default(),
         limits: Default::default(),
         metrics: None,
+        api: None,
     }
 }
 

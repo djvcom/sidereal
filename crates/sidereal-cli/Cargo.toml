@@ -28,6 +28,7 @@ opentelemetry-configuration.workspace = true
 sidereal-firecracker.workspace = true
 sidereal-secrets = { version = "0.1.0", path = "../sidereal-secrets", features = ["native", "config"] }
 dirs = "6.0.0"
+reqwest = { version = "0.13.1", features = ["json"] }
 
 [lints]
 workspace = true

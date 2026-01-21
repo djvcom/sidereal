@@ -125,6 +125,36 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
         .layer(SecurityLayer::new())
         .with_state(state);
 
+    // Add API proxy routes if configured
+    if let Some(ref api_config) = config.api {
+        use crate::proxy::{
+            proxy_build, proxy_build_root, proxy_control, proxy_control_root, ProxyState,
+        };
+        use axum::routing::any;
+
+        let proxy_state = Arc::new(ProxyState {
+            build_socket: api_config.build_socket.clone(),
+            control_socket: api_config.control_socket.clone(),
+        });
+
+        let api_router = Router::new()
+            // Build service routes
+            .route("/api/builds", any(proxy_build_root))
+            .route("/api/builds/{*path}", any(proxy_build))
+            // Control service routes
+            .route("/api/deployments", any(proxy_control_root))
+            .route("/api/deployments/{*path}", any(proxy_control))
+            .with_state(proxy_state);
+
+        router = api_router.merge(router);
+
+        tracing::info!(
+            build_socket = %api_config.build_socket.display(),
+            control_socket = %api_config.control_socket.display(),
+            "API proxy enabled"
+        );
+    }
+
     if let Some(ref auth_config) = config.middleware.auth {
         tracing::info!(algorithm = ?auth_config.algorithm, "JWT authentication enabled");
         router = router.layer(AuthLayer::new(auth_config));
@@ -349,6 +379,7 @@ mod tests {
             middleware: Default::default(),
             limits: Default::default(),
             metrics: None,
+            api: None,
         }
     }
 

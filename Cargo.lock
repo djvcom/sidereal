@@ -6135,6 +6135,7 @@ dependencies = [
  "clap",
  "dirs",
  "opentelemetry-configuration",
+ "reqwest 0.13.1",
  "serde",
  "serde_json",
  "sidereal-firecracker",

@@ -192,8 +192,8 @@ impl Services {
 
     fn create_gateway_config(&self) -> anyhow::Result<sidereal_gateway::GatewayConfig> {
         use sidereal_gateway::config::{
-            GatewayConfig, LoadBalanceStrategyConfig, RoutingConfig, SchedulerResolverConfig,
-            ServerConfig,
+            ApiProxyConfig, GatewayConfig, LoadBalanceStrategyConfig, RoutingConfig,
+            SchedulerResolverConfig, ServerConfig,
         };
         use std::path::PathBuf;
 
@@ -213,6 +213,10 @@ impl Services {
             middleware: Default::default(),
             limits: Default::default(),
             metrics: None,
+            api: Some(ApiProxyConfig {
+                build_socket: self.config.server.socket_dir.join("build.sock"),
+                control_socket: self.config.server.socket_dir.join("control.sock"),
+            }),
         })
     }
 
