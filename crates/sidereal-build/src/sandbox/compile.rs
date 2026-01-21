@@ -89,6 +89,12 @@ impl SandboxedCompiler {
             }
         }
 
+        // Always bind /nix read-only if it exists (for NixOS)
+        let nix_store = Path::new("/nix");
+        if nix_store.exists() {
+            builder = builder.bind_ro(nix_store, nix_store);
+        }
+
         // Mount cargo registry read-only (pre-fetched dependencies)
         if self.config.cargo_home.exists() {
             builder = builder.bind_ro(&self.config.cargo_home, "/cargo");
@@ -102,7 +108,9 @@ impl SandboxedCompiler {
         builder = builder.bind_rw(target_dir, "/build/target");
 
         // Set environment
+        let path_env = std::env::var("PATH").unwrap_or_default();
         builder = builder
+            .env("PATH", &path_env)
             .env("CARGO_HOME", "/cargo")
             .env("CARGO_TARGET_DIR", "/build/target")
             .env("HOME", "/build")

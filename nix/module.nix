@@ -341,6 +341,8 @@ in
       path = [
         pkgs.openssh
         pkgs.bubblewrap
+        pkgs.cargo
+        pkgs.rustc
       ];
 
       environment = {

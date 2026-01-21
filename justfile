@@ -46,3 +46,8 @@ clean:
 # Watch for changes and rebuild
 watch:
     cargo watch -x 'build --all'
+
+# Deploy to local NixOS system
+deploy:
+    nix flake update sidereal --flake /etc/nixos
+    sudo nixos-rebuild switch --flake /etc/nixos#terminus
