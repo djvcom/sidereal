@@ -54,6 +54,8 @@ struct SubmitBuildRequest {
     repo_url: String,
     branch: String,
     commit_sha: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
     environment: Option<String>,
     callback_url: Option<String>,
 }
@@ -110,6 +112,7 @@ struct GitInfo {
     remote_url: String,
     branch: String,
     commit_sha: String,
+    subdir: Option<String>,
 }
 
 pub async fn run(args: PushArgs) -> Result<(), PushError> {
@@ -198,10 +201,21 @@ fn get_git_info() -> Result<GitInfo, PushError> {
 
     let commit_sha = run_git_command(&["rev-parse", "HEAD"])?.trim().to_owned();
 
+    let repo_root = run_git_command(&["rev-parse", "--show-toplevel"])?
+        .trim()
+        .to_owned();
+    let current_dir = std::env::current_dir().map_err(|e| PushError::GitError(e.to_string()))?;
+    let subdir = current_dir
+        .strip_prefix(&repo_root)
+        .ok()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_string_lossy().to_string());
+
     Ok(GitInfo {
         remote_url,
         branch,
         commit_sha,
+        subdir,
     })
 }
 
@@ -231,6 +245,7 @@ async fn submit_build(
         repo_url: git_info.remote_url.clone(),
         branch: git_info.branch.clone(),
         commit_sha: git_info.commit_sha.clone(),
+        path: git_info.subdir.clone(),
         environment: Some(environment.to_owned()),
         callback_url: None,
     };

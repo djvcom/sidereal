@@ -322,10 +322,29 @@ impl BuildWorker {
             });
         }
 
-        let checkout = self
+        let mut checkout = self
             .source_manager
             .checkout(&request.project_id, &request.repo_url, &request.commit_sha)
             .await?;
+
+        if let Some(ref subpath) = request.path {
+            let subdir = checkout.path.join(subpath);
+            if !subdir.exists() {
+                return Err(BuildError::CompileFailed {
+                    stderr: format!("subdirectory '{}' not found in repository", subpath),
+                    exit_code: 0,
+                });
+            }
+            checkout.path = subdir.clone();
+            checkout.cargo_toml = {
+                let toml = subdir.join("Cargo.toml");
+                toml.exists().then_some(toml)
+            };
+            checkout.cargo_lock = {
+                let lock = subdir.join("Cargo.lock");
+                lock.exists().then_some(lock)
+            };
+        }
 
         info!(
             build_id = %request.id,

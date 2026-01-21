@@ -140,6 +140,9 @@ pub struct BuildRequest {
     pub branch: String,
     /// Commit SHA to build.
     pub commit_sha: String,
+    /// Subdirectory within the repo containing the project (e.g., "examples/hello-world").
+    #[serde(default)]
+    pub path: Option<String>,
     /// Target environment (e.g., "production", "staging").
     #[serde(default)]
     pub environment: Option<String>,
@@ -165,6 +168,7 @@ impl BuildRequest {
             repo_url: repo_url.into(),
             branch: branch.into(),
             commit_sha: commit_sha.into(),
+            path: None,
             environment: None,
             callback_url: None,
             created_at: SystemTime::now(),
@@ -186,10 +190,18 @@ impl BuildRequest {
             repo_url: repo_url.into(),
             branch: branch.into(),
             commit_sha: commit_sha.into(),
+            path: None,
             environment: None,
             callback_url: None,
             created_at: SystemTime::now(),
         }
+    }
+
+    /// Set the subdirectory path within the repo.
+    #[must_use]
+    pub fn with_path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
     }
 
     /// Set the target environment.
