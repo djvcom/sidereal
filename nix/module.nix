@@ -377,6 +377,9 @@ in
       environment = {
         RUST_LOG = cfg.logLevel;
         SIDEREAL_CONFIG = configFile;
+        # Configure musl cross-compilation
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl}/bin/musl-gcc";
+        CC_x86_64_unknown_linux_musl = "${pkgs.musl}/bin/musl-gcc";
       };
 
       serviceConfig = {

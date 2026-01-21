@@ -123,6 +123,16 @@ impl SandboxedCompiler {
             .env("USER", "build")
             .cwd("/build/src");
 
+        // Pass through cross-compilation environment variables
+        for var in [
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER",
+            "CC_x86_64_unknown_linux_musl",
+        ] {
+            if let Ok(value) = std::env::var(var) {
+                builder = builder.env(var, value);
+            }
+        }
+
         // Add rustflags if specified
         if !self.config.extra_rustflags.is_empty() {
             let rustflags = self.config.extra_rustflags.join(" ");
