@@ -51,7 +51,8 @@ let
     build = {
       enabled = cfg.build.enable;
       inherit (cfg.build) workers;
-      forge_auth = lib.mkIf (cfg.build.forgeAuth.type != "none") {
+    } // lib.optionalAttrs (cfg.build.forgeAuth.type != "none") {
+      forge_auth = {
         type = cfg.build.forgeAuth.type;
         key_path = cfg.build.forgeAuth.sshKeyPath;
       };
