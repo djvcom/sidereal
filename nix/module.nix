@@ -289,13 +289,15 @@ in
       type = lib.types.either lib.types.package (lib.types.listOf lib.types.package);
       default =
         if pkgs ? rust-bin then
-          pkgs.rust-bin.stable.latest.default
+          pkgs.rust-bin.stable.latest.default.override {
+            targets = [ "x86_64-unknown-linux-musl" ];
+          }
         else
           [
             pkgs.cargo
             pkgs.rustc
           ];
-      defaultText = lib.literalExpression "pkgs.rust-bin.stable.latest.default or [ pkgs.cargo pkgs.rustc ]";
+      defaultText = lib.literalExpression "pkgs.rust-bin.stable.latest.default.override { targets = [ \"x86_64-unknown-linux-musl\" ]; }";
       description = ''
         Rust toolchain package(s) to use for building.
 
@@ -303,9 +305,7 @@ in
         - A single package (e.g., from rust-overlay or fenix)
         - A list of packages (e.g., [ pkgs.cargo pkgs.rustc ])
 
-        Use fenix or rust-overlay to provide a specific version:
-
-          services.sidereal.rustToolchain = fenix.packages.''${system}.stable.toolchain;
+        The default includes the x86_64-unknown-linux-musl target for static builds.
       '';
     };
   };
@@ -369,6 +369,8 @@ in
       path = [
         pkgs.openssh
         pkgs.bubblewrap
+        pkgs.gcc
+        pkgs.musl
       ]
       ++ (if builtins.isList cfg.rustToolchain then cfg.rustToolchain else [ cfg.rustToolchain ]);
 
