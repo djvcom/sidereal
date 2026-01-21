@@ -140,6 +140,12 @@ pub struct BuildRequest {
     pub branch: String,
     /// Commit SHA to build.
     pub commit_sha: String,
+    /// Target environment (e.g., "production", "staging").
+    #[serde(default)]
+    pub environment: Option<String>,
+    /// URL to POST build completion notification to.
+    #[serde(default)]
+    pub callback_url: Option<String>,
     /// When the request was created.
     pub created_at: SystemTime,
 }
@@ -159,6 +165,8 @@ impl BuildRequest {
             repo_url: repo_url.into(),
             branch: branch.into(),
             commit_sha: commit_sha.into(),
+            environment: None,
+            callback_url: None,
             created_at: SystemTime::now(),
         }
     }
@@ -178,8 +186,24 @@ impl BuildRequest {
             repo_url: repo_url.into(),
             branch: branch.into(),
             commit_sha: commit_sha.into(),
+            environment: None,
+            callback_url: None,
             created_at: SystemTime::now(),
         }
+    }
+
+    /// Set the target environment.
+    #[must_use]
+    pub fn with_environment(mut self, environment: impl Into<String>) -> Self {
+        self.environment = Some(environment.into());
+        self
+    }
+
+    /// Set the callback URL.
+    #[must_use]
+    pub fn with_callback_url(mut self, url: impl Into<String>) -> Self {
+        self.callback_url = Some(url.into());
+        self
     }
 
     /// Return a short version of the commit SHA (first 8 characters).
@@ -239,7 +263,7 @@ pub enum BuildStatus {
 impl BuildStatus {
     /// Check if this is a terminal state.
     #[must_use]
-    pub fn is_terminal(&self) -> bool {
+    pub const fn is_terminal(&self) -> bool {
         matches!(
             self,
             Self::Completed { .. } | Self::Failed { .. } | Self::Cancelled { .. }
@@ -248,7 +272,7 @@ impl BuildStatus {
 
     /// Check if the build is currently in progress.
     #[must_use]
-    pub fn is_in_progress(&self) -> bool {
+    pub const fn is_in_progress(&self) -> bool {
         matches!(
             self,
             Self::CheckingOut
@@ -261,7 +285,7 @@ impl BuildStatus {
 
     /// Return the current stage if in progress.
     #[must_use]
-    pub fn current_stage(&self) -> Option<BuildStage> {
+    pub const fn current_stage(&self) -> Option<BuildStage> {
         match self {
             Self::CheckingOut => Some(BuildStage::Checkout),
             Self::FetchingDeps => Some(BuildStage::FetchDeps),

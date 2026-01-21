@@ -64,7 +64,7 @@ pub struct SandboxedCompiler {
 impl SandboxedCompiler {
     /// Create a new sandboxed compiler.
     #[must_use]
-    pub fn new(config: SandboxConfig) -> Self {
+    pub const fn new(config: SandboxConfig) -> Self {
         Self { config }
     }
 
@@ -171,7 +171,7 @@ impl SandboxedCompiler {
 
         // Wait for completion with timeout and cancellation
         let result = tokio::select! {
-            _ = cancel.cancelled() => {
+            () = cancel.cancelled() => {
                 warn!("compilation cancelled");
                 child.kill().await.ok();
                 return Err(BuildError::Cancelled {

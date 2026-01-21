@@ -47,7 +47,7 @@ impl RootfsBuilder {
         functions_json: Option<&Path>,
         output_path: &Path,
     ) -> BuildResult<RootfsOutput> {
-        self.validate_inputs(runtime_binary, user_binary)?;
+        Self::validate_inputs(runtime_binary, user_binary)?;
 
         std::fs::create_dir_all(&self.work_dir)?;
         if let Some(parent) = output_path.parent() {
@@ -61,7 +61,7 @@ impl RootfsBuilder {
         );
 
         self.create_empty_image(output_path)?;
-        self.format_ext4(output_path)?;
+        Self::format_ext4(output_path)?;
         self.populate_rootfs(output_path, runtime_binary, user_binary, functions_json)?;
 
         let hash = calculate_sha256(output_path)?;
@@ -80,7 +80,7 @@ impl RootfsBuilder {
         })
     }
 
-    fn validate_inputs(&self, runtime: &Path, user_binary: &Path) -> BuildResult<()> {
+    fn validate_inputs(runtime: &Path, user_binary: &Path) -> BuildResult<()> {
         if !runtime.exists() {
             return Err(BuildError::RootfsGeneration(format!(
                 "runtime binary not found: {}",
@@ -122,7 +122,7 @@ impl RootfsBuilder {
         Ok(())
     }
 
-    fn format_ext4(&self, path: &Path) -> BuildResult<()> {
+    fn format_ext4(path: &Path) -> BuildResult<()> {
         debug!(path = %path.display(), "formatting as ext4");
 
         let status = Command::new("mkfs.ext4")
@@ -168,7 +168,8 @@ impl RootfsBuilder {
         }
 
         // Populate the mounted filesystem
-        let result = self.populate_mounted_rootfs(&mount_dir, runtime, user_binary, functions_json);
+        let result =
+            Self::populate_mounted_rootfs(&mount_dir, runtime, user_binary, functions_json);
 
         // Always unmount
         debug!("unmounting rootfs");
@@ -180,7 +181,6 @@ impl RootfsBuilder {
     }
 
     fn populate_mounted_rootfs(
-        &self,
         mount_dir: &Path,
         runtime: &Path,
         user_binary: &Path,
@@ -251,17 +251,17 @@ fn calculate_sha256(path: &Path) -> BuildResult<String> {
 
 /// Run a command with sudo.
 fn run_sudo(args: &[&str]) -> BuildResult<()> {
+    let cmd_name = args.first().copied().unwrap_or("unknown");
     let status = Command::new("sudo")
         .args(args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map_err(|e| BuildError::RootfsGeneration(format!("sudo {} failed: {e}", args[0])))?;
+        .map_err(|e| BuildError::RootfsGeneration(format!("sudo {cmd_name} failed: {e}")))?;
 
     if !status.success() {
         return Err(BuildError::RootfsGeneration(format!(
-            "sudo {} failed",
-            args[0]
+            "sudo {cmd_name} failed"
         )));
     }
 

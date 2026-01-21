@@ -82,7 +82,7 @@ impl EnvironmentCheck {
     /// Critical tools are those without which the service cannot function.
     /// Cargo-audit is optional (degrades gracefully).
     #[must_use]
-    pub fn is_ready(&self) -> bool {
+    pub const fn is_ready(&self) -> bool {
         self.bubblewrap && self.cargo && self.rustc && self.git
     }
 

@@ -6,9 +6,11 @@ mod worker;
 
 pub use worker::BuildWorker;
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::time::Duration;
+
+const DEFAULT_ADDR: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 7860);
 
 use figment::providers::{Env, Format, Toml};
 use figment::Figment;
@@ -18,7 +20,7 @@ use crate::artifact::StorageConfig;
 use crate::error::{BuildError, BuildResult};
 
 /// Build service configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ServiceConfig {
     /// Server configuration.
     #[serde(default)]
@@ -61,18 +63,6 @@ impl ServiceConfig {
     }
 }
 
-impl Default for ServiceConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            paths: PathsConfig::default(),
-            limits: LimitsConfig::default(),
-            worker: WorkerConfig::default(),
-            storage: StorageConfig::default(),
-        }
-    }
-}
-
 /// Server configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
@@ -94,11 +84,11 @@ impl Default for ServerConfig {
     }
 }
 
-fn default_listen_addr() -> SocketAddr {
-    "0.0.0.0:7860".parse().expect("valid address")
+const fn default_listen_addr() -> SocketAddr {
+    SocketAddr::V4(DEFAULT_ADDR)
 }
 
-fn default_max_queue_size() -> usize {
+const fn default_max_queue_size() -> usize {
     100
 }
 
@@ -168,7 +158,7 @@ pub struct LimitsConfig {
 impl LimitsConfig {
     /// Get the timeout as a Duration.
     #[must_use]
-    pub fn timeout(&self) -> Duration {
+    pub const fn timeout(&self) -> Duration {
         Duration::from_secs(self.timeout_secs)
     }
 }
@@ -183,15 +173,15 @@ impl Default for LimitsConfig {
     }
 }
 
-fn default_timeout_secs() -> u64 {
+const fn default_timeout_secs() -> u64 {
     600
 }
 
-fn default_memory_limit() -> u32 {
+const fn default_memory_limit() -> u32 {
     4096
 }
 
-fn default_max_artifact_size() -> u32 {
+const fn default_max_artifact_size() -> u32 {
     100
 }
 
@@ -211,7 +201,7 @@ impl Default for WorkerConfig {
     }
 }
 
-fn default_worker_count() -> usize {
+const fn default_worker_count() -> usize {
     2
 }
 

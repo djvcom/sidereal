@@ -1,5 +1,6 @@
 //! Git checkout operations.
 
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -26,7 +27,7 @@ pub struct SourceCheckout {
 impl SourceCheckout {
     /// Check if the checkout has a Cargo.lock file.
     #[must_use]
-    pub fn has_lockfile(&self) -> bool {
+    pub const fn has_lockfile(&self) -> bool {
         self.cargo_lock.is_some()
     }
 }
@@ -185,9 +186,7 @@ fn clone_repository(url: &str, path: &Path) -> BuildResult<gix::Repository> {
             url: url.to_owned(),
             message: e.to_string(),
         })?
-        .with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(
-            1.try_into().expect("valid depth"),
-        ));
+        .with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(NonZeroU32::MIN));
 
     let (repo, _outcome) = prepare
         .fetch_only(Discard, &gix::interrupt::IS_INTERRUPTED)
@@ -218,11 +217,9 @@ fn fetch_repository(path: &Path, url: &str) -> BuildResult<gix::Repository> {
     let _outcome = remote
         .connect(gix::remote::Direction::Fetch)
         .map_err(|e| BuildError::GitFetch(e.to_string()))?
-        .prepare_fetch(Discard, Default::default())
+        .prepare_fetch(Discard, gix::remote::ref_map::Options::default())
         .map_err(|e| BuildError::GitFetch(e.to_string()))?
-        .with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(
-            1.try_into().expect("valid depth"),
-        ))
+        .with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(NonZeroU32::MIN))
         .receive(Discard, &gix::interrupt::IS_INTERRUPTED)
         .map_err(|e| BuildError::GitFetch(e.to_string()))?;
 
@@ -257,15 +254,18 @@ fn resolve_commit(repo: &gix::Repository, commit: &str) -> BuildResult<gix::Obje
     // For short SHAs, iterate through objects (simple but works)
     if commit.len() >= 7 && commit.len() < 40 && commit.chars().all(|c| c.is_ascii_hexdigit()) {
         let commit_lower = commit.to_lowercase();
-        for oid in repo.objects.iter().map_err(|e| BuildError::GitCheckout {
-            commit: commit.to_owned(),
-            message: format!("failed to iterate objects: {e}"),
-        })? {
-            if let Ok(oid) = oid {
-                let hex = oid.to_hex().to_string();
-                if hex.starts_with(&commit_lower) {
-                    return Ok(oid);
-                }
+        for oid in repo
+            .objects
+            .iter()
+            .map_err(|e| BuildError::GitCheckout {
+                commit: commit.to_owned(),
+                message: format!("failed to iterate objects: {e}"),
+            })?
+            .flatten()
+        {
+            let hex = oid.to_hex().to_string();
+            if hex.starts_with(&commit_lower) {
+                return Ok(oid);
             }
         }
     }

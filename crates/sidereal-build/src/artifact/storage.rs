@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bytes::Bytes;
+use futures::StreamExt;
 use object_store::path::Path as ObjectPath;
 use object_store::ObjectStore;
 use tracing::{debug, info};
@@ -173,7 +174,6 @@ impl ArtifactStore {
         let mut branches = Vec::new();
         let mut stream = self.store.list(Some(&prefix));
 
-        use futures::StreamExt;
         while let Some(result) = stream.next().await {
             if let Ok(meta) = result {
                 let path_str = meta.location.to_string();

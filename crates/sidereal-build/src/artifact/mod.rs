@@ -83,7 +83,7 @@ impl ArtifactManifest {
 
     /// Create a new manifest for an artifact.
     #[must_use]
-    pub fn new(artifact: Artifact) -> Self {
+    pub const fn new(artifact: Artifact) -> Self {
         Self {
             artifact,
             schema_version: Self::SCHEMA_VERSION,
@@ -107,6 +107,24 @@ impl ArtifactManifest {
             .map_err(|e| BuildError::ConfigParse(format!("failed to parse manifest: {e}")))?;
         Ok(manifest)
     }
+}
+
+/// Input parameters for building an artifact.
+pub struct BuildInput<'a> {
+    /// Project that owns this artifact.
+    pub project_id: &'a ProjectId,
+    /// Branch this artifact is built from.
+    pub branch: &'a str,
+    /// Commit SHA this artifact is built from.
+    pub commit_sha: &'a str,
+    /// Path to the runtime binary.
+    pub runtime_binary: &'a Path,
+    /// Path to the compiled user binary.
+    pub user_binary: &'a Path,
+    /// Functions discovered in the user code.
+    pub functions: Vec<FunctionMetadata>,
+    /// Directory to write the artifact files to.
+    pub output_dir: &'a Path,
 }
 
 /// Builder for creating complete artifacts.
@@ -133,50 +151,45 @@ impl ArtifactBuilder {
     }
 
     /// Build a complete artifact.
-    pub fn build(
-        &self,
-        project_id: &ProjectId,
-        branch: &str,
-        commit_sha: &str,
-        runtime_binary: &Path,
-        user_binary: &Path,
-        functions: Vec<FunctionMetadata>,
-        output_dir: &Path,
-    ) -> BuildResult<Artifact> {
-        std::fs::create_dir_all(output_dir)?;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the artifact cannot be built.
+    pub fn build(&self, input: BuildInput<'_>) -> BuildResult<Artifact> {
+        std::fs::create_dir_all(input.output_dir)?;
 
         // Write functions manifest
-        let functions_path = output_dir.join("functions.json");
-        crate::discovery::write_manifest(&functions_path, &functions)?;
+        let functions_path = input.output_dir.join("functions.json");
+        crate::discovery::write_manifest(&functions_path, &input.functions)?;
 
         // Build rootfs
-        let rootfs_path = output_dir.join("rootfs.ext4");
+        let rootfs_path = input.output_dir.join("rootfs.ext4");
         let rootfs_builder = RootfsBuilder::new(&self.work_dir).with_size(self.rootfs_size_mb);
 
         let rootfs_output = rootfs_builder.build(
-            runtime_binary,
-            user_binary,
+            input.runtime_binary,
+            input.user_binary,
             Some(&functions_path),
             &rootfs_path,
         )?;
 
         // Create artifact
         let artifact = Artifact::new(
-            project_id.clone(),
-            branch.to_owned(),
-            commit_sha.to_owned(),
+            input.project_id.clone(),
+            input.branch.to_owned(),
+            input.commit_sha.to_owned(),
             rootfs_output,
-            functions,
+            input.functions,
         );
 
         // Write manifest
         let manifest = ArtifactManifest::new(artifact.clone());
-        manifest.write_to(&output_dir.join("manifest.json"))?;
+        manifest.write_to(&input.output_dir.join("manifest.json"))?;
 
         info!(
             artifact_id = %artifact.id,
-            project = %project_id,
-            branch = %branch,
+            project = %input.project_id,
+            branch = %input.branch,
             "artifact built successfully"
         );
 

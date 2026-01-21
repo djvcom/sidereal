@@ -92,35 +92,35 @@ impl BubblewrapBuilder {
 
     /// Control network namespace isolation.
     #[must_use]
-    pub fn unshare_net(mut self, unshare: bool) -> Self {
+    pub const fn unshare_net(mut self, unshare: bool) -> Self {
         self.unshare_net = unshare;
         self
     }
 
     /// Control PID namespace isolation.
     #[must_use]
-    pub fn unshare_pid(mut self, unshare: bool) -> Self {
+    pub const fn unshare_pid(mut self, unshare: bool) -> Self {
         self.unshare_pid = unshare;
         self
     }
 
     /// Control IPC namespace isolation.
     #[must_use]
-    pub fn unshare_ipc(mut self, unshare: bool) -> Self {
+    pub const fn unshare_ipc(mut self, unshare: bool) -> Self {
         self.unshare_ipc = unshare;
         self
     }
 
     /// Control UTS namespace isolation.
     #[must_use]
-    pub fn unshare_uts(mut self, unshare: bool) -> Self {
+    pub const fn unshare_uts(mut self, unshare: bool) -> Self {
         self.unshare_uts = unshare;
         self
     }
 
     /// Control whether to die with parent process.
     #[must_use]
-    pub fn die_with_parent(mut self, die: bool) -> Self {
+    pub const fn die_with_parent(mut self, die: bool) -> Self {
         self.die_with_parent = die;
         self
     }

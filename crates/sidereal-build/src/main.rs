@@ -56,11 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn build workers
     let worker_handles = spawn_workers(
         config.worker.count,
-        Arc::clone(&queue),
+        &queue,
         &config,
-        Arc::clone(&artifact_store),
-        cancel.clone(),
-    );
+        &artifact_store,
+        &cancel,
+    )?;
     info!(count = config.worker.count, "build workers started");
 
     // Create API state and router
@@ -106,26 +106,26 @@ async fn ensure_directories(config: &ServiceConfig) -> Result<(), std::io::Error
 
 fn spawn_workers(
     count: usize,
-    queue: Arc<BuildQueue>,
+    queue: &Arc<BuildQueue>,
     config: &ServiceConfig,
-    artifact_store: Arc<ArtifactStore>,
-    cancel: CancellationToken,
-) -> Vec<tokio::task::JoinHandle<()>> {
-    (0..count)
-        .map(|id| {
-            let worker = BuildWorker::new(
-                id,
-                Arc::clone(&queue),
-                &config.paths,
-                &config.limits,
-                Arc::clone(&artifact_store),
-            );
-            let cancel = cancel.clone();
-            tokio::spawn(async move {
-                worker.run(cancel).await;
-            })
-        })
-        .collect()
+    artifact_store: &Arc<ArtifactStore>,
+    cancel: &CancellationToken,
+) -> Result<Vec<tokio::task::JoinHandle<()>>, sidereal_build::BuildError> {
+    let mut handles = Vec::with_capacity(count);
+    for id in 0..count {
+        let worker = BuildWorker::new(
+            id,
+            Arc::clone(queue),
+            &config.paths,
+            &config.limits,
+            Arc::clone(artifact_store),
+        )?;
+        let cancel = cancel.clone();
+        handles.push(tokio::spawn(async move {
+            worker.run(cancel).await;
+        }));
+    }
+    Ok(handles)
 }
 
 async fn shutdown_signal(cancel: CancellationToken) {

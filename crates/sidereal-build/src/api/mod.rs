@@ -64,12 +64,19 @@ async fn submit_build(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SubmitBuildRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let build_request = BuildRequest::new(
+    let mut build_request = BuildRequest::new(
         request.project_id,
         request.repo_url,
         request.branch,
         request.commit_sha,
     );
+
+    if let Some(env) = request.environment {
+        build_request = build_request.with_environment(env);
+    }
+    if let Some(url) = request.callback_url {
+        build_request = build_request.with_callback_url(url);
+    }
 
     let build_id = build_request.id.clone();
 
@@ -107,7 +114,7 @@ async fn get_build(
     let build_id = BuildId::new(&id);
 
     match state.queue.status(&build_id) {
-        Some(status) => Ok(Json(BuildStatusResponse::from_status(&id, status))),
+        Some(status) => Ok(Json(BuildStatusResponse::from_status(&id, &status))),
         None => Err((
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {
@@ -176,6 +183,12 @@ pub struct SubmitBuildRequest {
     pub branch: String,
     /// Commit SHA to build.
     pub commit_sha: String,
+    /// Target environment (e.g., "production", "staging").
+    #[serde(default)]
+    pub environment: Option<String>,
+    /// URL to POST build completion notification to.
+    #[serde(default)]
+    pub callback_url: Option<String>,
 }
 
 // Response types
@@ -222,9 +235,9 @@ pub struct BuildStatusResponse {
 }
 
 impl BuildStatusResponse {
-    fn from_status(id: &str, status: BuildStatus) -> Self {
+    fn from_status(id: &str, status: &BuildStatus) -> Self {
         let is_terminal = status.is_terminal();
-        let (status_str, details, artifact_id, error) = match &status {
+        let (status_str, details, artifact_id, error) = match status {
             BuildStatus::Queued => ("queued".to_owned(), None, None, None),
             BuildStatus::CheckingOut => ("checking_out".to_owned(), None, None, None),
             BuildStatus::FetchingDeps => ("fetching_deps".to_owned(), None, None, None),
