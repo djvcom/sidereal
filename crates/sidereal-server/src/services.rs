@@ -301,6 +301,7 @@ impl Services {
             worker: WorkerConfig {
                 count: self.config.build.workers,
             },
+            forge_auth: self.config.build.forge_auth.clone(),
             ..Default::default()
         }
     }

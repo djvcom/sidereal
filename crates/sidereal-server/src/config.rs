@@ -229,6 +229,10 @@ pub struct BuildSettings {
     /// Number of concurrent build workers.
     #[serde(default = "default_worker_count")]
     pub workers: usize,
+
+    /// Git forge authentication configuration.
+    #[serde(default)]
+    pub forge_auth: sidereal_build::ForgeAuthConfig,
 }
 
 impl Default for BuildSettings {
@@ -236,6 +240,7 @@ impl Default for BuildSettings {
         Self {
             enabled: true,
             workers: default_worker_count(),
+            forge_auth: sidereal_build::ForgeAuthConfig::default(),
         }
     }
 }
