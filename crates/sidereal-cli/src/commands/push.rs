@@ -176,7 +176,11 @@ fn load_config() -> Result<SiderealConfig, PushError> {
 }
 
 fn get_git_info() -> Result<GitInfo, PushError> {
-    if !Path::new(".git").exists() {
+    let is_git_repo = run_git_command(&["rev-parse", "--is-inside-work-tree"])
+        .map(|s| s.trim() == "true")
+        .unwrap_or(false);
+
+    if !is_git_repo {
         return Err(PushError::NotGitRepo);
     }
 

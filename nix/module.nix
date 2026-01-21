@@ -33,6 +33,10 @@ let
     gateway = {
       enabled = cfg.gateway.enable;
       listen = cfg.gateway.listenAddress;
+      api = {
+        build_socket = "${cfg.socketDir}/build.sock";
+        control_socket = "${cfg.socketDir}/control.sock";
+      };
     };
 
     scheduler = {
