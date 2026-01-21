@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use tokio::net::TcpListener;
+use sidereal_core::Transport;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -70,19 +70,12 @@ impl ControlService {
 
         let app = api::router(state);
 
-        let listener = TcpListener::bind(&self.config.server.listen_addr)
-            .await
-            .map_err(|e| ControlError::internal(format!("failed to bind: {e}")))?;
-
         info!(
-            addr = %self.config.server.listen_addr,
+            transport = %self.config.server.listen,
             "control service listening"
         );
 
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal(self.cancel.clone()))
-            .await
-            .map_err(|e| ControlError::internal(format!("server error: {e}")))?;
+        serve_transport(self.config.server.listen.clone(), app, self.cancel.clone()).await?;
 
         info!("control service shutdown complete");
         Ok(())
@@ -117,6 +110,46 @@ impl ControlService {
         );
         Ok(provisioner)
     }
+}
+
+/// Serve an axum router over the given transport with graceful shutdown.
+async fn serve_transport(
+    transport: Transport,
+    app: axum::Router,
+    cancel: CancellationToken,
+) -> ControlResult<()> {
+    let cancel_clone = cancel.clone();
+    match transport {
+        Transport::Tcp { addr } => {
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .map_err(|e| ControlError::Config(format!("failed to bind TCP: {e}")))?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal(cancel_clone))
+                .await
+                .map_err(|e| ControlError::Config(format!("server error: {e}")))?;
+        }
+        Transport::Unix { path } => {
+            // Ensure parent directory exists and remove stale socket
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    ControlError::Config(format!("failed to create socket dir: {e}"))
+                })?;
+            }
+            if path.exists() {
+                tokio::fs::remove_file(&path).await.map_err(|e| {
+                    ControlError::Config(format!("failed to remove stale socket: {e}"))
+                })?;
+            }
+            let listener = tokio::net::UnixListener::bind(&path)
+                .map_err(|e| ControlError::Config(format!("failed to bind Unix socket: {e}")))?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal(cancel_clone))
+                .await
+                .map_err(|e| ControlError::Config(format!("server error: {e}")))?;
+        }
+    }
+    Ok(())
 }
 
 async fn shutdown_signal(cancel: CancellationToken) {

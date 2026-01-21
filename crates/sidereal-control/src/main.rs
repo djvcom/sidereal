@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     info!(
-        listen_addr = %config.server.listen_addr,
+        listen = %config.server.listen,
         database = %config.database.url,
         scheduler = %config.scheduler.url,
         provisioner = ?config.provisioner.provisioner_type,

@@ -16,6 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Sibling crates
+sidereal-core = { path = "../sidereal-core" }
 sidereal-proto = { workspace = true }
 sidereal-firecracker = { workspace = true }
 

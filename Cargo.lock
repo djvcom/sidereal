@@ -6113,6 +6113,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sidereal-core",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -6160,6 +6161,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sidereal-core",
  "sidereal-firecracker",
  "sidereal-proto",
  "sqlx",
@@ -6302,6 +6304,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "sidereal-core",
  "sidereal-proto",
  "thiserror 2.0.17",
  "tokio",
@@ -6354,6 +6357,28 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "sidereal-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "figment",
+ "serde",
+ "sidereal-build",
+ "sidereal-control",
+ "sidereal-core",
+ "sidereal-gateway",
+ "sidereal-scheduler",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

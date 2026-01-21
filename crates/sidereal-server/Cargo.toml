@@ -1,0 +1,48 @@
+[package]
+name = "sidereal-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Unified server binary for Sidereal single-node deployments"
+
+[[bin]]
+name = "sidereal-server"
+path = "src/main.rs"
+
+[dependencies]
+# Internal crates
+sidereal-core.path = "../sidereal-core"
+sidereal-gateway.path = "../sidereal-gateway"
+sidereal-scheduler.path = "../sidereal-scheduler"
+sidereal-control.path = "../sidereal-control"
+sidereal-build.path = "../sidereal-build"
+
+# Async runtime
+tokio = { workspace = true, features = ["full", "signal"] }
+
+# Configuration
+figment = { workspace = true, features = ["toml", "env"] }
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+
+# CLI
+clap = { workspace = true, features = ["derive", "env"] }
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Tracing
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# Graceful shutdown
+tokio-util = { workspace = true, features = ["rt"] }
+
+# HTTP server (for service runners)
+axum.workspace = true
+
+[lints]
+workspace = true

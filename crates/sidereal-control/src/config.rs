@@ -1,11 +1,12 @@
 //! Configuration for sidereal-control.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
 use figment::providers::{Env, Format, Toml};
 use figment::Figment;
 use serde::Deserialize;
+use sidereal_core::Transport;
 
 use crate::error::{ControlError, ControlResult};
 use crate::strategy::DeploymentStrategy;
@@ -66,17 +67,17 @@ impl ControlConfig {
 /// HTTP server configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
-    /// Address to listen on.
-    #[serde(default = "default_listen_addr")]
-    pub listen_addr: SocketAddr,
+    /// Transport to listen on (TCP or Unix socket).
+    #[serde(default = "default_listen")]
+    pub listen: Transport,
 
     /// Request timeout in seconds.
     #[serde(default = "default_request_timeout_secs")]
     pub request_timeout_secs: u64,
 }
 
-fn default_listen_addr() -> SocketAddr {
-    SocketAddr::from(([0, 0, 0, 0], 8083))
+fn default_listen() -> Transport {
+    Transport::tcp(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8083))
 }
 
 const fn default_request_timeout_secs() -> u64 {
@@ -86,7 +87,7 @@ const fn default_request_timeout_secs() -> u64 {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            listen_addr: default_listen_addr(),
+            listen: default_listen(),
             request_timeout_secs: default_request_timeout_secs(),
         }
     }
@@ -287,13 +288,17 @@ impl Default for DeploymentConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
     fn default_config_is_valid() {
         let config = ControlConfig::default();
-        assert_eq!(config.server.listen_addr.port(), 8083);
+        match &config.server.listen {
+            Transport::Tcp { addr } => assert_eq!(addr.port(), 8083),
+            Transport::Unix { .. } => panic!("expected TCP transport"),
+        }
         assert_eq!(config.database.max_connections, 10);
         assert_eq!(config.scheduler.url, "http://localhost:8082");
         assert_eq!(config.deployment.strategy, DeploymentStrategy::Simple);
@@ -302,8 +307,9 @@ mod tests {
     #[test]
     fn config_from_toml() {
         let toml = r#"
-            [server]
-            listen_addr = "127.0.0.1:9000"
+            [server.listen]
+            type = "tcp"
+            addr = "127.0.0.1:9000"
 
             [database]
             url = "postgres://user:pass@db:5432/mydb"
@@ -314,7 +320,10 @@ mod tests {
         "#;
 
         let config: ControlConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.server.listen_addr.port(), 9000);
+        match &config.server.listen {
+            Transport::Tcp { addr } => assert_eq!(addr.port(), 9000),
+            Transport::Unix { .. } => panic!("expected TCP transport"),
+        }
         assert_eq!(config.database.url, "postgres://user:pass@db:5432/mydb");
         assert_eq!(config.database.max_connections, 20);
         assert_eq!(config.deployment.strategy, DeploymentStrategy::IntentLog);

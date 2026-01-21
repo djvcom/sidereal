@@ -49,6 +49,7 @@ futures = "0.3.31"
 bytes = "1.11.0"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 reqwest = { version = "0.13.1", features = ["json"] }
+sidereal-core = { version = "0.1.0", path = "../sidereal-core" }
 
 [features]
 default = []

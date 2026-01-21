@@ -6,11 +6,11 @@ mod worker;
 
 pub use worker::BuildWorker;
 
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
-const DEFAULT_ADDR: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 7860);
+use sidereal_core::Transport;
 
 use figment::providers::{Env, Format, Toml};
 use figment::Figment;
@@ -66,9 +66,9 @@ impl ServiceConfig {
 /// Server configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
-    /// Listen address for the HTTP API.
-    #[serde(default = "default_listen_addr")]
-    pub listen_addr: SocketAddr,
+    /// Transport to listen on (TCP or Unix socket).
+    #[serde(default = "default_listen")]
+    pub listen: Transport,
 
     /// Maximum concurrent builds in queue.
     #[serde(default = "default_max_queue_size")]
@@ -78,14 +78,14 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            listen_addr: default_listen_addr(),
+            listen: default_listen(),
             max_queue_size: default_max_queue_size(),
         }
     }
 }
 
-const fn default_listen_addr() -> SocketAddr {
-    SocketAddr::V4(DEFAULT_ADDR)
+fn default_listen() -> Transport {
+    Transport::tcp(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 7860))
 }
 
 const fn default_max_queue_size() -> usize {
@@ -212,7 +212,10 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         let config = ServiceConfig::default();
-        assert_eq!(config.server.listen_addr.port(), 7860);
+        match &config.server.listen {
+            Transport::Tcp { addr } => assert_eq!(addr.port(), 7860),
+            Transport::Unix { .. } => panic!("expected TCP transport"),
+        }
         assert_eq!(config.worker.count, 2);
         assert_eq!(config.limits.timeout(), Duration::from_secs(600));
     }

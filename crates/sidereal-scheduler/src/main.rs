@@ -3,10 +3,11 @@
 //! Runs the scheduler service for worker registration, health tracking,
 //! and placement management.
 
+use std::sync::Arc;
+
 use figment::providers::{Env, Format, Toml};
 use figment::Figment;
-use std::sync::Arc;
-use tokio::net::TcpListener;
+use sidereal_core::Transport;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -32,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(Env::prefixed("SCHEDULER_").split("_"))
         .extract()?;
 
-    info!(listen_addr = %config.api.listen_addr, "Configuration loaded");
+    info!(listen = %config.api.listen, "Configuration loaded");
 
     let registry = Arc::new(WorkerRegistry::new());
     info!("Worker registry initialised");
@@ -86,11 +87,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = api::router(state);
 
-    let listener = TcpListener::bind(&config.api.listen_addr).await?;
-    info!(addr = %config.api.listen_addr, "Scheduler API listening");
+    info!(transport = %config.api.listen, "Scheduler API listening");
+    serve_transport(config.api.listen, app).await?;
 
-    axum::serve(listener, app).await?;
+    Ok(())
+}
 
+/// Serve an axum router over the given transport.
+async fn serve_transport(
+    transport: Transport,
+    app: axum::Router,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match transport {
+        Transport::Tcp { addr } => {
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            axum::serve(listener, app).await?;
+        }
+        Transport::Unix { path } => {
+            // Ensure parent directory exists and remove stale socket
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            if path.exists() {
+                tokio::fs::remove_file(&path).await?;
+            }
+            let listener = tokio::net::UnixListener::bind(&path)?;
+            axum::serve(listener, app).await?;
+        }
+    }
     Ok(())
 }
 

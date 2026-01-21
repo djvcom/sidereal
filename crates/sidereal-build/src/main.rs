@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use tokio::net::TcpListener;
+use sidereal_core::Transport;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     info!(
-        listen_addr = %config.server.listen_addr,
+        listen = %config.server.listen,
         worker_count = config.worker.count,
         "configuration loaded"
     );
@@ -70,13 +70,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = api::router(state);
 
     // Start HTTP server
-    let listener = TcpListener::bind(&config.server.listen_addr).await?;
-    info!(addr = %config.server.listen_addr, "build service listening");
-
-    // Run server with graceful shutdown
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(cancel.clone()))
-        .await?;
+    info!(transport = %config.server.listen, "build service listening");
+    serve_transport(config.server.listen, app, cancel.clone()).await?;
 
     // Wait for workers to finish
     info!("waiting for build workers to finish");
@@ -126,6 +121,35 @@ fn spawn_workers(
         }));
     }
     Ok(handles)
+}
+
+/// Serve an axum router over the given transport with graceful shutdown.
+async fn serve_transport(
+    transport: Transport,
+    app: axum::Router,
+    cancel: CancellationToken,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match transport {
+        Transport::Tcp { addr } => {
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal(cancel))
+                .await?;
+        }
+        Transport::Unix { path } => {
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            if path.exists() {
+                tokio::fs::remove_file(&path).await?;
+            }
+            let listener = tokio::net::UnixListener::bind(&path)?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal(cancel))
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn shutdown_signal(cancel: CancellationToken) {

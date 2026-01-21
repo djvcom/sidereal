@@ -1,8 +1,10 @@
 //! Configuration types for the scheduler.
 
-use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
+
+use serde::Deserialize;
+use sidereal_core::Transport;
 
 /// Scheduler configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -26,14 +28,14 @@ pub struct SchedulerConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ApiConfig {
-    /// Address to listen on.
-    pub listen_addr: SocketAddr,
+    /// Transport to listen on (TCP or Unix socket).
+    pub listen: Transport,
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8081),
+            listen: Transport::tcp(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8081)),
         }
     }
 }
@@ -201,7 +203,10 @@ mod tests {
     #[test]
     fn default_config() {
         let config = SchedulerConfig::default();
-        assert_eq!(config.api.listen_addr.port(), 8081);
+        match &config.api.listen {
+            Transport::Tcp { addr } => assert_eq!(addr.port(), 8081),
+            Transport::Unix { .. } => panic!("expected TCP transport"),
+        }
         assert_eq!(config.vsock.port, 1027);
         assert_eq!(config.health.unhealthy_threshold, 3);
     }
