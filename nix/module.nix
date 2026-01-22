@@ -382,6 +382,7 @@ in
         pkgs.e2fsprogs
         pkgs.cargo-zigbuild
         pkgs.zig
+        pkgs.gcc
       ]
       ++ (if builtins.isList cfg.rustToolchain then cfg.rustToolchain else [ cfg.rustToolchain ]);
 
