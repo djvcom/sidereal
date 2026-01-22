@@ -124,8 +124,9 @@
               pkgs.musl.dev
             ];
 
-            # Use musl-gcc for linking
+            # Use musl-gcc for linking (disable rust-lld which doesn't work with musl)
             CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS = "-Clinker-features=-lld";
             CC_x86_64_unknown_linux_musl = "${pkgs.musl.dev}/bin/musl-gcc";
           };
 
