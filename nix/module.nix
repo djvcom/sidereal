@@ -383,6 +383,8 @@ in
         pkgs.cargo-zigbuild
         pkgs.zig
         pkgs.gcc
+        pkgs.util-linux
+        "/run/wrappers"
       ]
       ++ (if builtins.isList cfg.rustToolchain then cfg.rustToolchain else [ cfg.rustToolchain ]);
 
