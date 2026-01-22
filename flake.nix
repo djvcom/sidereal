@@ -132,6 +132,9 @@
           CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
 
+          # Disable rust-lld for host target (build scripts compile for host)
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-Clinker-features=-lld";
+
           nativeBuildInputs = [ pkgs.musl.dev ];
 
           # Skip tests - they can't run cross-compiled
