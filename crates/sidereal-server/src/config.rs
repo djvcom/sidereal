@@ -230,6 +230,10 @@ pub struct BuildSettings {
     #[serde(default = "default_worker_count")]
     pub workers: usize,
 
+    /// Path configuration.
+    #[serde(default)]
+    pub paths: sidereal_build::service::PathsConfig,
+
     /// Git forge authentication configuration.
     #[serde(default)]
     pub forge_auth: sidereal_build::ForgeAuthConfig,
@@ -240,6 +244,7 @@ impl Default for BuildSettings {
         Self {
             enabled: true,
             workers: default_worker_count(),
+            paths: sidereal_build::service::PathsConfig::default(),
             forge_auth: sidereal_build::ForgeAuthConfig::default(),
         }
     }

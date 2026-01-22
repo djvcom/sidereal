@@ -296,7 +296,7 @@ impl Services {
                 checkouts: self.config.server.data_dir.join("checkouts"),
                 caches: self.config.server.data_dir.join("caches"),
                 artifacts: self.config.server.data_dir.join("artifacts"),
-                ..Default::default()
+                runtime: self.config.build.paths.runtime.clone(),
             },
             worker: WorkerConfig {
                 count: self.config.build.workers,
