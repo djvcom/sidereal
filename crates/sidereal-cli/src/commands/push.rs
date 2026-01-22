@@ -1,16 +1,16 @@
 //! Push command - deploy a project to the Sidereal platform.
+//!
+//! Submits a build request for a git repository. The build service clones the repo,
+//! builds the workspace, discovers deployable projects by scanning for sidereal.toml
+//! files, and creates artifacts for each.
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum PushError {
-    #[error("Configuration not found: sidereal.toml")]
-    ConfigNotFound,
-
     #[error("Not a git repository")]
     NotGitRepo,
 
@@ -23,9 +23,6 @@ pub enum PushError {
     #[error("Build failed: {0}")]
     BuildFailed(String),
 
-    #[error("Deployment failed: {0}")]
-    DeploymentFailed(String),
-
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
 
@@ -36,16 +33,6 @@ pub enum PushError {
 pub struct PushArgs {
     pub url: String,
     pub environment: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct SiderealConfig {
-    project: ProjectConfig,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProjectConfig {
-    name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,28 +68,6 @@ struct BuildStatusResponse {
     error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct CreateDeploymentRequest {
-    project_id: String,
-    environment: String,
-    commit_sha: String,
-    artifact_url: String,
-    functions: Vec<FunctionMetadata>,
-}
-
-#[derive(Debug, Serialize)]
-struct FunctionMetadata {
-    name: String,
-    handler: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateDeploymentResponse {
-    id: String,
-    #[serde(rename = "state")]
-    _state: String,
-}
-
 #[derive(Debug, Deserialize)]
 struct ErrorResponse {
     error: String,
@@ -115,11 +80,42 @@ struct GitInfo {
     subdir: Option<String>,
 }
 
-pub async fn run(args: PushArgs) -> Result<(), PushError> {
-    let config = load_config()?;
-    let git_info = get_git_info()?;
+impl GitInfo {
+    /// Derive a project identifier from the git remote URL.
+    ///
+    /// Examples:
+    /// - `git@github.com:user/repo.git` → `github.com/user/repo`
+    /// - `https://github.com/user/repo.git` → `github.com/user/repo`
+    fn project_id(&self) -> String {
+        let url = &self.remote_url;
 
-    println!("Pushing {} to {}", config.project.name, args.url);
+        // Handle SSH URLs: git@github.com:user/repo.git
+        if let Some(rest) = url.strip_prefix("git@") {
+            return rest
+                .replace(':', "/")
+                .trim_end_matches(".git")
+                .to_owned();
+        }
+
+        // Handle HTTPS URLs: https://github.com/user/repo.git
+        if let Some(rest) = url.strip_prefix("https://") {
+            return rest.trim_end_matches(".git").to_owned();
+        }
+
+        if let Some(rest) = url.strip_prefix("http://") {
+            return rest.trim_end_matches(".git").to_owned();
+        }
+
+        // Fallback: use URL as-is
+        url.trim_end_matches(".git").to_owned()
+    }
+}
+
+pub async fn run(args: PushArgs) -> Result<(), PushError> {
+    let git_info = get_git_info()?;
+    let project_id = git_info.project_id();
+
+    println!("Pushing {} to {}", project_id, args.url);
     println!(
         "  Branch: {} @ {}",
         git_info.branch,
@@ -133,7 +129,7 @@ pub async fn run(args: PushArgs) -> Result<(), PushError> {
 
     // Submit build
     println!("\nSubmitting build...");
-    let build_id = submit_build(&client, &args.url, &config, &git_info, &args.environment).await?;
+    let build_id = submit_build(&client, &args.url, &project_id, &git_info, &args.environment).await?;
     println!("  Build ID: {build_id}");
 
     // Poll for build completion
@@ -141,41 +137,10 @@ pub async fn run(args: PushArgs) -> Result<(), PushError> {
     let artifact_id = poll_build_status(&client, &args.url, &build_id).await?;
     println!("  Artifact: {artifact_id}");
 
-    // Create deployment
-    println!("\nDeploying...");
-    let deployment_id = create_deployment(
-        &client,
-        &args.url,
-        &config,
-        &git_info,
-        &args.environment,
-        &artifact_id,
-    )
-    .await?;
-    println!("  Deployment ID: {deployment_id}");
-
-    println!("\nDeployment initiated successfully!");
-    println!(
-        "Function URL: {}/functions/{}",
-        args.url, config.project.name
-    );
+    println!("\nBuild completed successfully!");
+    println!("  Artifact ID: {artifact_id}");
 
     Ok(())
-}
-
-fn load_config() -> Result<SiderealConfig, PushError> {
-    let config_path = Path::new("sidereal.toml");
-    if !config_path.exists() {
-        return Err(PushError::ConfigNotFound);
-    }
-
-    let content = std::fs::read_to_string(config_path)?;
-    toml::from_str(&content).map_err(|e| {
-        PushError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            e.to_string(),
-        ))
-    })
 }
 
 fn get_git_info() -> Result<GitInfo, PushError> {
@@ -236,12 +201,12 @@ fn run_git_command(args: &[&str]) -> Result<String, PushError> {
 async fn submit_build(
     client: &reqwest::Client,
     base_url: &str,
-    config: &SiderealConfig,
+    project_id: &str,
     git_info: &GitInfo,
     environment: &str,
 ) -> Result<String, PushError> {
     let request = SubmitBuildRequest {
-        project_id: config.project.name.clone(),
+        project_id: project_id.to_owned(),
         repo_url: git_info.remote_url.clone(),
         branch: git_info.branch.clone(),
         commit_sha: git_info.commit_sha.clone(),
@@ -318,38 +283,40 @@ async fn poll_build_status(
     }
 }
 
-async fn create_deployment(
-    client: &reqwest::Client,
-    base_url: &str,
-    config: &SiderealConfig,
-    git_info: &GitInfo,
-    environment: &str,
-    artifact_id: &str,
-) -> Result<String, PushError> {
-    let request = CreateDeploymentRequest {
-        project_id: config.project.name.clone(),
-        environment: environment.to_owned(),
-        commit_sha: git_info.commit_sha.clone(),
-        artifact_url: format!("artifact://{artifact_id}"),
-        functions: vec![FunctionMetadata {
-            name: config.project.name.clone(),
-            handler: "handler".to_owned(),
-        }],
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let response = client
-        .post(format!("{base_url}/api/deployments"))
-        .json(&request)
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let error: ErrorResponse = response.json().await.map_err(|_| {
-            PushError::DeploymentFailed("Failed to parse error response".to_owned())
-        })?;
-        return Err(PushError::DeploymentFailed(error.error));
+    #[test]
+    fn project_id_from_ssh_url() {
+        let info = GitInfo {
+            remote_url: "git@github.com:djvcom/sidereal.git".to_owned(),
+            branch: "main".to_owned(),
+            commit_sha: "abc123".to_owned(),
+            subdir: None,
+        };
+        assert_eq!(info.project_id(), "github.com/djvcom/sidereal");
     }
 
-    let result: CreateDeploymentResponse = response.json().await?;
-    Ok(result.id)
+    #[test]
+    fn project_id_from_https_url() {
+        let info = GitInfo {
+            remote_url: "https://github.com/djvcom/sidereal.git".to_owned(),
+            branch: "main".to_owned(),
+            commit_sha: "abc123".to_owned(),
+            subdir: None,
+        };
+        assert_eq!(info.project_id(), "github.com/djvcom/sidereal");
+    }
+
+    #[test]
+    fn project_id_from_https_url_no_git_suffix() {
+        let info = GitInfo {
+            remote_url: "https://github.com/djvcom/sidereal".to_owned(),
+            branch: "main".to_owned(),
+            commit_sha: "abc123".to_owned(),
+            subdir: None,
+        };
+        assert_eq!(info.project_id(), "github.com/djvcom/sidereal");
+    }
 }
