@@ -95,7 +95,7 @@
 
             meta = {
               description = "Sidereal unified server for single-node deployments";
-              homepage = "https://github.com/your-org/sidereal";
+              homepage = "https://github.com/djvcom/sidereal";
               license = pkgs.lib.licenses.mit;
               mainProgram = "sidereal-server";
             };
@@ -103,58 +103,56 @@
         );
 
       # Build the sidereal-runtime package (statically linked for Firecracker VMs)
+      # Uses rustPlatform instead of crane to avoid rust-lld issues with musl
       buildSiderealRuntime =
         pkgs:
         let
-          craneLib = (crane.mkLib pkgs).overrideToolchain (rustToolchain pkgs);
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = rustToolchain pkgs;
+            rustc = rustToolchain pkgs;
+          };
+        in
+        rustPlatform.buildRustPackage {
+          pname = "sidereal-runtime";
+          version = "0.1.0";
 
-          # Common arguments for crane builds
-          commonArgs = {
-            pname = "sidereal-runtime";
-            src = pkgs.lib.cleanSourceWith {
-              src = ./.;
-              filter = srcFilter craneLib;
-            };
-            strictDeps = true;
+          src = pkgs.lib.cleanSource ./.;
 
-            # Build for musl target (static linking for Firecracker)
-            CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-
-            nativeBuildInputs = [
-              pkgs.musl.dev
-            ];
-
-            # Use musl-gcc for linking (disable rust-lld which doesn't work with musl)
-            CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
-            CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS = "-Clinker-features=-lld";
-            CC_x86_64_unknown_linux_musl = "${pkgs.musl.dev}/bin/musl-gcc";
+          cargoLock = {
+            lockFile = ./Cargo.lock;
           };
 
-          # Build workspace dependencies first (for caching)
-          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-        in
-        craneLib.buildPackage (
-          commonArgs
-          // {
-            inherit cargoArtifacts;
+          # Only build the runtime binary
+          cargoBuildFlags = [
+            "-p"
+            "sidereal-runtime"
+          ];
 
-            # Only build the sidereal-runtime binary
-            cargoExtraArgs = "-p sidereal-runtime";
+          # Build for musl target
+          CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
 
-            # Install from the musl target directory
-            installPhaseCommand = ''
-              mkdir -p $out/bin
-              cp target/x86_64-unknown-linux-musl/release/sidereal-runtime $out/bin/
-            '';
+          nativeBuildInputs = [
+            pkgs.musl.dev
+          ];
 
-            meta = {
-              description = "Sidereal runtime for Firecracker VMs";
-              homepage = "https://github.com/your-org/sidereal";
-              license = pkgs.lib.licenses.mit;
-              mainProgram = "sidereal-runtime";
-            };
-          }
-        );
+          # Configure musl-gcc as the linker
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
+          CC_x86_64_unknown_linux_musl = "${pkgs.musl.dev}/bin/musl-gcc";
+
+          # Install from the musl target directory
+          postInstall = ''
+            rm -rf $out/bin
+            mkdir -p $out/bin
+            cp target/x86_64-unknown-linux-musl/release/sidereal-runtime $out/bin/
+          '';
+
+          meta = {
+            description = "Sidereal runtime for Firecracker VMs";
+            homepage = "https://github.com/djvcom/sidereal";
+            license = pkgs.lib.licenses.mit;
+            mainProgram = "sidereal-runtime";
+          };
+        };
     in
     {
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
