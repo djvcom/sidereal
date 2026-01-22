@@ -137,13 +137,18 @@ impl SandboxedCompiler {
         std::fs::create_dir_all(target_dir)?;
         builder = builder.bind_rw(target_dir, "/build/target");
 
+        // Create a writable home directory for cargo-zigbuild cache
+        let build_home = target_dir.parent().unwrap_or(target_dir).join("home");
+        std::fs::create_dir_all(&build_home)?;
+        builder = builder.bind_rw(&build_home, "/build/home");
+
         // Set environment
         let path_env = std::env::var("PATH").unwrap_or_default();
         builder = builder
             .env("PATH", &path_env)
             .env("CARGO_HOME", "/cargo")
             .env("CARGO_TARGET_DIR", "/build/target")
-            .env("HOME", "/build")
+            .env("HOME", "/build/home")
             .env("USER", "build")
             .cwd("/build/src");
 
@@ -163,9 +168,9 @@ impl SandboxedCompiler {
             builder = builder.env("RUSTFLAGS", rustflags);
         }
 
-        // Build cargo command arguments
+        // Build cargo command arguments (use zigbuild for cross-compilation)
         let cargo_args = [
-            "build",
+            "zigbuild",
             "--release",
             "--target",
             &self.config.target,
@@ -324,31 +329,28 @@ impl SandboxedCompiler {
         std::fs::create_dir_all(target_dir)?;
         builder = builder.bind_rw(target_dir, "/build/target");
 
+        // Create a writable home directory for cargo-zigbuild cache
+        let build_home = target_dir.parent().unwrap_or(target_dir).join("home");
+        std::fs::create_dir_all(&build_home)?;
+        builder = builder.bind_rw(&build_home, "/build/home");
+
         let path_env = std::env::var("PATH").unwrap_or_default();
         builder = builder
             .env("PATH", &path_env)
             .env("CARGO_HOME", "/cargo")
             .env("CARGO_TARGET_DIR", "/build/target")
-            .env("HOME", "/build")
+            .env("HOME", "/build/home")
             .env("USER", "build")
             .cwd("/build/src");
-
-        for var in [
-            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER",
-            "CC_x86_64_unknown_linux_musl",
-        ] {
-            if let Ok(value) = std::env::var(var) {
-                builder = builder.env(var, value);
-            }
-        }
 
         if !self.config.extra_rustflags.is_empty() {
             let rustflags = self.config.extra_rustflags.join(" ");
             builder = builder.env("RUSTFLAGS", rustflags);
         }
 
+        // Use zigbuild for cross-compilation
         let cargo_args = [
-            "build",
+            "zigbuild",
             "--workspace",
             "--release",
             "--target",
@@ -362,7 +364,7 @@ impl SandboxedCompiler {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        debug!("spawning sandboxed cargo build --workspace");
+        debug!("spawning sandboxed cargo zigbuild --workspace");
         let start = Instant::now();
 
         let mut child = cmd
