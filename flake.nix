@@ -103,17 +103,14 @@
         );
 
       # Build the sidereal-runtime package (statically linked for Firecracker VMs)
-      # Uses pkgsCross.musl64 for proper musl cross-compilation
+      # Uses rust-overlay toolchain with musl target for Rust 1.92+
       buildSiderealRuntime =
         pkgs:
         let
-          # Use the musl64 cross-compilation toolchain
-          muslPkgs = pkgs.pkgsCross.musl64;
-
-          # Create a rust platform with the cross toolchain
-          rustPlatform = muslPkgs.makeRustPlatform {
-            cargo = muslPkgs.cargo;
-            rustc = muslPkgs.rustc;
+          # Use rust-overlay toolchain which has musl target and is 1.92+
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = rustToolchain pkgs;
+            rustc = rustToolchain pkgs;
           };
         in
         rustPlatform.buildRustPackage {
@@ -131,6 +128,30 @@
             "-p"
             "sidereal-runtime"
           ];
+
+          # Build for musl target
+          CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+
+          nativeBuildInputs = [ pkgs.musl.dev ];
+
+          # Configure linker via cargo config (avoids unstable RUSTFLAGS)
+          preConfigure = ''
+            mkdir -p .cargo
+            cat > .cargo/config.toml << 'EOF'
+            [target.x86_64-unknown-linux-musl]
+            linker = "musl-gcc"
+            EOF
+          '';
+
+          # Skip tests - they can't run cross-compiled
+          doCheck = false;
+
+          # Install from the musl target directory
+          postInstall = ''
+            rm -rf $out/bin
+            mkdir -p $out/bin
+            cp target/x86_64-unknown-linux-musl/release/sidereal-runtime $out/bin/
+          '';
 
           meta = {
             description = "Sidereal runtime for Firecracker VMs";
