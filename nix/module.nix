@@ -379,17 +379,15 @@ in
       path = [
         pkgs.openssh
         pkgs.bubblewrap
-        pkgs.gcc
-        pkgs.musl
+        pkgs.e2fsprogs
+        pkgs.cargo-zigbuild
+        pkgs.zig
       ]
       ++ (if builtins.isList cfg.rustToolchain then cfg.rustToolchain else [ cfg.rustToolchain ]);
 
       environment = {
         RUST_LOG = cfg.logLevel;
         SIDEREAL_CONFIG = configFile;
-        # Configure musl cross-compilation
-        CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
-        CC_x86_64_unknown_linux_musl = "${pkgs.musl.dev}/bin/musl-gcc";
       };
 
       serviceConfig = {
