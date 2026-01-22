@@ -125,6 +125,28 @@ impl SandboxedCompiler {
             builder = builder.bind_ro(nix_store, nix_store);
         }
 
+        // Bind /etc for passwd/group lookups (some tools need this)
+        let etc_dir = Path::new("/etc");
+        if etc_dir.exists() {
+            builder = builder.bind_ro(etc_dir, etc_dir);
+        }
+
+        // Bind /run for runtime files (systemd, etc.)
+        let run_dir = Path::new("/run");
+        if run_dir.exists() {
+            builder = builder.bind_ro(run_dir, run_dir);
+        }
+
+        // Create symlinks for shell scripts (cargo-zigbuild generates shell scripts)
+        let bin_sh = Path::new("/bin/sh");
+        if let Ok(target) = std::fs::read_link(bin_sh) {
+            builder = builder.symlink(target, "/bin/sh");
+        }
+        let usr_bin_env = Path::new("/usr/bin/env");
+        if let Ok(target) = std::fs::read_link(usr_bin_env) {
+            builder = builder.symlink(target, "/usr/bin/env");
+        }
+
         // Mount cargo registry read-only (pre-fetched dependencies)
         if self.config.cargo_home.exists() {
             builder = builder.bind_ro(&self.config.cargo_home, "/cargo");
@@ -318,6 +340,26 @@ impl SandboxedCompiler {
         let nix_store = Path::new("/nix");
         if nix_store.exists() {
             builder = builder.bind_ro(nix_store, nix_store);
+        }
+
+        let etc_dir = Path::new("/etc");
+        if etc_dir.exists() {
+            builder = builder.bind_ro(etc_dir, etc_dir);
+        }
+
+        let run_dir = Path::new("/run");
+        if run_dir.exists() {
+            builder = builder.bind_ro(run_dir, run_dir);
+        }
+
+        // Create symlinks for shell scripts (cargo-zigbuild generates shell scripts)
+        let bin_sh = Path::new("/bin/sh");
+        if let Ok(target) = std::fs::read_link(bin_sh) {
+            builder = builder.symlink(target, "/bin/sh");
+        }
+        let usr_bin_env = Path::new("/usr/bin/env");
+        if let Ok(target) = std::fs::read_link(usr_bin_env) {
+            builder = builder.symlink(target, "/usr/bin/env");
         }
 
         if self.config.cargo_home.exists() {

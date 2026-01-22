@@ -15,6 +15,8 @@ pub struct BubblewrapBuilder {
     binds_ro: Vec<(PathBuf, PathBuf)>,
     /// Read-write bind mounts (source, dest).
     binds_rw: Vec<(PathBuf, PathBuf)>,
+    /// Symlinks to create (target, link_path).
+    symlinks: Vec<(PathBuf, PathBuf)>,
     /// Environment variables.
     env: HashMap<String, String>,
     /// Working directory inside sandbox.
@@ -48,6 +50,7 @@ impl BubblewrapBuilder {
         Self {
             binds_ro: Vec::new(),
             binds_rw: Vec::new(),
+            symlinks: Vec::new(),
             env: HashMap::new(),
             cwd: None,
             unshare_net: true,
@@ -73,6 +76,14 @@ impl BubblewrapBuilder {
     pub fn bind_rw(mut self, src: impl AsRef<Path>, dest: impl AsRef<Path>) -> Self {
         self.binds_rw
             .push((src.as_ref().to_owned(), dest.as_ref().to_owned()));
+        self
+    }
+
+    /// Create a symlink inside the sandbox.
+    #[must_use]
+    pub fn symlink(mut self, target: impl AsRef<Path>, link_path: impl AsRef<Path>) -> Self {
+        self.symlinks
+            .push((target.as_ref().to_owned(), link_path.as_ref().to_owned()));
         self
     }
 
@@ -181,6 +192,11 @@ impl BubblewrapBuilder {
         // Read-write bind mounts
         for (src, dest) in &self.binds_rw {
             cmd.arg("--bind").arg(src).arg(dest);
+        }
+
+        // Symlinks
+        for (target, link_path) in &self.symlinks {
+            cmd.arg("--symlink").arg(target).arg(link_path);
         }
 
         // Environment variables
