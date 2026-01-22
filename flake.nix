@@ -128,8 +128,9 @@
             "sidereal-runtime"
           ];
 
-          # Build for musl target (linker configured in .cargo/config.toml)
+          # Build for musl target
           CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
 
           nativeBuildInputs = [ pkgs.musl.dev ];
 
@@ -188,8 +189,8 @@
             # Firecracker for local VM deployment
             pkgs.firecracker
 
-            # musl for static cross-compilation
-            pkgs.musl
+            # musl for static cross-compilation (musl.dev provides musl-gcc)
+            pkgs.musl.dev
 
             # Build dependencies for native crates
             pkgs.pkg-config
@@ -205,14 +206,13 @@
           ];
 
           # Rust 1.90+ uses rust-lld by default, which lacks NixOS rpath handling.
-          # Disable lld entirely and use the traditional GNU linker.
-          # Also add --copy-dt-needed-entries to handle DSO ordering issues.
-          RUSTFLAGS = "-Clinker-features=-lld -Clink-arg=-Wl,--copy-dt-needed-entries";
+          # Disable lld for the native target only (unstable on musl).
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-Clinker-features=-lld -Clink-arg=-Wl,--copy-dt-needed-entries";
 
           RUST_BACKTRACE = "1";
 
           # Configure cargo for musl cross-compilation
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl}/bin/musl-gcc";
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
         };
       });
     };
