@@ -72,6 +72,9 @@ async fn submit_build(
         request.commit_sha,
     );
 
+    if let Some(path) = request.path {
+        build_request = build_request.with_path(path);
+    }
     if let Some(env) = request.environment {
         build_request = build_request.with_environment(env);
     }
@@ -202,6 +205,9 @@ pub struct SubmitBuildRequest {
     pub branch: String,
     /// Commit SHA to build.
     pub commit_sha: String,
+    /// Subdirectory within the repo containing the project.
+    #[serde(default)]
+    pub path: Option<String>,
     /// Target environment (e.g., "production", "staging").
     #[serde(default)]
     pub environment: Option<String>,
