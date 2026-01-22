@@ -102,11 +102,10 @@
         );
 
       # Build the sidereal-runtime package (statically linked for Firecracker VMs)
-      # Uses rust-overlay toolchain with musl target for Rust 1.92+
+      # Uses cargo-zigbuild for cross-compilation (Zig bundles musl)
       buildSiderealRuntime =
         pkgs:
         let
-          # Use rust-overlay toolchain which has musl target and is 1.92+
           rustPlatform = pkgs.makeRustPlatform {
             cargo = rustToolchain pkgs;
             rustc = rustToolchain pkgs;
@@ -122,29 +121,40 @@
             lockFile = ./Cargo.lock;
           };
 
-          # Only build the runtime binary
-          cargoBuildFlags = [
-            "-p"
-            "sidereal-runtime"
+          nativeBuildInputs = [
+            pkgs.cargo-zigbuild
+            pkgs.zig
           ];
 
-          # Build for musl target
-          CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
+          # Disable cargo-auditable (Zig linker doesn't support --undefined flag)
+          auditable = false;
 
-          # Disable rust-lld for host target (build scripts compile for host)
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-Clinker-features=-lld";
+          # Use cargo-zigbuild for cross-compilation (Zig handles linking)
+          buildPhase = ''
+            runHook preBuild
 
-          nativeBuildInputs = [ pkgs.musl.dev ];
+            # cargo-zigbuild needs a writable cache directory
+            export HOME=$(mktemp -d)
+
+            cargo zigbuild \
+              --release \
+              --target x86_64-unknown-linux-musl \
+              --offline \
+              --locked \
+              -p sidereal-runtime
+
+            runHook postBuild
+          '';
 
           # Skip tests - they can't run cross-compiled
           doCheck = false;
 
-          # Install from the musl target directory
-          postInstall = ''
-            rm -rf $out/bin
+          # Override install phase to copy from musl target directory
+          installPhase = ''
+            runHook preInstall
             mkdir -p $out/bin
             cp target/x86_64-unknown-linux-musl/release/sidereal-runtime $out/bin/
+            runHook postInstall
           '';
 
           meta = {
@@ -192,8 +202,9 @@
             # Firecracker for local VM deployment
             pkgs.firecracker
 
-            # musl for static cross-compilation (musl.dev provides musl-gcc)
-            pkgs.musl.dev
+            # Cross-compilation via cargo-zigbuild (Zig bundles musl)
+            pkgs.cargo-zigbuild
+            pkgs.zig
 
             # Build dependencies for native crates
             pkgs.pkg-config
@@ -209,13 +220,10 @@
           ];
 
           # Rust 1.90+ uses rust-lld by default, which lacks NixOS rpath handling.
-          # Disable lld for the native target only (unstable on musl).
+          # Disable lld for native builds only.
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-Clinker-features=-lld -Clink-arg=-Wl,--copy-dt-needed-entries";
 
           RUST_BACKTRACE = "1";
-
-          # Configure cargo for musl cross-compilation
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
         };
       });
     };

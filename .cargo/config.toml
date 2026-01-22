@@ -1,2 +1,3 @@
-[target.x86_64-unknown-linux-musl]
-linker = "musl-gcc"
+# Disable rust-lld on NixOS (Rust 1.90+ defaults to it, but it breaks on NixOS)
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-Clinker-features=-lld", "-Clink-arg=-Wl,--copy-dt-needed-entries"]
