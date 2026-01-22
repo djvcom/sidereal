@@ -53,23 +53,23 @@
           ];
         };
 
+      # Source filter that includes Cargo files and READMEs (for include_str!)
+      srcFilter =
+        craneLib: path: type:
+        (craneLib.filterCargoSources path type) || (builtins.match ".*README\\.md$" path != null);
+
       # Build the sidereal-server package using crane
       buildSidereal =
         pkgs:
         let
           craneLib = (crane.mkLib pkgs).overrideToolchain (rustToolchain pkgs);
 
-          # Source filter that includes Cargo files and READMEs (for include_str!)
-          srcFilter =
-            path: type:
-            (craneLib.filterCargoSources path type) || (builtins.match ".*README\\.md$" path != null);
-
           # Common arguments for crane builds
           commonArgs = {
             pname = "sidereal-server";
             src = pkgs.lib.cleanSourceWith {
               src = ./.;
-              filter = srcFilter;
+              filter = srcFilter craneLib;
             };
             strictDeps = true;
 
@@ -101,6 +101,59 @@
             };
           }
         );
+
+      # Build the sidereal-runtime package (statically linked for Firecracker VMs)
+      buildSiderealRuntime =
+        pkgs:
+        let
+          craneLib = (crane.mkLib pkgs).overrideToolchain (rustToolchain pkgs);
+
+          # Common arguments for crane builds
+          commonArgs = {
+            pname = "sidereal-runtime";
+            src = pkgs.lib.cleanSourceWith {
+              src = ./.;
+              filter = srcFilter craneLib;
+            };
+            strictDeps = true;
+
+            # Build for musl target (static linking for Firecracker)
+            CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+
+            nativeBuildInputs = [
+              pkgs.musl.dev
+            ];
+
+            # Use musl-gcc for linking
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.musl.dev}/bin/musl-gcc";
+            CC_x86_64_unknown_linux_musl = "${pkgs.musl.dev}/bin/musl-gcc";
+          };
+
+          # Build workspace dependencies first (for caching)
+          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        in
+        craneLib.buildPackage (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+
+            # Only build the sidereal-runtime binary
+            cargoExtraArgs = "-p sidereal-runtime";
+
+            # Install from the musl target directory
+            installPhaseCommand = ''
+              mkdir -p $out/bin
+              cp target/x86_64-unknown-linux-musl/release/sidereal-runtime $out/bin/
+            '';
+
+            meta = {
+              description = "Sidereal runtime for Firecracker VMs";
+              homepage = "https://github.com/your-org/sidereal";
+              license = pkgs.lib.licenses.mit;
+              mainProgram = "sidereal-runtime";
+            };
+          }
+        );
     in
     {
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
@@ -116,6 +169,7 @@
         rust-overlay.overlays.default
         (final: _prev: {
           sidereal-server = buildSidereal final;
+          sidereal-runtime = buildSiderealRuntime final;
         })
       ];
 
@@ -126,6 +180,7 @@
       packages = forAllSystems (pkgs: {
         default = self.packages.${pkgs.system}.sidereal-server;
         sidereal-server = buildSidereal pkgs;
+        sidereal-runtime = buildSiderealRuntime pkgs;
       });
 
       devShells = forAllSystems (pkgs: {

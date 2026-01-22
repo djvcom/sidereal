@@ -51,6 +51,9 @@ let
     build = {
       enabled = cfg.build.enable;
       inherit (cfg.build) workers;
+      paths = {
+        runtime = "${cfg.runtimePackage}/bin/sidereal-runtime";
+      };
     }
     // lib.optionalAttrs (cfg.build.forgeAuth.type != "none") {
       forge_auth = {
@@ -84,6 +87,13 @@ in
       default = pkgs.sidereal-server or (throw "sidereal-server package not found");
       defaultText = lib.literalExpression "pkgs.sidereal-server";
       description = "The sidereal-server package to use.";
+    };
+
+    runtimePackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.sidereal-runtime or (throw "sidereal-runtime package not found");
+      defaultText = lib.literalExpression "pkgs.sidereal-runtime";
+      description = "The sidereal-runtime package (runs inside Firecracker VMs).";
     };
 
     mode = lib.mkOption {
