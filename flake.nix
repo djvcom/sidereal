@@ -48,7 +48,6 @@
             "rust-analyzer"
           ];
           targets = [
-            "wasm32-wasip1"
             "x86_64-unknown-linux-musl"
           ];
         };
@@ -129,19 +128,10 @@
             "sidereal-runtime"
           ];
 
-          # Build for musl target
+          # Build for musl target (linker configured in .cargo/config.toml)
           CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
 
           nativeBuildInputs = [ pkgs.musl.dev ];
-
-          # Configure linker via cargo config (avoids unstable RUSTFLAGS)
-          preConfigure = ''
-            mkdir -p .cargo
-            cat > .cargo/config.toml << 'EOF'
-            [target.x86_64-unknown-linux-musl]
-            linker = "musl-gcc"
-            EOF
-          '';
 
           # Skip tests - they can't run cross-compiled
           doCheck = false;
@@ -194,7 +184,6 @@
           packages = [
             (rustToolchain pkgs)
             pkgs.just
-            pkgs.wasmtime
 
             # Firecracker for local VM deployment
             pkgs.firecracker
