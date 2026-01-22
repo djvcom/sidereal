@@ -26,11 +26,13 @@
 
 pub mod api;
 pub mod artifact;
+pub mod cache;
 mod config;
 pub mod discovery;
 pub mod env;
 pub mod error;
 pub mod forge_auth;
+pub mod project;
 pub mod queue;
 pub mod sandbox;
 pub mod service;
@@ -58,7 +60,15 @@ pub use queue::{BuildHandle, BuildQueue};
 pub use source::{SourceCheckout, SourceManager};
 
 // Re-export sandbox types
-pub use sandbox::{CompileOutput, SandboxConfig, SandboxedCompiler};
+pub use sandbox::{
+    BinaryInfo, CompileOutput, SandboxConfig, SandboxedCompiler, WorkspaceCompileOutput,
+};
+
+// Re-export cache types
+pub use cache::{CacheConfig, CacheManager, CacheResult};
+
+// Re-export project types
+pub use project::{discover_projects, DeployableProject};
 
 // Re-export artifact types
 pub use artifact::{Artifact, ArtifactBuilder, ArtifactManifest, RootfsBuilder};

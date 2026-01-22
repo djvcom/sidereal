@@ -7,5 +7,7 @@ mod compile;
 mod fetch;
 
 pub use bubblewrap::{BubblewrapBuilder, SandboxLimits};
-pub use compile::{CompileOutput, SandboxConfig, SandboxedCompiler};
+pub use compile::{
+    BinaryInfo, CompileOutput, SandboxConfig, SandboxedCompiler, WorkspaceCompileOutput,
+};
 pub use fetch::{fetch_dependencies, FetchConfig, FetchOutput};

@@ -12,12 +12,16 @@ use thiserror::Error;
 pub enum BuildStage {
     /// Source checkout from git.
     Checkout,
+    /// Cache operations (pull/push).
+    Cache,
     /// Dependency fetching.
     FetchDeps,
     /// Dependency auditing.
     Audit,
     /// Compilation.
     Compile,
+    /// Project discovery.
+    Discovery,
     /// Artifact generation.
     Artifact,
 }
@@ -26,9 +30,11 @@ impl std::fmt::Display for BuildStage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Checkout => write!(f, "checkout"),
+            Self::Cache => write!(f, "cache"),
             Self::FetchDeps => write!(f, "fetch-deps"),
             Self::Audit => write!(f, "audit"),
             Self::Compile => write!(f, "compile"),
+            Self::Discovery => write!(f, "discovery"),
             Self::Artifact => write!(f, "artifact"),
         }
     }
@@ -228,6 +234,13 @@ pub enum BuildError {
     /// Build already completed.
     #[error("build already completed: {0}")]
     BuildCompleted(String),
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Discovery errors
+    // ─────────────────────────────────────────────────────────────────────────
+    /// No deployable projects found in workspace.
+    #[error("no deployable projects found (no sidereal.toml files with corresponding binaries)")]
+    NoDeployableProjects,
 
     // ─────────────────────────────────────────────────────────────────────────
     // Internal errors

@@ -17,6 +17,7 @@ use figment::Figment;
 use serde::Deserialize;
 
 use crate::artifact::StorageConfig;
+use crate::cache::CacheConfig;
 use crate::error::{BuildError, BuildResult};
 use crate::forge_auth::ForgeAuthConfig;
 
@@ -42,6 +43,10 @@ pub struct ServiceConfig {
     /// Storage configuration.
     #[serde(default)]
     pub storage: StorageConfig,
+
+    /// Build cache configuration.
+    #[serde(default)]
+    pub cache: CacheConfig,
 
     /// Git forge authentication.
     #[serde(default)]

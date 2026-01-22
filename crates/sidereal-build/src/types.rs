@@ -235,6 +235,9 @@ pub enum BuildStatus {
     /// Checking out source code.
     CheckingOut,
 
+    /// Pulling build cache from storage.
+    PullingCache,
+
     /// Fetching dependencies.
     FetchingDeps,
 
@@ -248,8 +251,14 @@ pub enum BuildStatus {
         progress: Option<String>,
     },
 
+    /// Discovering deployable projects in the workspace.
+    DiscoveringProjects,
+
     /// Generating artifact (rootfs).
     GeneratingArtifact,
+
+    /// Pushing build cache to storage.
+    PushingCache,
 
     /// Build completed successfully.
     Completed {
@@ -288,10 +297,13 @@ impl BuildStatus {
         matches!(
             self,
             Self::CheckingOut
+                | Self::PullingCache
                 | Self::FetchingDeps
                 | Self::Auditing
                 | Self::Compiling { .. }
+                | Self::DiscoveringProjects
                 | Self::GeneratingArtifact
+                | Self::PushingCache
         )
     }
 
@@ -300,10 +312,13 @@ impl BuildStatus {
     pub const fn current_stage(&self) -> Option<BuildStage> {
         match self {
             Self::CheckingOut => Some(BuildStage::Checkout),
+            Self::PullingCache => Some(BuildStage::Cache),
             Self::FetchingDeps => Some(BuildStage::FetchDeps),
             Self::Auditing => Some(BuildStage::Audit),
             Self::Compiling { .. } => Some(BuildStage::Compile),
+            Self::DiscoveringProjects => Some(BuildStage::Discovery),
             Self::GeneratingArtifact => Some(BuildStage::Artifact),
+            Self::PushingCache => Some(BuildStage::Cache),
             _ => None,
         }
     }
@@ -314,6 +329,7 @@ impl fmt::Display for BuildStatus {
         match self {
             Self::Queued => write!(f, "queued"),
             Self::CheckingOut => write!(f, "checking out"),
+            Self::PullingCache => write!(f, "pulling cache"),
             Self::FetchingDeps => write!(f, "fetching dependencies"),
             Self::Auditing => write!(f, "auditing dependencies"),
             Self::Compiling { progress } => {
@@ -323,7 +339,9 @@ impl fmt::Display for BuildStatus {
                     write!(f, "compiling")
                 }
             }
+            Self::DiscoveringProjects => write!(f, "discovering projects"),
             Self::GeneratingArtifact => write!(f, "generating artifact"),
+            Self::PushingCache => write!(f, "pushing cache"),
             Self::Completed { artifact_id } => write!(f, "completed (artifact: {artifact_id})"),
             Self::Failed { error, stage } => write!(f, "failed at {stage}: {error}"),
             Self::Cancelled { reason } => write!(f, "cancelled: {reason}"),

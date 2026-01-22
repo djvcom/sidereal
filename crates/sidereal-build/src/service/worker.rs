@@ -7,12 +7,14 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::artifact::{Artifact, ArtifactBuilder, ArtifactStore, BuildInput};
+use crate::cache::{CacheConfig, CacheManager, CacheResult};
 use crate::discovery;
 use crate::error::{BuildError, BuildStage, CancelReason};
 use crate::forge_auth::ForgeAuth;
+use crate::project::{discover_projects, DeployableProject};
 use crate::queue::{BuildHandle, BuildQueue};
 use crate::sandbox::{
     fetch_dependencies, FetchConfig, SandboxConfig, SandboxLimits, SandboxedCompiler,
@@ -112,6 +114,7 @@ pub struct BuildWorker {
     compiler: Arc<SandboxedCompiler>,
     artifact_builder: Arc<ArtifactBuilder>,
     artifact_store: Arc<ArtifactStore>,
+    cache_manager: Option<Arc<CacheManager>>,
     http_client: reqwest::Client,
     runtime_path: PathBuf,
     target_base_dir: PathBuf,
@@ -131,6 +134,19 @@ impl BuildWorker {
         artifact_store: Arc<ArtifactStore>,
         forge_auth: ForgeAuth,
     ) -> Result<Self, BuildError> {
+        Self::with_cache(id, queue, paths, limits, artifact_store, forge_auth, None)
+    }
+
+    /// Create a new build worker with optional cache configuration.
+    pub fn with_cache(
+        id: usize,
+        queue: Arc<BuildQueue>,
+        paths: &PathsConfig,
+        limits: &LimitsConfig,
+        artifact_store: Arc<ArtifactStore>,
+        forge_auth: ForgeAuth,
+        cache_config: Option<CacheConfig>,
+    ) -> Result<Self, BuildError> {
         let source_manager = Arc::new(SourceManager::new(
             &paths.checkouts,
             &paths.caches,
@@ -149,6 +165,12 @@ impl BuildWorker {
 
         let artifact_builder = Arc::new(ArtifactBuilder::new(&paths.artifacts));
 
+        let cache_manager = cache_config
+            .filter(|c| c.enabled)
+            .map(|c| CacheManager::new(c))
+            .transpose()?
+            .map(Arc::new);
+
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -161,6 +183,7 @@ impl BuildWorker {
             compiler,
             artifact_builder,
             artifact_store,
+            cache_manager,
             http_client,
             runtime_path: paths.runtime.clone(),
             target_base_dir: paths.caches.join("targets"),
@@ -352,7 +375,54 @@ impl BuildWorker {
             "source checked out"
         );
 
-        // Phase 2: Fetch dependencies (outside sandbox, needs network)
+        // Phase 2: Pull caches (if enabled)
+        let target_dir = self
+            .target_base_dir
+            .join(request.project_id.as_str())
+            .join(&request.branch);
+
+        if let Some(ref cache_manager) = self.cache_manager {
+            self.queue
+                .update_status(&request.id, BuildStatus::PullingCache);
+
+            if cancel.is_cancelled() {
+                return Err(BuildError::Cancelled {
+                    reason: CancelReason::UserRequested,
+                });
+            }
+
+            let registry_result = cache_manager
+                .pull_registry(self.compiler.cargo_home())
+                .await;
+            match registry_result {
+                Ok(CacheResult::Hit) => {
+                    info!(build_id = %request.id, "registry cache hit");
+                }
+                Ok(CacheResult::Miss) => {
+                    debug!(build_id = %request.id, "registry cache miss");
+                }
+                Err(e) => {
+                    warn!(build_id = %request.id, error = %e, "failed to pull registry cache");
+                }
+            }
+
+            let target_result = cache_manager
+                .pull_target(&request.project_id, &request.branch, &target_dir)
+                .await;
+            match target_result {
+                Ok(CacheResult::Hit) => {
+                    info!(build_id = %request.id, "target cache hit");
+                }
+                Ok(CacheResult::Miss) => {
+                    debug!(build_id = %request.id, "target cache miss");
+                }
+                Err(e) => {
+                    warn!(build_id = %request.id, error = %e, "failed to pull target cache");
+                }
+            }
+        }
+
+        // Phase 3: Fetch dependencies (outside sandbox, needs network)
         self.queue
             .update_status(&request.id, BuildStatus::FetchingDeps);
 
@@ -381,7 +451,7 @@ impl BuildWorker {
             "dependencies fetched"
         );
 
-        // Phase 3: Compile (sandboxed)
+        // Phase 4: Compile workspace (sandboxed)
         self.queue
             .update_status(&request.id, BuildStatus::Compiling { progress: None });
 
@@ -391,31 +461,42 @@ impl BuildWorker {
             });
         }
 
-        let target_dir = self.target_base_dir.join(request.id.as_str());
         let compile_output = self
             .compiler
-            .compile(&request.project_id, &checkout, &target_dir, cancel.clone())
+            .compile_workspace(&request.project_id, &checkout, &target_dir, cancel.clone())
             .await?;
 
         info!(
             build_id = %request.id,
-            binary = %compile_output.binary_path.display(),
+            binary_count = compile_output.binaries.len(),
             duration_secs = compile_output.duration.as_secs(),
-            "compilation completed"
+            "workspace compilation completed"
         );
 
-        // Phase 3: Discover functions
-        let functions = discovery::discover_from_source(&checkout.path).unwrap_or_default();
+        // Phase 5: Discover deployable projects
+        self.queue
+            .update_status(&request.id, BuildStatus::DiscoveringProjects);
+
+        if cancel.is_cancelled() {
+            return Err(BuildError::Cancelled {
+                reason: CancelReason::UserRequested,
+            });
+        }
+
+        let deployable_projects = discover_projects(&checkout, &compile_output.binaries)?;
+
+        if deployable_projects.is_empty() {
+            return Err(BuildError::NoDeployableProjects);
+        }
+
         info!(
             build_id = %request.id,
-            function_count = functions.len(),
-            "functions discovered"
+            project_count = deployable_projects.len(),
+            projects = ?deployable_projects.iter().map(|p| &p.name).collect::<Vec<_>>(),
+            "discovered deployable projects"
         );
 
-        // Keep a copy of functions for the callback
-        let discovered_functions = functions.clone();
-
-        // Phase 4: Generate artifact
+        // Phase 6: Generate and upload artifacts
         self.queue
             .update_status(&request.id, BuildStatus::GeneratingArtifact);
 
@@ -425,34 +506,87 @@ impl BuildWorker {
             });
         }
 
+        let first_project = &deployable_projects[0];
+        let (artifact_id, artifact_url, functions) =
+            self.build_project_artifact(request, first_project).await?;
+
+        // Phase 7: Push caches (if enabled)
+        if let Some(ref cache_manager) = self.cache_manager {
+            self.queue
+                .update_status(&request.id, BuildStatus::PushingCache);
+
+            if let Err(e) = cache_manager
+                .push_registry(self.compiler.cargo_home())
+                .await
+            {
+                warn!(build_id = %request.id, error = %e, "failed to push registry cache");
+            }
+
+            if let Err(e) = cache_manager
+                .push_target(&request.project_id, &request.branch, &target_dir)
+                .await
+            {
+                warn!(build_id = %request.id, error = %e, "failed to push target cache");
+            }
+        }
+
+        // Phase 8: Cleanup (only if caching is disabled, otherwise keep target for incremental)
+        if self.cache_manager.is_none() {
+            self.cleanup_build_dirs(&target_dir).await;
+        }
+
+        Ok(BuildOutput {
+            artifact_id,
+            artifact_url,
+            functions,
+        })
+    }
+
+    async fn build_project_artifact(
+        &self,
+        request: &BuildRequest,
+        project: &DeployableProject,
+    ) -> Result<(ArtifactId, String, Vec<FunctionMetadata>), BuildError> {
+        let functions = discovery::discover_from_source(&project.path).unwrap_or_default();
+
+        info!(
+            build_id = %request.id,
+            project = %project.name,
+            function_count = functions.len(),
+            "functions discovered for project"
+        );
+
+        let discovered_functions = functions.clone();
+
         let output_dir = PathBuf::from("/tmp")
             .join("sidereal-build")
-            .join(request.id.as_str());
+            .join(request.id.as_str())
+            .join(&project.name);
 
         let artifact = self.artifact_builder.build(BuildInput {
             project_id: &request.project_id,
             branch: &request.branch,
             commit_sha: &request.commit_sha,
             runtime_binary: &self.runtime_path,
-            user_binary: &compile_output.binary_path,
+            user_binary: &project.binary_path,
             functions,
             output_dir: &output_dir,
         })?;
 
         let artifact_id = artifact.id.clone();
 
-        // Phase 5: Upload artifact
         let rootfs_path = output_dir.join("rootfs.ext4");
         let artifact_url = self.upload_artifact(&artifact, &rootfs_path).await?;
 
-        // Cleanup
-        self.cleanup_build_dirs(&output_dir, &target_dir).await;
+        if let Err(e) = tokio::fs::remove_dir_all(&output_dir).await {
+            warn!(
+                path = %output_dir.display(),
+                error = %e,
+                "failed to clean up build output"
+            );
+        }
 
-        Ok(BuildOutput {
-            artifact_id,
-            artifact_url,
-            functions: discovered_functions,
-        })
+        Ok((artifact_id, artifact_url, discovered_functions))
     }
 
     async fn upload_artifact(
@@ -471,14 +605,7 @@ impl BuildWorker {
         Ok(artifact_url)
     }
 
-    async fn cleanup_build_dirs(&self, output_dir: &Path, target_dir: &Path) {
-        if let Err(e) = tokio::fs::remove_dir_all(output_dir).await {
-            warn!(
-                path = %output_dir.display(),
-                error = %e,
-                "failed to clean up build output"
-            );
-        }
+    async fn cleanup_build_dirs(&self, target_dir: &Path) {
         if let Err(e) = tokio::fs::remove_dir_all(target_dir).await {
             warn!(
                 path = %target_dir.display(),
@@ -498,6 +625,10 @@ fn error_to_stage_and_message(e: &BuildError) -> (BuildStage, String) {
         | BuildError::InvalidBranchName { .. }
         | BuildError::SymlinkEscape { .. } => (BuildStage::Checkout, e.to_string()),
 
+        BuildError::Cache(_) | BuildError::SnapshotNotFound(_) => {
+            (BuildStage::Cache, e.to_string())
+        }
+
         BuildError::CargoFetch(_) | BuildError::MissingLockfile => {
             (BuildStage::FetchDeps, e.to_string())
         }
@@ -506,13 +637,14 @@ fn error_to_stage_and_message(e: &BuildError) -> (BuildStage, String) {
         | BuildError::BlockedCrate { .. }
         | BuildError::ExternalDependency { .. } => (BuildStage::Audit, e.to_string()),
 
+        BuildError::NoDeployableProjects => (BuildStage::Discovery, e.to_string()),
+
         BuildError::RootfsGeneration(_)
         | BuildError::ArtifactStorage(_)
         | BuildError::ArtifactTooLarge { .. }
         | BuildError::ArtifactSigning(_)
         | BuildError::ArtifactVerification(_) => (BuildStage::Artifact, e.to_string()),
 
-        // Default to Compile stage for sandbox, compilation, timeout, cancel, and other errors
         _ => (BuildStage::Compile, e.to_string()),
     }
 }

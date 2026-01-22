@@ -265,12 +265,17 @@ impl BuildStatusResponse {
         let (status_str, details, artifact_id, error) = match status {
             BuildStatus::Queued => ("queued".to_owned(), None, None, None),
             BuildStatus::CheckingOut => ("checking_out".to_owned(), None, None, None),
+            BuildStatus::PullingCache => ("pulling_cache".to_owned(), None, None, None),
             BuildStatus::FetchingDeps => ("fetching_deps".to_owned(), None, None, None),
             BuildStatus::Auditing => ("auditing".to_owned(), None, None, None),
             BuildStatus::Compiling { progress } => {
                 ("compiling".to_owned(), progress.clone(), None, None)
             }
+            BuildStatus::DiscoveringProjects => {
+                ("discovering_projects".to_owned(), None, None, None)
+            }
             BuildStatus::GeneratingArtifact => ("generating_artifact".to_owned(), None, None, None),
+            BuildStatus::PushingCache => ("pushing_cache".to_owned(), None, None, None),
             BuildStatus::Completed { artifact_id } => (
                 "completed".to_owned(),
                 None,
