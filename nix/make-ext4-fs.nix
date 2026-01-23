@@ -21,6 +21,9 @@
   size ? "64M",
   contents ? [ ],
   label ? "sidereal",
+  # Bytes per inode ratio - lower values create more inodes (default is ~16K)
+  # Set to 4096 for filesystems with many small files
+  bytesPerInode ? null,
 }:
 
 let
@@ -75,10 +78,12 @@ pkgs.runCommand "${name}.ext4"
   mkfs.ext4 \
     -d "$staging" \
     -L "${label}" \
+    ${if bytesPerInode != null then "-i ${toString bytesPerInode}" else ""} \
     -q \
     "$out" \
     ${toString sizeBlocks}
 
-  # Clean up
+  # Clean up (chmod first since nix store files are read-only)
+  chmod -R u+w "$staging" 2>/dev/null || true
   rm -rf "$staging"
 ''

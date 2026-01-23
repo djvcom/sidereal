@@ -36,8 +36,11 @@ let
 in
 makeExt4Fs {
   name = "sidereal-builder-rootfs";
-  size = "1G";
+  size = "2G";
   label = "builder";
+  # Zig has many small files (Windows cross-compilation support), so we need
+  # more inodes than the default allocation
+  bytesPerInode = 4096;
 
   contents = [
     # Init process (builder runtime)
