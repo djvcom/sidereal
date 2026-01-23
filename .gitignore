@@ -1,3 +1,6 @@
 /target
 /docs/
 ideas
+
+# Nix build output symlink
+result
