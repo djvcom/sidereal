@@ -1,59 +1,52 @@
-//! Build execution for the builder runtime.
+//! Cargo build execution for the builder runtime.
 //!
-//! Handles running cargo zigbuild and streaming output back to the host.
+//! Executes cargo zigbuild and streams output back to the host via vsock.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Instant;
-
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
+use tokio_vsock::VsockStream;
+use tracing::{debug, error, info, warn};
 
-use sidereal_build::protocol::{BinaryInfo, BuildOutput, BuildRequest, BuildResult};
+use crate::protocol::{BinaryInfo, BuildOutput, BuildRequest, BuildResult};
+use crate::vsock::{send_output, send_result, VsockError};
 
-use crate::vsock::MessageSender;
-
-/// Execute a build request and stream output back to the host.
+/// Execute a cargo build based on the request.
+///
+/// Streams stdout/stderr back to the host and returns the final result.
 pub async fn execute_build(
-    request: BuildRequest,
-    mut sender: MessageSender,
-) -> anyhow::Result<BuildResult> {
-    let start = Instant::now();
+    stream: &mut VsockStream,
+    request: &BuildRequest,
+) -> Result<(), VsockError> {
+    let start_time = Instant::now();
 
-    eprintln!("[build] Starting build: {}", request.build_id);
-    eprintln!("[build] Source: {}", request.source_path);
-    eprintln!("[build] Target: {}", request.target_path);
-    eprintln!("[build] Triple: {}", request.target_triple);
+    info!(
+        build_id = %request.build_id,
+        source = %request.source_path,
+        target = %request.target_path,
+        "Starting build"
+    );
 
-    // Set up cargo environment
-    std::env::set_var("CARGO_HOME", &request.cargo_home);
-    std::env::set_var("CARGO_TARGET_DIR", &request.target_path);
+    // Set up environment
+    setup_environment(&request.cargo_home(), &request.target_path())?;
 
-    // Build cargo arguments
-    let mut args = vec!["zigbuild", "--workspace"];
+    // Build cargo command
+    let mut cmd = build_cargo_command(request);
 
-    if request.release {
-        args.push("--release");
-    }
+    // Spawn the process
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            error!(error = %e, "Failed to spawn cargo");
+            let result = BuildResult::failure(-1, format!("Failed to spawn cargo: {e}"), 0.0);
+            send_result(stream, result).await?;
+            return Ok(());
+        }
+    };
 
-    args.push("--target");
-    args.push(&request.target_triple);
-
-    if request.locked {
-        args.push("--locked");
-    }
-
-    // Spawn cargo process
-    let mut child = Command::new("cargo")
-        .args(&args)
-        .current_dir(&request.source_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    eprintln!("[build] Spawned cargo process");
-
-    // Stream stdout and stderr
+    // Stream stdout
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
@@ -62,188 +55,262 @@ pub async fn execute_build(
 
     // Process stdout
     if let Some(stdout) = stdout {
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-
-        while let Ok(Some(line)) = lines.next_line().await {
-            eprintln!("[cargo stdout] {line}");
+        let mut reader = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
             stdout_lines.push(line.clone());
-            // Send output to host (ignore errors if connection closed)
-            let _ = sender.send_output(BuildOutput::Stdout(line)).await;
+            if let Err(e) = send_output(stream, BuildOutput::Stdout(line)).await {
+                warn!(error = %e, "Failed to send stdout");
+            }
         }
     }
 
     // Process stderr
     if let Some(stderr) = stderr {
-        let reader = BufReader::new(stderr);
-        let mut lines = reader.lines();
-
-        while let Ok(Some(line)) = lines.next_line().await {
-            eprintln!("[cargo stderr] {line}");
+        let mut reader = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
             stderr_lines.push(line.clone());
-            // Send output to host (ignore errors if connection closed)
-            let _ = sender.send_output(BuildOutput::Stderr(line)).await;
+            if let Err(e) = send_output(stream, BuildOutput::Stderr(line)).await {
+                warn!(error = %e, "Failed to send stderr");
+            }
         }
     }
 
     // Wait for process to complete
-    let status = child.wait().await?;
-    let duration = start.elapsed();
-
-    eprintln!("[build] Cargo exited with: {:?}", status.code());
-
-    let stdout_str = stdout_lines.join("\n");
-    let stderr_str = stderr_lines.join("\n");
-
-    // Build result
-    let result = if status.success() {
-        // Discover built binaries
-        let binaries = discover_binaries(
-            Path::new(&request.source_path),
-            Path::new(&request.target_path),
-            &request.target_triple,
-            request.release,
-        )?;
-
-        eprintln!("[build] Found {} binaries", binaries.len());
-        for binary in &binaries {
-            eprintln!("[build]   - {} at {}", binary.name, binary.path);
+    let status = match child.wait().await {
+        Ok(status) => status,
+        Err(e) => {
+            error!(error = %e, "Failed to wait for cargo");
+            let result = BuildResult::failure(-1, format!("Failed to wait for cargo: {e}"), 0.0);
+            send_result(stream, result).await?;
+            return Ok(());
         }
-
-        BuildResult::success(binaries, duration.as_secs_f64())
-            .with_stdout(stdout_str)
-            .with_stderr(stderr_str)
-    } else {
-        let exit_code = status.code().unwrap_or(-1);
-        BuildResult::failure(exit_code, stderr_str, duration.as_secs_f64()).with_stdout(stdout_str)
     };
 
-    // Send result to host
-    sender.send_result(result.clone()).await?;
+    let duration_secs = start_time.elapsed().as_secs_f64();
 
-    Ok(result)
-}
+    #[allow(clippy::as_conversions)]
+    let exit_code = status.code().unwrap_or(-1) as i32;
 
-/// Discover binaries built in the target directory.
-fn discover_binaries(
-    source_dir: &Path,
-    target_dir: &Path,
-    target_triple: &str,
-    release: bool,
-) -> anyhow::Result<Vec<BinaryInfo>> {
-    let profile = if release { "release" } else { "debug" };
-    let binary_dir = target_dir.join(target_triple).join(profile);
+    if status.success() {
+        info!(duration_secs, "Build completed successfully");
 
-    let mut binaries = Vec::new();
+        // Discover compiled binaries
+        let binaries = discover_binaries(request).await;
 
-    if !binary_dir.exists() {
-        return Ok(binaries);
-    }
+        let result = BuildResult::success(binaries, duration_secs)
+            .with_stdout(stdout_lines.join("\n"))
+            .with_stderr(stderr_lines.join("\n"));
 
-    // Scan for Cargo.toml files to find binary targets
-    discover_binaries_recursive(source_dir, source_dir, &binary_dir, &mut binaries)?;
+        send_result(stream, result).await?;
+    } else {
+        error!(exit_code, "Build failed");
 
-    Ok(binaries)
-}
+        let result = BuildResult::failure(exit_code, stderr_lines.join("\n"), duration_secs)
+            .with_stdout(stdout_lines.join("\n"));
 
-fn discover_binaries_recursive(
-    _workspace_root: &Path,
-    dir: &Path,
-    binary_dir: &Path,
-    binaries: &mut Vec<BinaryInfo>,
-) -> anyhow::Result<()> {
-    let cargo_toml = dir.join("Cargo.toml");
-
-    if cargo_toml.exists() {
-        let content = std::fs::read_to_string(&cargo_toml)?;
-
-        // Simple TOML parsing for binary names
-        let bin_names = extract_binary_names(&content, dir);
-
-        for name in bin_names {
-            let binary_path = binary_dir.join(&name);
-            if binary_path.exists() {
-                binaries.push(BinaryInfo::new(
-                    name,
-                    binary_path.to_string_lossy().to_string(),
-                    dir.to_string_lossy().to_string(),
-                ));
-            }
-        }
-    }
-
-    // Recursively scan subdirectories
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name != "target" && !name.starts_with('.') {
-                    discover_binaries_recursive(dir, &path, binary_dir, binaries)?;
-                }
-            }
-        }
+        send_result(stream, result).await?;
     }
 
     Ok(())
 }
 
-/// Extract binary names from Cargo.toml content.
-fn extract_binary_names(content: &str, crate_dir: &Path) -> Vec<String> {
-    let mut names = Vec::new();
+/// Set up the build environment.
+fn setup_environment(cargo_home: &Path, target_dir: &Path) -> Result<(), VsockError> {
+    // Ensure directories exist
+    std::fs::create_dir_all(cargo_home).map_err(VsockError::Io)?;
+    std::fs::create_dir_all(target_dir).map_err(VsockError::Io)?;
 
-    // Parse [[bin]] sections
-    let mut in_bin_section = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
+    Ok(())
+}
 
-        if trimmed.starts_with("[[bin]]") {
-            in_bin_section = true;
+/// Build the cargo command for the build request.
+fn build_cargo_command(request: &BuildRequest) -> Command {
+    let mut cmd = Command::new("cargo");
+
+    // Use zigbuild for cross-compilation
+    cmd.arg("zigbuild");
+
+    // Build all workspace members
+    cmd.arg("--workspace");
+
+    // Target specification
+    cmd.arg("--target");
+    cmd.arg(&request.target_triple);
+
+    // Release mode
+    if request.release {
+        cmd.arg("--release");
+    }
+
+    // Locked dependencies
+    if request.locked {
+        cmd.arg("--locked");
+    }
+
+    // Set working directory
+    cmd.current_dir(&request.source_path);
+
+    // Environment variables
+    cmd.env("CARGO_HOME", &request.cargo_home);
+    cmd.env("CARGO_TARGET_DIR", &request.target_path);
+
+    // SSL certificates
+    cmd.env("SSL_CERT_FILE", "/etc/ssl/certs/ca-bundle.crt");
+    cmd.env("SSL_CERT_DIR", "/etc/ssl/certs");
+
+    // Cargo proxy via vsock (HTTP_PROXY format for cargo)
+    // The proxy runs on the host and is accessible via vsock
+    cmd.env("HTTP_PROXY", "http://vsock:1080");
+    cmd.env("HTTPS_PROXY", "http://vsock:1080");
+
+    // Disable incremental compilation (not useful for ephemeral VMs)
+    cmd.env("CARGO_INCREMENTAL", "0");
+
+    // Configure stdout/stderr
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    cmd
+}
+
+/// Discover compiled binaries in the target directory.
+async fn discover_binaries(request: &BuildRequest) -> Vec<BinaryInfo> {
+    let mut binaries = Vec::new();
+
+    let target_dir = request.target_path();
+    let profile = if request.release { "release" } else { "debug" };
+    let bin_dir = target_dir.join(&request.target_triple).join(profile);
+
+    debug!(path = %bin_dir.display(), "Scanning for binaries");
+
+    if !bin_dir.exists() {
+        warn!(path = %bin_dir.display(), "Binary directory does not exist");
+        return binaries;
+    }
+
+    // Read directory entries
+    let mut entries = match tokio::fs::read_dir(&bin_dir).await {
+        Ok(entries) => entries,
+        Err(e) => {
+            warn!(error = %e, "Failed to read binary directory");
+            return binaries;
+        }
+    };
+
+    // Look for ELF binaries
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+
+        // Skip non-files
+        if !path.is_file() {
             continue;
         }
 
-        if trimmed.starts_with('[') && in_bin_section {
-            in_bin_section = false;
+        // Skip files with extensions (we want bare executables)
+        if path.extension().is_some() {
+            continue;
         }
 
-        if in_bin_section && trimmed.starts_with("name") {
-            if let Some(name) = extract_string_value(trimmed) {
-                names.push(name);
-            }
+        // Get file name
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_owned(),
+            None => continue,
+        };
+
+        // Skip common non-binary files (hidden files and .d files)
+        if name.starts_with('.') {
+            continue;
         }
+
+        // Check if it's an ELF binary by reading the magic bytes
+        if !is_elf_binary(&path).await {
+            continue;
+        }
+
+        info!(name = %name, path = %path.display(), "Found binary");
+
+        // Try to find the crate directory
+        let crate_dir = find_crate_dir(&request.source_path(), &name)
+            .await
+            .unwrap_or_else(|| request.source_path());
+
+        binaries.push(BinaryInfo::new(
+            name,
+            path.display().to_string(),
+            crate_dir.display().to_string(),
+        ));
     }
 
-    // If no [[bin]] sections, check for [package] name with src/main.rs
-    if names.is_empty() {
-        let main_rs = crate_dir.join("src/main.rs");
-        if main_rs.exists() {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("name") {
-                    if let Some(name) = extract_string_value(trimmed) {
-                        // Binary names use underscores, not hyphens
-                        names.push(name.replace('-', "_"));
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    names
+    binaries
 }
 
-/// Extract a string value from a TOML line like `name = "foo"`.
-fn extract_string_value(line: &str) -> Option<String> {
-    let parts: Vec<&str> = line.splitn(2, '=').collect();
-    if parts.len() != 2 {
-        return None;
+/// Check if a file is an ELF binary by reading magic bytes.
+async fn is_elf_binary(path: &Path) -> bool {
+    let Ok(file) = tokio::fs::File::open(path).await else {
+        return false;
+    };
+
+    let mut reader = BufReader::new(file);
+    let mut magic = [0u8; 4];
+
+    if reader.read_exact(&mut magic).await.is_err() {
+        return false;
     }
 
-    let value = parts[1].trim();
-    if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-        Some(value[1..value.len() - 1].to_owned())
-    } else {
-        None
+    // ELF magic: 0x7f 'E' 'L' 'F'
+    magic == [0x7f, b'E', b'L', b'F']
+}
+
+/// Find the crate directory for a binary name.
+///
+/// Searches for a Cargo.toml that defines a binary with the given name.
+async fn find_crate_dir(source_dir: &Path, binary_name: &str) -> Option<PathBuf> {
+    // First check if the root Cargo.toml has this binary
+    let root_cargo = source_dir.join("Cargo.toml");
+    if let Some(crate_dir) = check_cargo_toml(&root_cargo, binary_name).await {
+        return Some(crate_dir);
     }
+
+    // Check common workspace member locations
+    let workspace_dirs = ["crates", "packages", "libs", "apps"];
+
+    for dir in workspace_dirs {
+        let workspace_path = source_dir.join(dir);
+        if !workspace_path.exists() {
+            continue;
+        }
+
+        let Ok(mut entries) = tokio::fs::read_dir(&workspace_path).await else {
+            continue;
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let cargo_toml = entry.path().join("Cargo.toml");
+            if let Some(crate_dir) = check_cargo_toml(&cargo_toml, binary_name).await {
+                return Some(crate_dir);
+            }
+        }
+    }
+
+    None
+}
+
+/// Check if a Cargo.toml defines a binary with the given name.
+async fn check_cargo_toml(path: &Path, binary_name: &str) -> Option<PathBuf> {
+    let content = tokio::fs::read_to_string(path).await.ok()?;
+
+    // Simple check: look for the package name matching the binary name
+    // This is a heuristic - proper parsing would require a TOML parser
+    if content.contains(&format!("name = \"{binary_name}\""))
+        || content.contains(&format!("name = '{binary_name}'"))
+    {
+        return path.parent().map(Path::to_path_buf);
+    }
+
+    // Check for [[bin]] sections
+    if content.contains("[[bin]]") && content.contains(binary_name) {
+        return path.parent().map(Path::to_path_buf);
+    }
+
+    None
 }

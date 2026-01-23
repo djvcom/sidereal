@@ -1,188 +1,109 @@
-//! Builder runtime for Sidereal compilation VMs.
+//! Sidereal builder runtime - runs as /sbin/init inside builder VMs.
 //!
-//! This binary runs as `/sbin/init` inside Firecracker builder VMs. It:
-//! 1. Initialises the VM (mounts filesystems)
-//! 2. Starts a TCP-to-vsock proxy for cargo fetches
-//! 3. Listens on vsock port 1028 for build requests
-//! 4. Executes cargo zigbuild for the workspace
-//! 5. Streams stdout/stderr back to the host
-//! 6. Sends the build result with binary locations
+//! This binary:
+//! 1. Mounts required filesystems (proc, sys, tmp, dev)
+//! 2. Sets up signal handlers (PID 1 responsibilities)
+//! 3. Sets up the build environment (symlinks, certificates)
+//! 4. Listens on vsock port 1028 for a build request
+//! 5. Executes cargo zigbuild with streaming output
+//! 6. Sends the build result back to the host
 //! 7. Shuts down the VM
 
+use tracing::{error, info};
+
 mod build;
-mod proxy;
+mod filesystem;
+mod protocol;
+mod signals;
 mod vsock;
 
-use std::process::ExitCode;
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    // Initialise tracing (no ANSI colours for VM console)
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_ansi(false)
+        .init();
 
-use nix::mount::{mount, MsFlags};
-use nix::sys::reboot::{reboot, RebootMode};
+    info!("Sidereal builder runtime starting (PID 1)");
 
-use crate::build::execute_build;
-use crate::vsock::run_vsock_server;
+    // Mount required filesystems
+    if let Err(e) = filesystem::mount_filesystems() {
+        error!(error = %e, "Failed to mount filesystems");
+        // Continue anyway - some mounts may have succeeded
+    }
 
-/// Mount pseudo-filesystems required for a functional Linux environment.
-fn mount_filesystems() -> anyhow::Result<()> {
-    // Mount /proc
-    mount(
-        Some("proc"),
-        "/proc",
-        Some("proc"),
-        MsFlags::empty(),
-        None::<&str>,
-    )?;
+    // Create mount points for virtio-blk drives
+    if let Err(e) = filesystem::create_mount_points() {
+        error!(error = %e, "Failed to create mount points");
+    }
 
-    // Mount /sys
-    mount(
-        Some("sysfs"),
-        "/sys",
-        Some("sysfs"),
-        MsFlags::empty(),
-        None::<&str>,
-    )?;
+    // Set up signal handlers
+    signals::setup_signal_handlers();
 
-    // Mount /dev
-    mount(
-        Some("devtmpfs"),
-        "/dev",
-        Some("devtmpfs"),
-        MsFlags::empty(),
-        None::<&str>,
-    )?;
+    // Set up the build environment
+    if let Err(e) = filesystem::setup_build_environment() {
+        error!(error = %e, "Failed to set up build environment");
+        // Continue - build may still work
+    }
 
-    // Mount /dev/pts for pseudo-terminals
-    std::fs::create_dir_all("/dev/pts").ok();
-    mount(
-        Some("devpts"),
-        "/dev/pts",
-        Some("devpts"),
-        MsFlags::empty(),
-        None::<&str>,
-    )?;
+    // Set up SSL certificates for HTTPS
+    if let Err(e) = filesystem::setup_ssl_certs() {
+        error!(error = %e, "Failed to set up SSL certificates");
+        // Continue - HTTP may still work
+    }
 
-    // Mount /tmp as tmpfs
-    mount(
-        Some("tmpfs"),
-        "/tmp",
-        Some("tmpfs"),
-        MsFlags::empty(),
-        None::<&str>,
-    )?;
+    // Run the build workflow
+    if let Err(e) = run_build().await {
+        error!(error = %e, "Build workflow failed");
+    }
 
-    // Mount /run as tmpfs
-    std::fs::create_dir_all("/run").ok();
-    mount(
-        Some("tmpfs"),
-        "/run",
-        Some("tmpfs"),
-        MsFlags::empty(),
-        None::<&str>,
-    )?;
+    // Shutdown the VM
+    info!("Build complete, shutting down VM");
+    shutdown_vm();
+}
+
+/// Main build workflow: accept request, execute build, send result.
+async fn run_build() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Wait for a build request from the host
+    let (mut stream, request) = vsock::accept_build_request().await?;
+
+    info!(
+        build_id = %request.build_id,
+        target = %request.target_triple,
+        release = request.release,
+        "Received build request"
+    );
+
+    // Execute the build (streams output back via vsock)
+    build::execute_build(&mut stream, &request).await?;
 
     Ok(())
 }
 
 /// Shutdown the VM.
-fn shutdown() {
-    eprintln!("[init] Shutting down...");
+///
+/// As PID 1, we need to properly shut down the system.
+fn shutdown_vm() {
+    // Give a moment for any final I/O to complete
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Sync filesystems
-    unsafe { libc::sync() };
-
-    // Power off - this uses libc directly for the reboot syscall
-    // Note: reboot() is infallible on success (never returns), so we only handle error case
-    match reboot(RebootMode::RB_POWER_OFF) {
-        Ok(infallible) => match infallible {},
-        Err(e) => {
-            eprintln!("[init] Failed to power off: {e}");
-            // If reboot fails, try halting
-            let _ = reboot(RebootMode::RB_HALT_SYSTEM);
-        }
+    #[allow(unsafe_code)]
+    unsafe {
+        libc::sync();
     }
-}
 
-fn main() -> ExitCode {
-    eprintln!("[init] Sidereal builder runtime starting...");
+    // Request VM poweroff
+    // Note: In Firecracker, we can also just exit(0) and the VM will stop
+    info!("Requesting VM poweroff");
 
-    // Mount essential filesystems
-    if let Err(e) = mount_filesystems() {
-        eprintln!("[init] Failed to mount filesystems: {e}");
-        shutdown();
-        return ExitCode::FAILURE;
+    #[allow(unsafe_code)]
+    unsafe {
+        // LINUX_REBOOT_CMD_POWER_OFF = 0x4321fedc
+        libc::reboot(0x4321_fedc);
     }
-    eprintln!("[init] Filesystems mounted");
 
-    // Set up environment for cargo
-    std::env::set_var("HOME", "/tmp");
-    std::env::set_var("USER", "build");
-
-    // Set up PATH to include tools from /opt
-    let path = "/opt/rust/bin:\
-                /opt/cargo-zigbuild/bin:\
-                /opt/zig/bin:\
-                /opt/gcc/bin:\
-                /opt/busybox/bin:\
-                /opt/git/bin:\
-                /opt/pkg-config/bin:\
-                /usr/bin:/bin:/sbin";
-    std::env::set_var("PATH", path);
-
-    // Set SSL certificates path
-    std::env::set_var("SSL_CERT_FILE", "/opt/cacert/etc/ssl/certs/ca-bundle.crt");
-    std::env::set_var("SSL_CERT_DIR", "/opt/cacert/etc/ssl/certs");
-
-    // Set up pkg-config for OpenSSL
-    std::env::set_var("PKG_CONFIG_PATH", "/opt/openssl-dev/lib/pkgconfig");
-    std::env::set_var("OPENSSL_DIR", "/opt/openssl");
-
-    // Set up HTTP proxy for cargo (points to local TCP-to-vsock forwarder)
-    let proxy_url = proxy::proxy_url();
-    std::env::set_var("HTTP_PROXY", &proxy_url);
-    std::env::set_var("HTTPS_PROXY", &proxy_url);
-    std::env::set_var("http_proxy", &proxy_url);
-    std::env::set_var("https_proxy", &proxy_url);
-    eprintln!("[init] Proxy configured: {proxy_url}");
-
-    // Run the tokio runtime for vsock server
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("[init] Failed to create tokio runtime: {e}");
-            shutdown();
-            return ExitCode::FAILURE;
-        }
-    };
-
-    // Run the vsock server (handles a single build, then exits)
-    let result = runtime.block_on(async {
-        // Start the TCP-to-vsock proxy in the background
-        tokio::spawn(async {
-            if let Err(e) = proxy::run_proxy().await {
-                eprintln!("[init] Proxy server failed: {e}");
-            }
-        });
-
-        // Give proxy a moment to start listening
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        match run_vsock_server(execute_build).await {
-            Ok(()) => {
-                eprintln!("[init] Build completed successfully");
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                eprintln!("[init] Build failed: {e}");
-                ExitCode::FAILURE
-            }
-        }
-    });
-
-    // Shutdown the VM
-    shutdown();
-
-    result
+    // If reboot syscall failed, just exit
+    std::process::exit(0);
 }

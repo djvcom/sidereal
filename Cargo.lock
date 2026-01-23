@@ -6152,14 +6152,14 @@ dependencies = [
 name = "sidereal-builder-runtime"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "libc",
  "nix 0.29.0",
  "rkyv",
- "sidereal-build",
  "thiserror 2.0.17",
  "tokio",
  "tokio-vsock",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

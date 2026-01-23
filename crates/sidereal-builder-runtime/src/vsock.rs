@@ -1,168 +1,134 @@
-//! Vsock communication for builder VMs.
+//! Vsock communication for the builder runtime.
 //!
-//! Handles the vsock protocol for receiving build requests and sending
-//! build output/results back to the host.
+//! Listens on vsock port 1028 for build requests from the host and
+//! streams build output back.
 
-use std::future::Future;
-use std::io;
-
-use rkyv::api::high::{HighDeserializer, HighSerializer, HighValidator};
-use rkyv::bytecheck::CheckBytes;
+use rkyv::api::high::HighSerializer;
 use rkyv::rancor::Error as RkyvError;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::util::AlignedVec;
-use rkyv::{Archive, Deserialize, Serialize};
+use rkyv::{Archive, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
+use tokio_vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
+use tracing::info;
 
-use sidereal_build::protocol::{BuildMessage, BuildOutput, BuildRequest, BuildResult, BUILD_PORT};
+use crate::protocol::{BuildMessage, BuildOutput, BuildRequest, BuildResult, BUILD_PORT};
 
-/// Frame header size: 4 bytes for message length.
-const FRAME_HEADER_SIZE: usize = 4;
-
-/// Maximum message size (16 MB).
+/// Maximum message size (16 MB should be plenty for build output).
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 
-/// Run the vsock server, handling a single build request.
+/// Error type for vsock operations.
+#[derive(Debug, thiserror::Error)]
+pub enum VsockError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("serialisation error: {0}")]
+    Serialisation(String),
+
+    #[error("deserialisation error: {0}")]
+    Deserialisation(String),
+
+    #[error("message too large: {size} bytes (max {MAX_MESSAGE_SIZE})")]
+    MessageTooLarge { size: usize },
+
+    #[error("unexpected message type")]
+    UnexpectedMessage,
+
+    #[error("connection closed")]
+    ConnectionClosed,
+}
+
+/// Wait for a single build request from the host.
 ///
-/// The server listens on port 1028, accepts a single connection,
-/// processes one build request, and returns.
-pub async fn run_vsock_server<F, Fut>(build_fn: F) -> anyhow::Result<()>
-where
-    F: FnOnce(BuildRequest, MessageSender) -> Fut,
-    Fut: Future<Output = anyhow::Result<BuildResult>>,
-{
-    eprintln!("[vsock] Listening on port {BUILD_PORT}...");
+/// The builder VM is designed to handle exactly one build per VM instance.
+/// After the build completes, the VM shuts down.
+pub async fn accept_build_request() -> Result<(VsockStream, BuildRequest), VsockError> {
+    let addr = VsockAddr::new(VMADDR_CID_ANY, BUILD_PORT);
+    let mut listener = VsockListener::bind(addr)?;
 
-    let mut listener = VsockListener::bind(VsockAddr::new(VMADDR_CID_ANY, BUILD_PORT))?;
-    let (stream, addr) = listener.accept().await?;
+    info!(port = BUILD_PORT, "Listening for build request on vsock");
 
-    eprintln!("[vsock] Connection from CID {}", addr.cid());
+    // Accept a single connection
+    let (mut stream, peer_addr) = listener.accept().await?;
+    info!(peer = ?peer_addr, "Accepted connection from host");
 
-    // Split stream for bidirectional communication
-    let (reader, writer) = stream.into_split();
-    let reader = tokio::io::BufReader::new(reader);
-    let writer = tokio::io::BufWriter::new(writer);
+    // Read the build request
+    let request = receive_request(&mut stream).await?;
 
-    let mut receiver = MessageReceiver { reader };
-    let sender = MessageSender { writer };
+    Ok((stream, request))
+}
 
-    // Receive build request
-    let request = match receiver.receive::<BuildRequest>().await? {
-        Some(req) => req,
-        None => {
-            return Err(anyhow::anyhow!(
-                "Connection closed before receiving request"
-            ));
+/// Receive a build request from the stream.
+async fn receive_request(stream: &mut VsockStream) -> Result<BuildRequest, VsockError> {
+    // Read length header (4 bytes, little-endian)
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            VsockError::ConnectionClosed
+        } else {
+            VsockError::Io(e)
         }
-    };
+    })?;
 
-    eprintln!("[vsock] Received build request: {}", request.build_id);
+    #[allow(clippy::as_conversions)]
+    let len = u32::from_le_bytes(len_buf) as usize;
 
-    // Execute build (streaming output via sender)
-    let result = build_fn(request, sender).await?;
+    if len > MAX_MESSAGE_SIZE {
+        return Err(VsockError::MessageTooLarge { size: len });
+    }
 
-    eprintln!("[vsock] Build finished, sending result");
+    // Read message payload
+    let mut buf = vec![0u8; len];
+    stream.read_exact(&mut buf).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            VsockError::ConnectionClosed
+        } else {
+            VsockError::Io(e)
+        }
+    })?;
 
-    // Result is sent by build_fn, we're done
-    drop(result);
+    // Deserialise
+    let message: BuildMessage = rkyv::from_bytes::<BuildMessage, RkyvError>(&buf)
+        .map_err(|e| VsockError::Deserialisation(e.to_string()))?;
+
+    match message {
+        BuildMessage::Request(request) => Ok(request),
+        _ => Err(VsockError::UnexpectedMessage),
+    }
+}
+
+/// Send build output to the host.
+pub async fn send_output(stream: &mut VsockStream, output: BuildOutput) -> Result<(), VsockError> {
+    let message = BuildMessage::Output(output);
+    send_message(stream, &message).await
+}
+
+/// Send the final build result to the host.
+pub async fn send_result(stream: &mut VsockStream, result: BuildResult) -> Result<(), VsockError> {
+    let message = BuildMessage::Result(result);
+    send_message(stream, &message).await
+}
+
+/// Send a message over the stream.
+async fn send_message<T>(stream: &mut VsockStream, message: &T) -> Result<(), VsockError>
+where
+    T: Archive,
+    T: for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, RkyvError>>,
+{
+    let bytes = rkyv::to_bytes::<RkyvError>(message)
+        .map_err(|e| VsockError::Serialisation(e.to_string()))?;
+
+    #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
+    let len = bytes.len() as u32;
+
+    // Build the complete frame
+    let mut buf = Vec::with_capacity(4 + bytes.len());
+    buf.extend_from_slice(&len.to_le_bytes());
+    buf.extend_from_slice(&bytes);
+
+    stream.write_all(&buf).await?;
+    stream.flush().await?;
 
     Ok(())
-}
-
-/// Message sender for streaming build output.
-pub struct MessageSender {
-    writer: tokio::io::BufWriter<tokio_vsock::OwnedWriteHalf>,
-}
-
-impl MessageSender {
-    /// Send a build output message.
-    pub async fn send_output(&mut self, output: BuildOutput) -> io::Result<()> {
-        let message = BuildMessage::Output(output);
-        self.send(&message).await
-    }
-
-    /// Send the final build result.
-    pub async fn send_result(&mut self, result: BuildResult) -> io::Result<()> {
-        let message = BuildMessage::Result(result);
-        self.send(&message).await
-    }
-
-    /// Send a message.
-    async fn send<T>(&mut self, message: &T) -> io::Result<()>
-    where
-        T: Archive,
-        T: for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, RkyvError>>,
-    {
-        let bytes = rkyv::to_bytes::<RkyvError>(message).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Serialisation failed: {e}"),
-            )
-        })?;
-
-        if bytes.len() > MAX_MESSAGE_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Message too large: {} > {MAX_MESSAGE_SIZE}", bytes.len()),
-            ));
-        }
-
-        // Write length header
-        #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
-        let len = bytes.len() as u32;
-        self.writer.write_all(&len.to_le_bytes()).await?;
-
-        // Write message
-        self.writer.write_all(&bytes).await?;
-        self.writer.flush().await?;
-
-        Ok(())
-    }
-}
-
-/// Message receiver for reading build requests.
-struct MessageReceiver {
-    reader: tokio::io::BufReader<tokio_vsock::OwnedReadHalf>,
-}
-
-impl MessageReceiver {
-    /// Receive a message.
-    async fn receive<T>(&mut self) -> io::Result<Option<T>>
-    where
-        T: Archive,
-        T::Archived: for<'a> CheckBytes<HighValidator<'a, RkyvError>>
-            + Deserialize<T, HighDeserializer<RkyvError>>,
-    {
-        // Read length header
-        let mut len_buf = [0u8; FRAME_HEADER_SIZE];
-        match self.reader.read_exact(&mut len_buf).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(e),
-        }
-
-        let len = u32::from_le_bytes(len_buf) as usize;
-
-        if len > MAX_MESSAGE_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Message too large: {len} > {MAX_MESSAGE_SIZE}"),
-            ));
-        }
-
-        // Read message
-        let mut buf = vec![0u8; len];
-        self.reader.read_exact(&mut buf).await?;
-
-        // Deserialise
-        let message: T = rkyv::from_bytes::<T, RkyvError>(&buf).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Deserialisation failed: {e}"),
-            )
-        })?;
-
-        Ok(Some(message))
-    }
 }

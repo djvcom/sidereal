@@ -3,43 +3,21 @@ name = "sidereal-builder-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-repository.workspace = true
-rust-version.workspace = true
-description = "Builder runtime for Sidereal compilation VMs"
+description = "Sidereal builder runtime for compilation VMs (guest binary)"
+
+[[bin]]
+name = "sidereal-builder-runtime"
+path = "src/main.rs"
 
 [dependencies]
-# Async runtime
-tokio = { workspace = true, features = ["rt", "io-util", "process", "sync", "macros", "time", "fs"] }
-
-# Vsock communication
-tokio-vsock = { workspace = true }
-
-# Wire protocol (rkyv-based)
+tokio = { workspace = true, features = ["rt", "io-util", "sync", "macros", "signal", "time", "process", "fs"] }
+tokio-vsock.workspace = true
+nix = { workspace = true, features = ["mount", "fs", "signal"] }
+libc.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 rkyv = { workspace = true }
-sidereal-build = { path = "../sidereal-build" }
+thiserror.workspace = true
 
-# System calls
-nix = { workspace = true, features = ["mount", "reboot", "fs"] }
-libc = { workspace = true }
-
-# Error handling
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-
-# Note: This crate requires unsafe code for VM init and reboot operations.
-# The workspace lints are not used here to allow unsafe_code.
-[lints.rust]
-unsafe_code = "allow"
-missing_docs = "warn"
-unused_must_use = "deny"
-
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-pedantic = { level = "warn", priority = -1 }
-doc_markdown = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-must_use_candidate = "allow"
-module_name_repetitions = "allow"
+[lints]
+workspace = true
