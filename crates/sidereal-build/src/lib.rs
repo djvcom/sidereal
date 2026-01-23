@@ -34,6 +34,7 @@ pub mod error;
 pub mod forge_auth;
 pub mod project;
 pub mod protocol;
+pub mod proxy;
 pub mod queue;
 pub mod sandbox;
 pub mod service;

@@ -22,6 +22,7 @@ use crate::error::{BuildError, BuildResult};
 use crate::protocol::{
     BuildMessage, BuildOutput, BuildRequest, BuildResult as ProtocolBuildResult, BUILD_PORT,
 };
+use crate::proxy::{CargoProxy, ProxyServer, PROXY_PORT};
 use crate::sandbox::{BinaryInfo, WorkspaceCompileOutput};
 use crate::source::SourceCheckout;
 use crate::types::{BuildStatus, ProjectId};
@@ -125,6 +126,19 @@ impl FirecrackerCompiler {
         let vsock_path = vm.vsock_uds_path().to_path_buf();
         debug!(path = %vsock_path.display(), "Connecting to builder VM via vsock");
 
+        // Start the cargo proxy server for this VM
+        // The proxy listens on {vsock_path}_{PROXY_PORT} for connections from the VM
+        let proxy_path = PathBuf::from(format!("{}_{PROXY_PORT}", vsock_path.display()));
+        let proxy_server = ProxyServer::new(CargoProxy::with_defaults());
+        let proxy_cancel = cancel.clone();
+
+        let proxy_handle = tokio::spawn(async move {
+            if let Err(e) = proxy_server.run(&proxy_path, proxy_cancel).await {
+                warn!(error = %e, "Cargo proxy server error");
+            }
+        });
+        debug!(port = PROXY_PORT, "Cargo proxy server started");
+
         // Wait for VM to be ready
         tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -145,6 +159,10 @@ impl FirecrackerCompiler {
         if let Err(e) = vm.shutdown().await {
             warn!("Failed to shutdown VM cleanly: {e}");
         }
+
+        // Cancel and wait for proxy to stop
+        cancel.cancel();
+        let _ = proxy_handle.await;
 
         // Clean up rootfs copy
         let _ = std::fs::remove_file(&rootfs_copy);

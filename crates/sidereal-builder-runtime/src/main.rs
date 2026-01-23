@@ -2,13 +2,15 @@
 //!
 //! This binary runs as `/sbin/init` inside Firecracker builder VMs. It:
 //! 1. Initialises the VM (mounts filesystems)
-//! 2. Listens on vsock port 1028 for build requests
-//! 3. Executes cargo zigbuild for the workspace
-//! 4. Streams stdout/stderr back to the host
-//! 5. Sends the build result with binary locations
-//! 6. Shuts down the VM
+//! 2. Starts a TCP-to-vsock proxy for cargo fetches
+//! 3. Listens on vsock port 1028 for build requests
+//! 4. Executes cargo zigbuild for the workspace
+//! 5. Streams stdout/stderr back to the host
+//! 6. Sends the build result with binary locations
+//! 7. Shuts down the VM
 
 mod build;
+mod proxy;
 mod vsock;
 
 use std::process::ExitCode;
@@ -133,6 +135,14 @@ fn main() -> ExitCode {
     std::env::set_var("PKG_CONFIG_PATH", "/opt/openssl-dev/lib/pkgconfig");
     std::env::set_var("OPENSSL_DIR", "/opt/openssl");
 
+    // Set up HTTP proxy for cargo (points to local TCP-to-vsock forwarder)
+    let proxy_url = proxy::proxy_url();
+    std::env::set_var("HTTP_PROXY", &proxy_url);
+    std::env::set_var("HTTPS_PROXY", &proxy_url);
+    std::env::set_var("http_proxy", &proxy_url);
+    std::env::set_var("https_proxy", &proxy_url);
+    eprintln!("[init] Proxy configured: {proxy_url}");
+
     // Run the tokio runtime for vsock server
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -149,6 +159,16 @@ fn main() -> ExitCode {
 
     // Run the vsock server (handles a single build, then exits)
     let result = runtime.block_on(async {
+        // Start the TCP-to-vsock proxy in the background
+        tokio::spawn(async {
+            if let Err(e) = proxy::run_proxy().await {
+                eprintln!("[init] Proxy server failed: {e}");
+            }
+        });
+
+        // Give proxy a moment to start listening
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
         match run_vsock_server(execute_build).await {
             Ok(()) => {
                 eprintln!("[init] Build completed successfully");
