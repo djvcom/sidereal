@@ -94,4 +94,7 @@ pub mod ports {
 
     /// Scheduler registration port.
     pub const SCHEDULER: u32 = 1027;
+
+    /// Builder VM communication port.
+    pub const BUILD: u32 = 1028;
 }

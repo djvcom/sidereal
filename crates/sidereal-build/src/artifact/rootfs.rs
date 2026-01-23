@@ -1,7 +1,10 @@
 //! Rootfs generation for Firecracker VMs.
 //!
 //! Creates minimal ext4 filesystems containing the compiled binary and runtime.
+//! Uses `mkfs.ext4 -d` for rootless image creation (no mount required).
 
+use std::fs::Permissions;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -40,6 +43,8 @@ impl RootfsBuilder {
     /// - `/sbin/init` - the sidereal runtime
     /// - `/app/binary` - the compiled user code
     /// - `/etc/functions.json` - function metadata
+    ///
+    /// Uses `mkfs.ext4 -d` for rootless image creation - no mount or sudo required.
     pub fn build(
         &self,
         runtime_binary: &Path,
@@ -60,9 +65,17 @@ impl RootfsBuilder {
             "building rootfs"
         );
 
-        self.create_empty_image(output_path)?;
-        Self::format_ext4(output_path)?;
-        self.populate_rootfs(output_path, runtime_binary, user_binary, functions_json)?;
+        // Create staging directory with rootfs contents
+        let staging_dir = self.work_dir.join("rootfs-staging");
+        Self::create_staging_directory(&staging_dir, runtime_binary, user_binary, functions_json)?;
+
+        // Create ext4 image directly from staging directory (rootless!)
+        Self::create_ext4_from_directory(&staging_dir, output_path, self.size_mb)?;
+
+        // Clean up staging directory
+        if staging_dir.exists() {
+            std::fs::remove_dir_all(&staging_dir)?;
+        }
 
         let hash = calculate_sha256(output_path)?;
         let size = std::fs::metadata(output_path)?.len();
@@ -98,133 +111,102 @@ impl RootfsBuilder {
         Ok(())
     }
 
-    fn create_empty_image(&self, path: &Path) -> BuildResult<()> {
-        debug!(path = %path.display(), size_mb = self.size_mb, "creating empty image");
-
-        let status = Command::new("dd")
-            .args([
-                "if=/dev/zero",
-                &format!("of={}", path.display()),
-                "bs=1M",
-                &format!("count={}", self.size_mb),
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| BuildError::RootfsGeneration(format!("dd failed: {e}")))?;
-
-        if !status.success() {
-            return Err(BuildError::RootfsGeneration(
-                "dd failed to create image".to_owned(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    fn format_ext4(path: &Path) -> BuildResult<()> {
-        debug!(path = %path.display(), "formatting as ext4");
-
-        let status = Command::new("mkfs.ext4")
-            .args(["-F", "-q", &path.display().to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| BuildError::RootfsGeneration(format!("mkfs.ext4 failed: {e}")))?;
-
-        if !status.success() {
-            return Err(BuildError::RootfsGeneration("mkfs.ext4 failed".to_owned()));
-        }
-
-        Ok(())
-    }
-
-    fn populate_rootfs(
-        &self,
-        image_path: &Path,
+    /// Create staging directory with all rootfs contents.
+    fn create_staging_directory(
+        staging_dir: &Path,
         runtime: &Path,
         user_binary: &Path,
         functions_json: Option<&Path>,
     ) -> BuildResult<()> {
-        let mount_dir = self.work_dir.join("mnt");
-        std::fs::create_dir_all(&mount_dir)?;
-
-        debug!(mount_dir = %mount_dir.display(), "mounting rootfs");
-
-        // Mount the image (requires elevated privileges)
-        let status = Command::new("sudo")
-            .args([
-                "mount",
-                "-o",
-                "loop",
-                &image_path.display().to_string(),
-                &mount_dir.display().to_string(),
-            ])
-            .status()
-            .map_err(|e| BuildError::RootfsGeneration(format!("mount failed: {e}")))?;
-
-        if !status.success() {
-            return Err(BuildError::RootfsGeneration("mount failed".to_owned()));
+        // Remove existing staging directory if present
+        if staging_dir.exists() {
+            std::fs::remove_dir_all(staging_dir)?;
         }
 
-        // Populate the mounted filesystem
-        let result =
-            Self::populate_mounted_rootfs(&mount_dir, runtime, user_binary, functions_json);
-
-        // Always unmount
-        debug!("unmounting rootfs");
-        let _ = Command::new("sudo")
-            .args(["umount", &mount_dir.display().to_string()])
-            .status();
-
-        result
-    }
-
-    fn populate_mounted_rootfs(
-        mount_dir: &Path,
-        runtime: &Path,
-        user_binary: &Path,
-        functions_json: Option<&Path>,
-    ) -> BuildResult<()> {
-        // Create required directories
+        // Create directory structure
         let dirs = ["sbin", "app", "etc", "tmp", "dev", "proc", "sys"];
-
         for dir in dirs {
-            let dir_path = mount_dir.join(dir);
-            run_sudo(&["mkdir", "-p", &dir_path.display().to_string()])?;
+            let dir_path = staging_dir.join(dir);
+            std::fs::create_dir_all(&dir_path)?;
+            debug!(dir = %dir_path.display(), "created directory");
         }
 
         // Copy runtime as /sbin/init
-        let init_path = mount_dir.join("sbin/init");
-        run_sudo(&[
-            "cp",
-            &runtime.display().to_string(),
-            &init_path.display().to_string(),
-        ])?;
-        run_sudo(&["chmod", "+x", &init_path.display().to_string()])?;
+        let init_path = staging_dir.join("sbin/init");
+        std::fs::copy(runtime, &init_path)?;
+        std::fs::set_permissions(&init_path, Permissions::from_mode(0o755))?;
+        debug!(path = %init_path.display(), "copied runtime binary");
 
         // Copy user binary as /app/binary
-        let binary_path = mount_dir.join("app/binary");
-        run_sudo(&[
-            "cp",
-            &user_binary.display().to_string(),
-            &binary_path.display().to_string(),
-        ])?;
-        run_sudo(&["chmod", "+x", &binary_path.display().to_string()])?;
+        let binary_path = staging_dir.join("app/binary");
+        std::fs::copy(user_binary, &binary_path)?;
+        std::fs::set_permissions(&binary_path, Permissions::from_mode(0o755))?;
+        debug!(path = %binary_path.display(), "copied user binary");
 
         // Copy functions.json if provided
         if let Some(functions) = functions_json {
             if functions.exists() {
-                let etc_path = mount_dir.join("etc/functions.json");
-                run_sudo(&[
-                    "cp",
-                    &functions.display().to_string(),
-                    &etc_path.display().to_string(),
-                ])?;
+                let etc_path = staging_dir.join("etc/functions.json");
+                std::fs::copy(functions, &etc_path)?;
+                debug!(path = %etc_path.display(), "copied functions.json");
             }
         }
 
-        debug!("rootfs populated successfully");
+        debug!(staging = %staging_dir.display(), "staging directory prepared");
+        Ok(())
+    }
+
+    /// Create ext4 image from a directory using mkfs.ext4 -d.
+    ///
+    /// This approach requires no mounting or elevated privileges.
+    fn create_ext4_from_directory(
+        source_dir: &Path,
+        output_path: &Path,
+        size_mb: u32,
+    ) -> BuildResult<()> {
+        // Remove existing output file if present
+        if output_path.exists() {
+            std::fs::remove_file(output_path)?;
+        }
+
+        // Calculate size in bytes (with some padding for filesystem metadata)
+        let size_bytes = u64::from(size_mb) * 1024 * 1024;
+
+        debug!(
+            source = %source_dir.display(),
+            output = %output_path.display(),
+            size_mb,
+            "creating ext4 image from directory"
+        );
+
+        // mkfs.ext4 -d <source_dir> -L <label> <output_path> <size>
+        // The size is specified in filesystem blocks (1KB by default)
+        let size_blocks = size_bytes / 1024;
+
+        let output = Command::new("mkfs.ext4")
+            .args([
+                "-d",
+                &source_dir.display().to_string(),
+                "-L",
+                "sidereal",
+                "-q", // Quiet mode
+                &output_path.display().to_string(),
+                &size_blocks.to_string(),
+            ])
+            .output()
+            .map_err(|e| {
+                BuildError::RootfsGeneration(format!("mkfs.ext4 failed to execute: {e}"))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(BuildError::RootfsGeneration(format!(
+                "mkfs.ext4 failed: {}",
+                stderr.trim()
+            )));
+        }
+
+        debug!(output = %output_path.display(), "ext4 image created");
         Ok(())
     }
 }
@@ -247,25 +229,6 @@ fn calculate_sha256(path: &Path) -> BuildResult<String> {
     hasher.update(&data);
     let result = hasher.finalize();
     Ok(hex::encode(result))
-}
-
-/// Run a command with sudo.
-fn run_sudo(args: &[&str]) -> BuildResult<()> {
-    let cmd_name = args.first().copied().unwrap_or("unknown");
-    let status = Command::new("sudo")
-        .args(args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| BuildError::RootfsGeneration(format!("sudo {cmd_name} failed: {e}")))?;
-
-    if !status.success() {
-        return Err(BuildError::RootfsGeneration(format!(
-            "sudo {cmd_name} failed"
-        )));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

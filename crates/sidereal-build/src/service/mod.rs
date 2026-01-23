@@ -51,6 +51,10 @@ pub struct ServiceConfig {
     /// Git forge authentication.
     #[serde(default)]
     pub forge_auth: ForgeAuthConfig,
+
+    /// VM-based compilation configuration.
+    #[serde(default)]
+    pub vm: VmConfig,
 }
 
 impl ServiceConfig {
@@ -213,6 +217,67 @@ impl Default for WorkerConfig {
 
 const fn default_worker_count() -> usize {
     2
+}
+
+/// VM-based compilation configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VmConfig {
+    /// Enable Firecracker VM-based compilation instead of bubblewrap sandbox.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Path to the Linux kernel for builder VMs.
+    #[serde(default = "default_kernel_path")]
+    pub kernel_path: PathBuf,
+
+    /// Path to the builder rootfs image.
+    #[serde(default = "default_builder_rootfs")]
+    pub builder_rootfs: PathBuf,
+
+    /// Number of vCPUs for builder VMs.
+    #[serde(default = "default_vcpu_count")]
+    pub vcpu_count: u8,
+
+    /// Memory size in MB for builder VMs.
+    #[serde(default = "default_vm_memory")]
+    pub mem_size_mib: u32,
+
+    /// Rust target triple.
+    #[serde(default = "default_target")]
+    pub target: String,
+}
+
+impl Default for VmConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            kernel_path: default_kernel_path(),
+            builder_rootfs: default_builder_rootfs(),
+            vcpu_count: default_vcpu_count(),
+            mem_size_mib: default_vm_memory(),
+            target: default_target(),
+        }
+    }
+}
+
+fn default_kernel_path() -> PathBuf {
+    PathBuf::from("/var/lib/sidereal/kernel/vmlinux")
+}
+
+fn default_builder_rootfs() -> PathBuf {
+    PathBuf::from("/var/lib/sidereal/rootfs/builder.ext4")
+}
+
+const fn default_vcpu_count() -> u8 {
+    2
+}
+
+const fn default_vm_memory() -> u32 {
+    4096
+}
+
+fn default_target() -> String {
+    "x86_64-unknown-linux-musl".to_owned()
 }
 
 #[cfg(test)]

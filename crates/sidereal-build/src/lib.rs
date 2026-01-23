@@ -33,11 +33,13 @@ pub mod env;
 pub mod error;
 pub mod forge_auth;
 pub mod project;
+pub mod protocol;
 pub mod queue;
 pub mod sandbox;
 pub mod service;
 pub mod source;
 pub mod types;
+pub mod vm;
 
 // Re-export configuration types (legacy build.rs support)
 pub use config::{DevConfig, ProjectConfig, QueueConfig, ResourcesConfig, SiderealConfig};
@@ -81,6 +83,15 @@ pub use service::{BuildWorker, ServiceConfig};
 
 // Re-export forge authentication types
 pub use forge_auth::{ForgeAuth, ForgeAuthConfig};
+
+// Re-export protocol types (with aliases to avoid conflicts with existing types)
+pub use protocol::{
+    BinaryInfo as VmBinaryInfo, BuildMessage, BuildOutput, BuildRequest as VmBuildRequest,
+    BuildResult as VmBuildResult, BUILD_PORT,
+};
+
+// Re-export VM compiler types
+pub use vm::{FirecrackerCompiler, VmCompilerConfig};
 
 use std::path::PathBuf;
 

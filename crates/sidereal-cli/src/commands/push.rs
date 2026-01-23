@@ -91,10 +91,7 @@ impl GitInfo {
 
         // Handle SSH URLs: git@github.com:user/repo.git
         if let Some(rest) = url.strip_prefix("git@") {
-            return rest
-                .replace(':', "/")
-                .trim_end_matches(".git")
-                .to_owned();
+            return rest.replace(':', "/").trim_end_matches(".git").to_owned();
         }
 
         // Handle HTTPS URLs: https://github.com/user/repo.git
@@ -129,7 +126,14 @@ pub async fn run(args: PushArgs) -> Result<(), PushError> {
 
     // Submit build
     println!("\nSubmitting build...");
-    let build_id = submit_build(&client, &args.url, &project_id, &git_info, &args.environment).await?;
+    let build_id = submit_build(
+        &client,
+        &args.url,
+        &project_id,
+        &git_info,
+        &args.environment,
+    )
+    .await?;
     println!("  Build ID: {build_id}");
 
     // Poll for build completion

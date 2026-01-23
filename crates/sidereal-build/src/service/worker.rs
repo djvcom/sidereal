@@ -12,17 +12,19 @@ use tracing::{debug, error, info, warn};
 use crate::artifact::{Artifact, ArtifactBuilder, ArtifactStore, BuildInput};
 use crate::cache::{CacheConfig, CacheManager, CacheResult};
 use crate::discovery;
-use crate::error::{BuildError, BuildStage, CancelReason};
+use crate::error::{BuildError, BuildResult, BuildStage, CancelReason};
 use crate::forge_auth::ForgeAuth;
 use crate::project::{discover_projects, DeployableProject};
 use crate::queue::{BuildHandle, BuildQueue};
 use crate::sandbox::{
     fetch_dependencies, FetchConfig, SandboxConfig, SandboxLimits, SandboxedCompiler,
+    WorkspaceCompileOutput,
 };
-use crate::source::SourceManager;
-use crate::types::{ArtifactId, BuildRequest, BuildStatus, FunctionMetadata};
+use crate::source::{SourceCheckout, SourceManager};
+use crate::types::{ArtifactId, BuildRequest, BuildStatus, FunctionMetadata, ProjectId};
+use crate::vm::{FirecrackerCompiler, VmCompilerConfig};
 
-use super::{LimitsConfig, PathsConfig};
+use super::{LimitsConfig, PathsConfig, VmConfig};
 
 /// Payload sent to the callback URL when a build completes.
 #[derive(Debug, Serialize)]
@@ -106,12 +108,51 @@ struct BuildOutput {
     functions: Vec<FunctionMetadata>,
 }
 
+/// Abstraction over different compilation backends.
+enum Compiler {
+    /// Bubblewrap sandbox-based compiler.
+    Sandbox(SandboxedCompiler),
+    /// Firecracker VM-based compiler.
+    Firecracker(FirecrackerCompiler),
+}
+
+impl Compiler {
+    /// Return the cargo home directory path.
+    fn cargo_home(&self) -> &Path {
+        match self {
+            Self::Sandbox(c) => c.cargo_home(),
+            Self::Firecracker(c) => c.cargo_home(),
+        }
+    }
+
+    /// Compile the workspace using the configured backend.
+    async fn compile_workspace(
+        &self,
+        project_id: &ProjectId,
+        checkout: &SourceCheckout,
+        target_dir: &Path,
+        cancel: CancellationToken,
+        status_tx: Option<&tokio::sync::mpsc::Sender<BuildStatus>>,
+    ) -> BuildResult<WorkspaceCompileOutput> {
+        match self {
+            Self::Sandbox(c) => {
+                c.compile_workspace(project_id, checkout, target_dir, cancel)
+                    .await
+            }
+            Self::Firecracker(c) => {
+                c.compile_workspace(project_id, checkout, target_dir, cancel, status_tx)
+                    .await
+            }
+        }
+    }
+}
+
 /// Build worker that processes builds from the queue.
 pub struct BuildWorker {
     id: usize,
     queue: Arc<BuildQueue>,
     source_manager: Arc<SourceManager>,
-    compiler: Arc<SandboxedCompiler>,
+    compiler: Arc<Compiler>,
     artifact_builder: Arc<ArtifactBuilder>,
     artifact_store: Arc<ArtifactStore>,
     cache_manager: Option<Arc<CacheManager>>,
@@ -134,7 +175,16 @@ impl BuildWorker {
         artifact_store: Arc<ArtifactStore>,
         forge_auth: ForgeAuth,
     ) -> Result<Self, BuildError> {
-        Self::with_cache(id, queue, paths, limits, artifact_store, forge_auth, None)
+        Self::with_options(
+            id,
+            queue,
+            paths,
+            limits,
+            artifact_store,
+            forge_auth,
+            None,
+            None,
+        )
     }
 
     /// Create a new build worker with optional cache configuration.
@@ -147,21 +197,60 @@ impl BuildWorker {
         forge_auth: ForgeAuth,
         cache_config: Option<CacheConfig>,
     ) -> Result<Self, BuildError> {
+        Self::with_options(
+            id,
+            queue,
+            paths,
+            limits,
+            artifact_store,
+            forge_auth,
+            cache_config,
+            None,
+        )
+    }
+
+    /// Create a new build worker with full configuration options.
+    pub fn with_options(
+        id: usize,
+        queue: Arc<BuildQueue>,
+        paths: &PathsConfig,
+        limits: &LimitsConfig,
+        artifact_store: Arc<ArtifactStore>,
+        forge_auth: ForgeAuth,
+        cache_config: Option<CacheConfig>,
+        vm_config: Option<&VmConfig>,
+    ) -> Result<Self, BuildError> {
         let source_manager = Arc::new(SourceManager::new(
             &paths.checkouts,
             &paths.caches,
             forge_auth,
         ));
 
-        let sandbox_config = SandboxConfig {
-            limits: SandboxLimits {
+        let compiler = if vm_config.map_or(false, |v| v.enabled) {
+            let vm = vm_config.unwrap();
+            let vm_compiler_config = VmCompilerConfig {
+                kernel_path: vm.kernel_path.clone(),
+                builder_rootfs: vm.builder_rootfs.clone(),
+                cargo_cache_dir: paths.caches.join("cargo"),
+                vcpu_count: vm.vcpu_count,
+                mem_size_mib: vm.mem_size_mib,
+                target: vm.target.clone(),
                 timeout: limits.timeout(),
-                memory_limit_mb: limits.memory_limit_mb,
-                ..SandboxLimits::default()
-            },
-            ..SandboxConfig::default()
+            };
+            let work_dir = paths.artifacts.join("vm-work");
+            let fc_compiler = FirecrackerCompiler::new(vm_compiler_config, work_dir)?;
+            Arc::new(Compiler::Firecracker(fc_compiler))
+        } else {
+            let sandbox_config = SandboxConfig {
+                limits: SandboxLimits {
+                    timeout: limits.timeout(),
+                    memory_limit_mb: limits.memory_limit_mb,
+                    ..SandboxLimits::default()
+                },
+                ..SandboxConfig::default()
+            };
+            Arc::new(Compiler::Sandbox(SandboxedCompiler::new(sandbox_config)))
         };
-        let compiler = Arc::new(SandboxedCompiler::new(sandbox_config));
 
         let artifact_builder = Arc::new(ArtifactBuilder::new(&paths.artifacts));
 
@@ -463,7 +552,13 @@ impl BuildWorker {
 
         let compile_output = self
             .compiler
-            .compile_workspace(&request.project_id, &checkout, &target_dir, cancel.clone())
+            .compile_workspace(
+                &request.project_id,
+                &checkout,
+                &target_dir,
+                cancel.clone(),
+                None,
+            )
             .await?;
 
         info!(

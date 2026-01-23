@@ -6114,6 +6114,7 @@ name = "sidereal-build"
 version = "0.1.0"
 dependencies = [
  "async-compression",
+ "async-trait",
  "axum",
  "bytes",
  "cargo_toml",
@@ -6126,10 +6127,12 @@ dependencies = [
  "object_store",
  "rand 0.8.5",
  "reqwest 0.13.1",
+ "rkyv",
  "serde",
  "serde_json",
  "sha2",
  "sidereal-core",
+ "sidereal-firecracker",
  "tar",
  "tempfile",
  "thiserror 2.0.17",
@@ -6143,6 +6146,20 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "zstd",
+]
+
+[[package]]
+name = "sidereal-builder-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "nix 0.29.0",
+ "rkyv",
+ "sidereal-build",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-vsock",
 ]
 
 [[package]]

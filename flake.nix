@@ -164,6 +164,86 @@
             mainProgram = "sidereal-runtime";
           };
         };
+
+      # Build the sidereal-builder-runtime package (statically linked for builder VMs)
+      # This runs as /sbin/init in builder VMs and executes cargo builds
+      buildSiderealBuilderRuntime =
+        pkgs:
+        let
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = rustToolchain pkgs;
+            rustc = rustToolchain pkgs;
+          };
+        in
+        rustPlatform.buildRustPackage {
+          pname = "sidereal-builder-runtime";
+          version = "0.1.0";
+
+          src = pkgs.lib.cleanSource ./.;
+
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+          };
+
+          nativeBuildInputs = [
+            pkgs.cargo-zigbuild
+            pkgs.zig
+          ];
+
+          # Disable cargo-auditable (Zig linker doesn't support --undefined flag)
+          auditable = false;
+
+          # Use cargo-zigbuild for cross-compilation (Zig handles linking)
+          buildPhase = ''
+            runHook preBuild
+
+            # cargo-zigbuild needs a writable cache directory
+            export HOME=$(mktemp -d)
+
+            cargo zigbuild \
+              --release \
+              --target x86_64-unknown-linux-musl \
+              --offline \
+              --locked \
+              -p sidereal-builder-runtime
+
+            runHook postBuild
+          '';
+
+          # Skip tests - they can't run cross-compiled
+          doCheck = false;
+
+          # Override install phase to copy from musl target directory
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/bin
+            cp target/x86_64-unknown-linux-musl/release/sidereal-builder-runtime $out/bin/
+            runHook postInstall
+          '';
+
+          meta = {
+            description = "Sidereal builder runtime for compilation VMs";
+            homepage = "https://github.com/djvcom/sidereal";
+            license = pkgs.lib.licenses.mit;
+            mainProgram = "sidereal-builder-runtime";
+          };
+        };
+
+      # Build the builder rootfs image
+      buildBuilderRootfs =
+        pkgs:
+        import ./nix/builder-rootfs.nix {
+          inherit pkgs;
+          sidereal-builder-runtime = buildSiderealBuilderRuntime pkgs;
+        };
+
+      # Build the runtime rootfs image
+      buildRuntimeRootfs =
+        pkgs:
+        import ./nix/runtime-rootfs.nix {
+          inherit pkgs;
+          sidereal-runtime = buildSiderealRuntime pkgs;
+        };
     in
     {
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
@@ -180,6 +260,9 @@
         (final: _prev: {
           sidereal-server = buildSidereal final;
           sidereal-runtime = buildSiderealRuntime final;
+          sidereal-builder-runtime = buildSiderealBuilderRuntime final;
+          sidereal-builder-rootfs = buildBuilderRootfs final;
+          sidereal-runtime-rootfs = buildRuntimeRootfs final;
         })
       ];
 
@@ -191,6 +274,9 @@
         default = self.packages.${pkgs.system}.sidereal-server;
         sidereal-server = buildSidereal pkgs;
         sidereal-runtime = buildSiderealRuntime pkgs;
+        sidereal-builder-runtime = buildSiderealBuilderRuntime pkgs;
+        sidereal-builder-rootfs = buildBuilderRootfs pkgs;
+        sidereal-runtime-rootfs = buildRuntimeRootfs pkgs;
       });
 
       devShells = forAllSystems (pkgs: {

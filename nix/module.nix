@@ -53,6 +53,15 @@ let
       inherit (cfg.build) workers;
       paths = {
         runtime = "${cfg.runtimePackage}/bin/sidereal-runtime";
+        builder_rootfs = cfg.builderRootfs;
+        runtime_rootfs = cfg.runtimeRootfs;
+        kernel = cfg.kernelPath;
+      };
+      vm = {
+        enabled = cfg.build.vm.useFirecracker;
+        vcpu_count = cfg.build.vm.vcpuCount;
+        mem_size_mib = cfg.build.vm.memoryMb;
+        target = cfg.build.vm.target;
       };
     }
     // lib.optionalAttrs (cfg.build.forgeAuth.type != "none") {
@@ -94,6 +103,34 @@ in
       default = pkgs.sidereal-runtime or (throw "sidereal-runtime package not found");
       defaultText = lib.literalExpression "pkgs.sidereal-runtime";
       description = "The sidereal-runtime package (runs inside Firecracker VMs).";
+    };
+
+    builderRuntimePackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.sidereal-builder-runtime or (throw "sidereal-builder-runtime package not found");
+      defaultText = lib.literalExpression "pkgs.sidereal-builder-runtime";
+      description = "The sidereal-builder-runtime package (runs inside builder VMs).";
+    };
+
+    builderRootfs = lib.mkOption {
+      type = lib.types.path;
+      default = pkgs.sidereal-builder-rootfs or (throw "sidereal-builder-rootfs package not found");
+      defaultText = lib.literalExpression "pkgs.sidereal-builder-rootfs";
+      description = "Path to the builder VM rootfs image.";
+    };
+
+    runtimeRootfs = lib.mkOption {
+      type = lib.types.path;
+      default = pkgs.sidereal-runtime-rootfs or (throw "sidereal-runtime-rootfs package not found");
+      defaultText = lib.literalExpression "pkgs.sidereal-runtime-rootfs";
+      description = "Path to the runtime rootfs template image.";
+    };
+
+    kernelPath = lib.mkOption {
+      type = lib.types.path;
+      default = "${pkgs.linuxPackages_latest.kernel}/bzImage";
+      defaultText = lib.literalExpression ''"''${pkgs.linuxPackages_latest.kernel}/bzImage"'';
+      description = "Path to the Linux kernel for Firecracker VMs.";
     };
 
     mode = lib.mkOption {
@@ -199,6 +236,36 @@ in
           type = lib.types.path;
           default = "${cfg.dataDir}/ssh/id_ed25519";
           description = "Path to the SSH private key for git operations.";
+        };
+      };
+
+      # VM configuration for Firecracker-based builds
+      vm = {
+        vcpuCount = lib.mkOption {
+          type = lib.types.int;
+          default = 2;
+          description = "Number of vCPUs for builder VMs.";
+        };
+
+        memoryMb = lib.mkOption {
+          type = lib.types.int;
+          default = 4096;
+          description = "Memory in MB for builder VMs.";
+        };
+
+        useFirecracker = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Use Firecracker VMs for builds instead of bubblewrap sandbox.
+            Provides stronger isolation but requires KVM support.
+          '';
+        };
+
+        target = lib.mkOption {
+          type = lib.types.str;
+          default = "x86_64-unknown-linux-musl";
+          description = "Rust target triple for compilation.";
         };
       };
     };
@@ -386,7 +453,8 @@ in
         pkgs.util-linux
         "/run/wrappers"
       ]
-      ++ (if builtins.isList cfg.rustToolchain then cfg.rustToolchain else [ cfg.rustToolchain ]);
+      ++ (if builtins.isList cfg.rustToolchain then cfg.rustToolchain else [ cfg.rustToolchain ])
+      ++ lib.optional cfg.build.vm.useFirecracker pkgs.firecracker;
 
       environment = {
         RUST_LOG = cfg.logLevel;

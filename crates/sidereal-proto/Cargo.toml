@@ -9,7 +9,7 @@ description = "Wire protocol types for Sidereal inter-component communication"
 
 [dependencies]
 # Zero-copy serialisation
-rkyv = { version = "0.8", features = ["bytecheck"] }
+rkyv = { workspace = true }
 
 # Correlation IDs
 ulid = "1.1"
