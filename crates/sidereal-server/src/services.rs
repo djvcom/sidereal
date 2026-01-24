@@ -240,7 +240,8 @@ impl Services {
 
     fn create_control_config(&self) -> sidereal_control::ControlConfig {
         use sidereal_control::config::{
-            DatabaseConfig, ProvisionerConfig, ProvisionerType, SchedulerConfig, ServerConfig,
+            ArtifactConfig, DatabaseConfig, ProvisionerConfig, ProvisionerType, SchedulerConfig,
+            ServerConfig,
         };
         use sidereal_core::Transport;
 
@@ -259,6 +260,19 @@ impl Services {
             crate::config::ProvisionerType::Firecracker => ProvisionerType::Firecracker,
         };
 
+        // Map storage backend to artifact store URL
+        let store_url = match self.config.storage.backend {
+            crate::config::StorageBackend::Filesystem => {
+                format!(
+                    "file://{}",
+                    self.config.server.data_dir.join("artifacts").display()
+                )
+            }
+            crate::config::StorageBackend::S3 => {
+                format!("s3://{}", self.config.storage.bucket)
+            }
+        };
+
         sidereal_control::ControlConfig {
             server: ServerConfig {
                 listen: Transport::unix(&socket_path),
@@ -275,7 +289,16 @@ impl Services {
             },
             provisioner: ProvisionerConfig {
                 provisioner_type,
-                ..Default::default()
+                kernel_path: self.config.build.vm.kernel_path.clone(),
+                work_dir: self.config.server.data_dir.join("vms"),
+            },
+            artifacts: ArtifactConfig {
+                store_url,
+                cache_dir: self.config.server.data_dir.join("artifact-cache"),
+                endpoint: self.config.storage.endpoint.clone(),
+                region: self.config.storage.region.clone(),
+                access_key_id: self.config.storage.access_key_id.clone(),
+                secret_access_key: self.config.storage.secret_access_key.clone(),
             },
             ..Default::default()
         }

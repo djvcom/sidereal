@@ -234,6 +234,18 @@ pub struct ArtifactConfig {
     /// Local cache directory for downloaded artifacts.
     #[serde(default = "default_cache_dir")]
     pub cache_dir: PathBuf,
+
+    /// S3 endpoint URL (for S3-compatible stores like Garage).
+    pub endpoint: Option<String>,
+
+    /// S3 region (use "garage" for Garage).
+    pub region: Option<String>,
+
+    /// S3 access key ID.
+    pub access_key_id: Option<String>,
+
+    /// S3 secret access key.
+    pub secret_access_key: Option<String>,
 }
 
 fn default_store_url() -> String {
@@ -249,6 +261,10 @@ impl Default for ArtifactConfig {
         Self {
             store_url: default_store_url(),
             cache_dir: default_cache_dir(),
+            endpoint: None,
+            region: None,
+            access_key_id: None,
+            secret_access_key: None,
         }
     }
 }

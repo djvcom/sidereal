@@ -234,6 +234,10 @@ pub struct BuildSettings {
     #[serde(default)]
     pub paths: sidereal_build::service::PathsConfig,
 
+    /// VM configuration.
+    #[serde(default)]
+    pub vm: sidereal_build::service::VmConfig,
+
     /// Git forge authentication configuration.
     #[serde(default)]
     pub forge_auth: sidereal_build::ForgeAuthConfig,
@@ -245,6 +249,7 @@ impl Default for BuildSettings {
             enabled: true,
             workers: default_worker_count(),
             paths: sidereal_build::service::PathsConfig::default(),
+            vm: sidereal_build::service::VmConfig::default(),
             forge_auth: sidereal_build::ForgeAuthConfig::default(),
         }
     }

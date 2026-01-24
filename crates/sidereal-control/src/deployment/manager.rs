@@ -236,6 +236,9 @@ impl DeploymentManager {
             tokio::fs::copy(source_path, &cache_path)
                 .await
                 .map_err(|e| ControlError::provisioning(format!("failed to copy artifact: {e}")))?;
+        } else if data.artifact_url.starts_with("s3://") {
+            self.download_from_s3(&data.artifact_url, &cache_path)
+                .await?;
         } else {
             return Err(ControlError::provisioning(format!(
                 "unsupported artifact URL scheme: {}",
@@ -244,6 +247,79 @@ impl DeploymentManager {
         }
 
         Ok(cache_path)
+    }
+
+    async fn download_from_s3(&self, url: &str, dest: &Path) -> ControlResult<()> {
+        use object_store::aws::AmazonS3Builder;
+        use object_store::path::Path as ObjectPath;
+        use object_store::ObjectStore;
+
+        // Parse s3://bucket/path
+        let url = url.trim_start_matches("s3://");
+        let (bucket, path) = url
+            .split_once('/')
+            .ok_or_else(|| ControlError::provisioning("invalid S3 URL format"))?;
+
+        let mut builder = AmazonS3Builder::new().with_bucket_name(bucket);
+
+        if let Some(endpoint) = &self.artifact_config.endpoint {
+            builder = builder.with_endpoint(endpoint);
+            if endpoint.starts_with("http://") {
+                builder = builder.with_allow_http(true);
+            }
+        }
+
+        if let Some(region) = &self.artifact_config.region {
+            builder = builder.with_region(region);
+        }
+
+        // Use explicit credentials or fall back to environment variables
+        let access_key_id = self
+            .artifact_config
+            .access_key_id
+            .clone()
+            .or_else(|| std::env::var("AWS_ACCESS_KEY_ID").ok());
+        let secret_access_key = self
+            .artifact_config
+            .secret_access_key
+            .clone()
+            .or_else(|| std::env::var("AWS_SECRET_ACCESS_KEY").ok());
+
+        if let Some(key_id) = access_key_id {
+            builder = builder.with_access_key_id(&key_id);
+        }
+        if let Some(secret) = secret_access_key {
+            builder = builder.with_secret_access_key(&secret);
+        }
+
+        let store = builder
+            .build()
+            .map_err(|e| ControlError::provisioning(format!("failed to create S3 client: {e}")))?;
+
+        let object_path = ObjectPath::from(path);
+        debug!(bucket = %bucket, path = %path, "fetching artifact from S3");
+
+        let result = store
+            .get(&object_path)
+            .await
+            .map_err(|e| ControlError::provisioning(format!("failed to fetch from S3: {e}")))?;
+
+        let bytes = result
+            .bytes()
+            .await
+            .map_err(|e| ControlError::provisioning(format!("failed to read S3 object: {e}")))?;
+
+        tokio::fs::write(dest, &bytes)
+            .await
+            .map_err(|e| ControlError::provisioning(format!("failed to write artifact: {e}")))?;
+
+        info!(
+            path = %dest.display(),
+            size = bytes.len(),
+            "artifact downloaded from S3"
+        );
+
+        Ok(())
     }
 
     async fn provision_worker(

@@ -53,15 +53,15 @@ let
       inherit (cfg.build) workers;
       paths = {
         runtime = "${cfg.runtimePackage}/bin/sidereal-runtime";
-        builder_rootfs = cfg.builderRootfs;
-        runtime_rootfs = cfg.runtimeRootfs;
-        kernel = cfg.kernelPath;
       };
       vm = {
         enabled = cfg.build.vm.useFirecracker;
         vcpu_count = cfg.build.vm.vcpuCount;
         mem_size_mib = cfg.build.vm.memoryMb;
         target = cfg.build.vm.target;
+        kernel_path = cfg.kernelPath;
+        builder_rootfs = cfg.builderRootfs;
+        runtime_rootfs = cfg.runtimeRootfs;
       };
     }
     // lib.optionalAttrs (cfg.build.forgeAuth.type != "none") {
