@@ -12,7 +12,6 @@ use sidereal_proto::ports::FUNCTION as VSOCK_PORT;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tracing::{debug, info, warn};
 
@@ -34,6 +33,7 @@ pub struct VmInstance {
     process: Child,
     api_socket: PathBuf,
     vsock_uds_path: PathBuf,
+    console_log_path: PathBuf,
     config: VmConfig,
 }
 
@@ -116,15 +116,24 @@ impl VmManager {
         let vm_id = uuid::Uuid::new_v4().to_string();
         let api_socket = self.work_dir.join(format!("{vm_id}.sock"));
         let vsock_uds_path = self.work_dir.join(format!("{vm_id}_vsock.sock"));
+        let console_log_path = self.work_dir.join(format!("{vm_id}_console.log"));
 
-        info!(vm_id = %vm_id, "Starting Firecracker VM");
+        info!(vm_id = %vm_id, console_log = %console_log_path.display(), "Starting Firecracker VM");
+
+        // Create console log file for capturing serial output
+        let console_log_file = std::fs::File::create(&console_log_path).map_err(|e| {
+            FirecrackerError::VmStartFailed(format!("Failed to create console log: {e}"))
+        })?;
+        let console_log_file_stderr = console_log_file.try_clone().map_err(|e| {
+            FirecrackerError::VmStartFailed(format!("Failed to clone console log handle: {e}"))
+        })?;
 
         let mut process = Command::new(&self.firecracker_bin)
             .arg("--api-sock")
             .arg(&api_socket)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::from(console_log_file))
+            .stderr(Stdio::from(console_log_file_stderr))
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| FirecrackerError::VmStartFailed(e.to_string()))?;
@@ -132,14 +141,10 @@ impl VmManager {
         tokio::time::sleep(PROCESS_START_DELAY).await;
 
         if let Ok(Some(status)) = process.try_wait() {
-            let stderr = if let Some(stderr) = process.stderr.take() {
-                let mut reader = BufReader::new(stderr);
-                let mut output = String::new();
-                let _ = reader.read_line(&mut output).await;
-                output
-            } else {
-                String::new()
-            };
+            // Read the first few lines from the console log for error context
+            let stderr = std::fs::read_to_string(&console_log_path)
+                .map(|s| s.lines().take(10).collect::<Vec<_>>().join("\n"))
+                .unwrap_or_default();
             return Err(FirecrackerError::VmStartFailed(format!(
                 "Process exited immediately with status {status}: {stderr}"
             )));
@@ -163,6 +168,7 @@ impl VmManager {
             process,
             api_socket,
             vsock_uds_path,
+            console_log_path,
             config,
         };
 
@@ -290,6 +296,11 @@ impl VmInstance {
         &self.vsock_uds_path
     }
 
+    /// Get the path to the VM console log file.
+    pub fn console_log_path(&self) -> &Path {
+        &self.console_log_path
+    }
+
     /// Create a vsock client for this VM.
     pub fn vsock_client(&self) -> VsockClient {
         VsockClient::new(self.vsock_uds_path.clone(), VSOCK_PORT)
@@ -299,6 +310,7 @@ impl VmInstance {
     pub async fn wait_ready(&self, timeout: Duration) -> Result<()> {
         let client = self.vsock_client();
         let deadline = tokio::time::Instant::now() + timeout;
+        let mut last_error = String::new();
 
         while tokio::time::Instant::now() < deadline {
             match client.ping().await {
@@ -307,13 +319,34 @@ impl VmInstance {
                     return Ok(());
                 }
                 Err(e) => {
+                    last_error = e.to_string();
                     debug!("VM not ready yet: {}", e);
                     tokio::time::sleep(VM_READY_POLL_INTERVAL).await;
                 }
             }
         }
 
-        Err(FirecrackerError::VmNotReady(timeout.as_secs()))
+        // Include console log content in the error for debugging
+        let console_log = std::fs::read_to_string(&self.console_log_path)
+            .map(|s| {
+                let lines: Vec<_> = s.lines().collect();
+                let start = lines.len().saturating_sub(50);
+                lines[start..].join("\n")
+            })
+            .unwrap_or_else(|e| format!("(failed to read console log: {e})"));
+
+        warn!(
+            console_log_path = %self.console_log_path.display(),
+            "VM not ready after {}s, last error: {}",
+            timeout.as_secs(),
+            last_error
+        );
+
+        Err(FirecrackerError::VmNotReady {
+            timeout_secs: timeout.as_secs(),
+            last_error,
+            console_log,
+        })
     }
 
     /// Request graceful shutdown.

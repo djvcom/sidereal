@@ -23,8 +23,14 @@ pub enum FirecrackerError {
     #[error("Failed to configure VM: {0}")]
     VmConfigFailed(String),
 
-    #[error("VM not ready after {0} seconds")]
-    VmNotReady(u64),
+    #[error(
+        "VM not ready after {timeout_secs} seconds: {last_error}\n\nConsole output:\n{console_log}"
+    )]
+    VmNotReady {
+        timeout_secs: u64,
+        last_error: String,
+        console_log: String,
+    },
 
     #[error("vsock connection failed: {0}")]
     VsockConnectionFailed(String),
