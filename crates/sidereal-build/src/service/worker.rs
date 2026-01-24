@@ -12,13 +12,13 @@ use tracing::{debug, error, info, warn};
 use crate::artifact::{Artifact, ArtifactBuilder, ArtifactStore, BuildInput};
 use crate::cache::{CacheConfig, CacheManager, CacheResult};
 use crate::discovery;
-use crate::error::{BuildError, BuildResult, BuildStage, CancelReason};
+use crate::error::{BuildError, BuildStage, CancelReason};
 use crate::forge_auth::ForgeAuth;
 use crate::project::{discover_projects, DeployableProject};
 use crate::queue::{BuildHandle, BuildQueue};
-use crate::sandbox::{fetch_dependencies, FetchConfig, WorkspaceCompileOutput};
-use crate::source::{SourceCheckout, SourceManager};
-use crate::types::{ArtifactId, BuildRequest, BuildStatus, FunctionMetadata, ProjectId};
+use crate::sandbox::{fetch_dependencies, FetchConfig};
+use crate::source::SourceManager;
+use crate::types::{ArtifactId, BuildRequest, BuildStatus, FunctionMetadata};
 use crate::vm::{FirecrackerCompiler, VmCompilerConfig};
 
 use super::{LimitsConfig, PathsConfig, VmConfig};
@@ -473,6 +473,23 @@ impl BuildWorker {
             });
         }
 
+        // Create channel for build status updates
+        let (status_tx, mut status_rx) = tokio::sync::mpsc::channel::<BuildStatus>(100);
+        let queue_clone = Arc::clone(&self.queue);
+        let build_id_clone = request.id.clone();
+
+        // Spawn task to receive status updates and store them as logs
+        let log_task = tokio::spawn(async move {
+            while let Some(status) = status_rx.recv().await {
+                if let BuildStatus::Compiling {
+                    progress: Some(line),
+                } = status
+                {
+                    queue_clone.append_log(&build_id_clone, line);
+                }
+            }
+        });
+
         let compile_output = self
             .compiler
             .compile_workspace(
@@ -480,9 +497,15 @@ impl BuildWorker {
                 &checkout,
                 &target_dir,
                 cancel.clone(),
-                None,
+                Some(&status_tx),
             )
-            .await?;
+            .await;
+
+        // Drop sender to signal we're done, wait for log task to finish
+        drop(status_tx);
+        let _ = log_task.await;
+
+        let compile_output = compile_output?;
 
         info!(
             build_id = %request.id,

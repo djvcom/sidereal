@@ -5,7 +5,7 @@
 //! that already has a build in progress, the old build is cancelled.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 
 use dashmap::DashMap;
 use tokio::sync::{Notify, RwLock};
@@ -55,6 +55,7 @@ pub struct BuildQueue {
     in_progress: DashMap<BuildId, Arc<BuildHandle>>,
     branch_builds: DashMap<BranchKey, BuildId>,
     statuses: DashMap<BuildId, BuildStatus>,
+    logs: DashMap<BuildId, StdRwLock<Vec<String>>>,
     max_queue_size: usize,
     notify: Notify,
 }
@@ -68,6 +69,7 @@ impl BuildQueue {
             in_progress: DashMap::new(),
             branch_builds: DashMap::new(),
             statuses: DashMap::new(),
+            logs: DashMap::new(),
             max_queue_size,
             notify: Notify::new(),
         }
@@ -288,6 +290,29 @@ impl BuildQueue {
 
         self.in_progress.clear();
         self.branch_builds.clear();
+    }
+
+    /// Append a log line for a build.
+    pub fn append_log(&self, id: &BuildId, line: String) {
+        self.logs
+            .entry(id.clone())
+            .or_insert_with(|| StdRwLock::new(Vec::new()))
+            .write()
+            .expect("log lock poisoned")
+            .push(line);
+    }
+
+    /// Get logs for a build, optionally starting from an offset.
+    ///
+    /// Returns the logs and the next offset to use for subsequent calls.
+    #[must_use]
+    pub fn logs(&self, id: &BuildId, offset: usize) -> Option<(Vec<String>, usize)> {
+        self.logs.get(id).map(|logs| {
+            let logs = logs.read().expect("log lock poisoned");
+            let new_logs: Vec<String> = logs.iter().skip(offset).cloned().collect();
+            let next_offset = logs.len();
+            (new_logs, next_offset)
+        })
     }
 }
 

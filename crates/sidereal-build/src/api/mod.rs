@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -34,6 +34,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/ready", get(readiness_check))
         .route("/builds", post(submit_build))
         .route("/builds/{id}", get(get_build))
+        .route("/builds/{id}/logs", get(get_build_logs))
         .route("/builds/{id}/cancel", post(cancel_build))
         .route("/queue/stats", get(queue_stats))
         .route("/keys/ssh", get(get_ssh_public_key))
@@ -125,6 +126,46 @@ async fn get_build(
                 error: format!("build not found: {id}"),
             }),
         )),
+    }
+}
+
+/// Query parameters for logs endpoint.
+#[derive(Debug, Deserialize)]
+struct LogsQuery {
+    /// Offset to start reading logs from (default 0).
+    #[serde(default)]
+    offset: usize,
+}
+
+/// Get logs for a build.
+async fn get_build_logs(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<LogsQuery>,
+) -> Result<Json<BuildLogsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let build_id = BuildId::new(&id);
+
+    // Check build exists
+    if state.queue.status(&build_id).is_none() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("build not found: {id}"),
+            }),
+        ));
+    }
+
+    match state.queue.logs(&build_id, query.offset) {
+        Some((lines, next_offset)) => Ok(Json(BuildLogsResponse {
+            id,
+            lines,
+            next_offset,
+        })),
+        None => Ok(Json(BuildLogsResponse {
+            id,
+            lines: Vec::new(),
+            next_offset: 0,
+        })),
     }
 }
 
@@ -320,6 +361,17 @@ pub struct QueueStatsResponse {
     pub pending: usize,
     /// Number of in-progress builds.
     pub in_progress: usize,
+}
+
+/// Response for build logs.
+#[derive(Serialize)]
+pub struct BuildLogsResponse {
+    /// Build ID.
+    pub id: String,
+    /// Log lines (from offset).
+    pub lines: Vec<String>,
+    /// Next offset to use for subsequent requests.
+    pub next_offset: usize,
 }
 
 /// Response for SSH public key.

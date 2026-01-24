@@ -73,6 +73,14 @@ struct ErrorResponse {
     error: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct BuildLogsResponse {
+    #[serde(rename = "id")]
+    _id: String,
+    lines: Vec<String>,
+    next_offset: usize,
+}
+
 struct GitInfo {
     remote_url: String,
     branch: String,
@@ -243,8 +251,10 @@ async fn poll_build_status(
     build_id: &str,
 ) -> Result<String, PushError> {
     let mut last_status = String::new();
+    let mut log_offset: usize = 0;
 
     loop {
+        // Fetch build status
         let response = client
             .get(format!("{base_url}/api/builds/{build_id}"))
             .send()
@@ -270,6 +280,24 @@ async fn poll_build_status(
             last_status = status.status.clone();
         }
 
+        // Fetch and display new log lines
+        if let Ok(logs_response) = client
+            .get(format!(
+                "{base_url}/api/builds/{build_id}/logs?offset={log_offset}"
+            ))
+            .send()
+            .await
+        {
+            if logs_response.status().is_success() {
+                if let Ok(logs) = logs_response.json::<BuildLogsResponse>().await {
+                    for line in &logs.lines {
+                        println!("    {line}");
+                    }
+                    log_offset = logs.next_offset;
+                }
+            }
+        }
+
         if status.is_terminal {
             if let Some(artifact_id) = status.artifact_id {
                 return Ok(artifact_id);
@@ -283,7 +311,7 @@ async fn poll_build_status(
             )));
         }
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
