@@ -27,6 +27,10 @@ pub struct StorageConfig {
     pub region: Option<String>,
     /// S3 endpoint (for S3-compatible stores).
     pub endpoint: Option<String>,
+    /// Access key ID (for S3-compatible stores).
+    pub access_key_id: Option<String>,
+    /// Secret access key (for S3-compatible stores).
+    pub secret_access_key: Option<String>,
 }
 
 impl Default for StorageConfig {
@@ -36,6 +40,8 @@ impl Default for StorageConfig {
             path: "/var/lib/sidereal/artifacts".to_owned(),
             region: None,
             endpoint: None,
+            access_key_id: None,
+            secret_access_key: None,
         }
     }
 }
@@ -233,6 +239,16 @@ fn create_object_store(config: &StorageConfig) -> BuildResult<Arc<dyn ObjectStor
             }
             if let Some(endpoint) = &config.endpoint {
                 builder = builder.with_endpoint(endpoint);
+                // S3-compatible stores like Garage typically use HTTP locally
+                if endpoint.starts_with("http://") {
+                    builder = builder.with_allow_http(true);
+                }
+            }
+            if let Some(access_key_id) = &config.access_key_id {
+                builder = builder.with_access_key_id(access_key_id);
+            }
+            if let Some(secret_access_key) = &config.secret_access_key {
+                builder = builder.with_secret_access_key(secret_access_key);
             }
 
             let store = builder.build().map_err(|e| {
@@ -323,6 +339,8 @@ mod tests {
             path: "artifacts".to_owned(),
             region: None,
             endpoint: None,
+            access_key_id: None,
+            secret_access_key: None,
         };
 
         let store = ArtifactStore::new(&config).unwrap();

@@ -84,6 +84,12 @@ let
       inherit (cfg.storage) backend;
       inherit (cfg.storage) endpoint;
       inherit (cfg.storage) bucket;
+    }
+    // lib.optionalAttrs (cfg.storage.accessKeyId != null) {
+      access_key_id = cfg.storage.accessKeyId;
+    }
+    // lib.optionalAttrs (cfg.storage.secretAccessKey != null) {
+      secret_access_key = cfg.storage.secretAccessKey;
     };
   };
 in
@@ -335,6 +341,18 @@ in
         type = lib.types.str;
         default = "sidereal";
         description = "Storage bucket name.";
+      };
+
+      accessKeyId = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "S3 access key ID (for s3 backend).";
+      };
+
+      secretAccessKey = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "S3 secret access key (for s3 backend).";
       };
 
       credentialsFile = lib.mkOption {

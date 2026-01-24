@@ -358,6 +358,8 @@ mod tests {
                 path: "test".to_owned(),
                 region: None,
                 endpoint: None,
+                access_key_id: None,
+                secret_access_key: None,
             },
             ..Default::default()
         };

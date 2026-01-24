@@ -313,6 +313,8 @@ impl Services {
                 path: self.config.storage.bucket.clone(),
                 region: None,
                 endpoint: self.config.storage.endpoint.clone(),
+                access_key_id: self.config.storage.access_key_id.clone(),
+                secret_access_key: self.config.storage.secret_access_key.clone(),
             },
             forge_auth: self.config.build.forge_auth.clone(),
             ..Default::default()

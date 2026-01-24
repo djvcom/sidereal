@@ -107,8 +107,7 @@ async fn test_builder_vm_boot() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Create VM manager
-    let vm_manager =
-        VmManager::new(temp_dir.path()).expect("Failed to create VM manager");
+    let vm_manager = VmManager::new(temp_dir.path()).expect("Failed to create VM manager");
 
     // Configure VM
     let config = VmConfig::new(kernel_path, rootfs_path)
