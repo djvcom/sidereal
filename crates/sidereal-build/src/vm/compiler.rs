@@ -4,6 +4,7 @@
 //! than bubblewrap sandboxes.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 use rkyv::api::high::HighSerializer;
@@ -11,7 +12,7 @@ use rkyv::rancor::Error as RkyvError;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Serialize};
-use sidereal_firecracker::config::VmConfig;
+use sidereal_firecracker::config::{DriveConfig, VmConfig};
 use sidereal_firecracker::VmManager;
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
@@ -91,28 +92,46 @@ impl FirecrackerCompiler {
     pub async fn compile_workspace(
         &self,
         project_id: &ProjectId,
-        _checkout: &SourceCheckout,
+        checkout: &SourceCheckout,
         target_dir: &Path,
         cancel: CancellationToken,
         status_tx: Option<&tokio::sync::mpsc::Sender<BuildStatus>>,
     ) -> BuildResult<WorkspaceCompileOutput> {
         info!(project = %project_id, "Starting VM-based workspace compilation");
 
-        // Create overlay copy of builder rootfs (copy-on-write would be better)
-        let rootfs_copy = target_dir
-            .parent()
-            .unwrap_or(target_dir)
-            .join("builder-rootfs.ext4");
-        std::fs::copy(&self.config.builder_rootfs, &rootfs_copy)?;
+        let build_dir = target_dir.parent().unwrap_or(target_dir);
+        std::fs::create_dir_all(build_dir)?;
 
-        // Configure VM
+        // Create source drive from checkout directory
+        let source_img = build_dir.join("source.ext4");
+        create_ext4_from_dir(&checkout.path, &source_img, "source", 512)?;
+
+        // Create empty target drive for build output (2GB)
+        let target_img = build_dir.join("target.ext4");
+        create_empty_ext4(&target_img, 2048, "target")?;
+
+        // Configure VM with source and target as additional drives
         let vm_config = VmConfig {
             kernel_path: self.config.kernel_path.clone(),
-            rootfs_path: rootfs_copy.clone(),
+            rootfs_path: self.config.builder_rootfs.clone(),
             vcpu_count: self.config.vcpu_count,
             mem_size_mib: self.config.mem_size_mib,
             vsock_cid: 3,
             boot_args: "console=ttyS0 reboot=k panic=1 pci=off".to_owned(),
+            additional_drives: vec![
+                DriveConfig {
+                    drive_id: "source".to_owned(),
+                    path: source_img.clone(),
+                    is_root_device: false,
+                    is_read_only: true,
+                },
+                DriveConfig {
+                    drive_id: "target".to_owned(),
+                    path: target_img.clone(),
+                    is_root_device: false,
+                    is_read_only: false,
+                },
+            ],
         };
 
         // Start VM
@@ -164,8 +183,9 @@ impl FirecrackerCompiler {
         cancel.cancel();
         let _ = proxy_handle.await;
 
-        // Clean up rootfs copy
-        let _ = std::fs::remove_file(&rootfs_copy);
+        // Clean up drive images
+        let _ = std::fs::remove_file(&source_img);
+        let _ = std::fs::remove_file(&target_img);
 
         // Convert protocol result to compile output
         if result.success {
@@ -316,4 +336,70 @@ async fn receive_build_output(
             }
         }
     }
+}
+
+/// Create an ext4 filesystem image from a directory.
+fn create_ext4_from_dir(
+    source: &Path,
+    output: &Path,
+    label: &str,
+    size_mb: u32,
+) -> BuildResult<()> {
+    // Create a sparse file of the target size
+    let size = format!("{}M", size_mb);
+    let status = Command::new("truncate")
+        .args(["-s", &size])
+        .arg(output)
+        .status()?;
+
+    if !status.success() {
+        return Err(BuildError::SandboxSetup(
+            "truncate failed to create sparse file".to_owned(),
+        ));
+    }
+
+    // Create ext4 filesystem and populate with source directory contents
+    let status = Command::new("mkfs.ext4")
+        .args(["-d", &source.to_string_lossy()])
+        .args(["-L", label])
+        .arg(output)
+        .status()?;
+
+    if !status.success() {
+        return Err(BuildError::SandboxSetup(
+            "mkfs.ext4 failed to create filesystem".to_owned(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Create an empty ext4 filesystem image.
+fn create_empty_ext4(output: &Path, size_mb: u32, label: &str) -> BuildResult<()> {
+    // Create a sparse file
+    let size = format!("{}M", size_mb);
+    let status = Command::new("truncate")
+        .args(["-s", &size])
+        .arg(output)
+        .status()?;
+
+    if !status.success() {
+        return Err(BuildError::SandboxSetup(
+            "truncate failed to create sparse file".to_owned(),
+        ));
+    }
+
+    // Format as ext4
+    let status = Command::new("mkfs.ext4")
+        .args(["-L", label])
+        .arg(output)
+        .status()?;
+
+    if !status.success() {
+        return Err(BuildError::SandboxSetup(
+            "mkfs.ext4 failed to format filesystem".to_owned(),
+        ));
+    }
+
+    Ok(())
 }

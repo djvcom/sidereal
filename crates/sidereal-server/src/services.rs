@@ -485,13 +485,15 @@ async fn run_build(
     // Spawn build workers
     let mut worker_handles = Vec::new();
     for id in 0..config.worker.count {
-        let worker = BuildWorker::new(
+        let worker = BuildWorker::with_options(
             id,
             Arc::clone(&queue),
             &config.paths,
             &config.limits,
             Arc::clone(&artifact_store),
             forge_auth.clone(),
+            None, // cache config
+            Some(&config.vm),
         )?;
         let worker_cancel = cancel.clone();
         worker_handles.push(tokio::spawn(async move {

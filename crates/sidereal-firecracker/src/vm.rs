@@ -251,6 +251,21 @@ impl VmInstance {
         )
         .await?;
 
+        for drive_config in &self.config.additional_drives {
+            let drive = api::Drive {
+                drive_id: drive_config.drive_id.clone(),
+                path_on_host: drive_config.path.display().to_string(),
+                is_root_device: drive_config.is_root_device,
+                is_read_only: drive_config.is_read_only,
+            };
+            self.api_request(
+                "PUT",
+                &format!("/drives/{}", drive_config.drive_id),
+                Some(&serde_json::to_string(&drive)?),
+            )
+            .await?;
+        }
+
         let machine = api::MachineConfig {
             vcpu_count: self.config.vcpu_count,
             mem_size_mib: self.config.mem_size_mib,

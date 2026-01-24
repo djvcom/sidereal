@@ -3,6 +3,19 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Configuration for an additional virtio-blk drive.
+#[derive(Debug, Clone)]
+pub struct DriveConfig {
+    /// Unique identifier for this drive.
+    pub drive_id: String,
+    /// Path to the drive image on the host.
+    pub path: PathBuf,
+    /// Whether this is the root device.
+    pub is_root_device: bool,
+    /// Whether the drive is read-only.
+    pub is_read_only: bool,
+}
+
 /// Configuration for a Firecracker microVM.
 #[derive(Debug, Clone)]
 #[must_use]
@@ -24,6 +37,9 @@ pub struct VmConfig {
 
     /// Boot arguments for the kernel.
     pub boot_args: String,
+
+    /// Additional virtio-blk drives to attach.
+    pub additional_drives: Vec<DriveConfig>,
 }
 
 impl Default for VmConfig {
@@ -35,17 +51,25 @@ impl Default for VmConfig {
             mem_size_mib: 128,
             vsock_cid: 3, // Guest CID starts at 3 (0=hypervisor, 1=local, 2=host)
             boot_args: "console=ttyS0 reboot=k panic=1 pci=off".to_owned(),
+            additional_drives: Vec::new(),
         }
     }
 }
 
 impl VmConfig {
+    /// Create a new VM configuration with the given kernel and rootfs paths.
     pub fn new(kernel_path: PathBuf, rootfs_path: PathBuf) -> Self {
         Self {
             kernel_path,
             rootfs_path,
             ..Default::default()
         }
+    }
+
+    /// Add an additional drive to the VM configuration.
+    pub fn with_drive(mut self, drive: DriveConfig) -> Self {
+        self.additional_drives.push(drive);
+        self
     }
 
     pub const fn with_vcpus(mut self, count: u8) -> Self {

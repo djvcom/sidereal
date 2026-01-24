@@ -38,6 +38,11 @@ async fn main() {
         error!(error = %e, "Failed to create mount points");
     }
 
+    // Mount virtio-blk drives (source and target)
+    if let Err(e) = filesystem::mount_build_drives() {
+        error!(error = %e, "Failed to mount build drives");
+    }
+
     // Set up signal handlers
     signals::setup_signal_handlers();
 

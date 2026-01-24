@@ -216,7 +216,7 @@ async fn submit_build(
         commit_sha: git_info.commit_sha.clone(),
         path: git_info.subdir.clone(),
         environment: Some(environment.to_owned()),
-        callback_url: None,
+        callback_url: Some(format!("{base_url}/api/callbacks/build-completed")),
     };
 
     let response = client
