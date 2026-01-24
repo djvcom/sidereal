@@ -117,7 +117,7 @@ impl FirecrackerCompiler {
             vcpu_count: self.config.vcpu_count,
             mem_size_mib: self.config.mem_size_mib,
             vsock_cid: 3,
-            boot_args: "console=ttyS0 reboot=k panic=1 pci=off".to_owned(),
+            boot_args: "console=ttyS0 reboot=k panic=1 pci=off rw".to_owned(),
             additional_drives: vec![
                 DriveConfig {
                     drive_id: "source".to_owned(),
@@ -161,18 +161,41 @@ impl FirecrackerCompiler {
         // Wait for VM to be ready
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Connect to the builder runtime
-        let stream = connect_to_builder(&vsock_path, BUILD_PORT).await?;
+        // Helper to read console log for error context
+        let console_log_path = vm.console_log_path().to_path_buf();
+        let read_console_tail = || -> String {
+            std::fs::read_to_string(&console_log_path)
+                .map(|s| {
+                    let lines: Vec<&str> = s.lines().collect();
+                    let start = lines.len().saturating_sub(50);
+                    lines[start..].join("\n")
+                })
+                .unwrap_or_else(|_| "Unable to read console log".to_owned())
+        };
 
-        // Send build request
-        let request = BuildRequest::new(uuid::Uuid::new_v4().to_string(), &self.config.target)
-            .with_release(true)
-            .with_locked(true);
+        // Perform build communication with timeout, capturing errors to enhance with console log
+        let timeout = self.config.timeout;
+        let build_result: BuildResult<ProtocolBuildResult> =
+            match tokio::time::timeout(timeout, async {
+                // Connect to the builder runtime
+                let stream = connect_to_builder(&vsock_path, BUILD_PORT).await?;
 
-        send_message(&stream, &BuildMessage::Request(request.clone())).await?;
+                // Send build request
+                let request =
+                    BuildRequest::new(uuid::Uuid::new_v4().to_string(), &self.config.target)
+                        .with_release(true)
+                        .with_locked(true);
 
-        // Stream output and collect result
-        let result = receive_build_output(stream, status_tx, cancel.clone()).await?;
+                send_message(&stream, &BuildMessage::Request(request.clone())).await?;
+
+                // Stream output and collect result
+                receive_build_output(stream, status_tx, cancel.clone()).await
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(BuildError::Timeout { limit: timeout }),
+            };
 
         // Shutdown VM
         if let Err(e) = vm.shutdown().await {
@@ -186,6 +209,17 @@ impl FirecrackerCompiler {
         // Clean up drive images
         let _ = std::fs::remove_file(&source_img);
         let _ = std::fs::remove_file(&target_img);
+
+        // Handle build result, adding console log context on error
+        let result = match build_result {
+            Ok(r) => r,
+            Err(e) => {
+                let console_tail = read_console_tail();
+                return Err(BuildError::SandboxSetup(format!(
+                    "{e}\n\nVM console log (last 50 lines):\n{console_tail}"
+                )));
+            }
+        };
 
         // Convert protocol result to compile output
         if result.success {
@@ -212,8 +246,12 @@ impl FirecrackerCompiler {
                 stderr: result.stderr,
             })
         } else {
+            let console_tail = read_console_tail();
             Err(BuildError::CompileFailed {
-                stderr: result.stderr,
+                stderr: format!(
+                    "{}\n\nVM console log (last 50 lines):\n{console_tail}",
+                    result.stderr
+                ),
                 exit_code: result.exit_code,
             })
         }
