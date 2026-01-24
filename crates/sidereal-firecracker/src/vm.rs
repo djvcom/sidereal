@@ -242,7 +242,7 @@ impl VmInstance {
             drive_id: "rootfs".to_owned(),
             path_on_host: self.config.rootfs_path.display().to_string(),
             is_root_device: true,
-            is_read_only: false,
+            is_read_only: true,
         };
         self.api_request(
             "PUT",

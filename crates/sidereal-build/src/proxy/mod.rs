@@ -53,8 +53,8 @@ pub const DEFAULT_ALLOWED_DOMAINS: &[&str] = &[
     "fastly.net",
 ];
 
-/// Proxy port on vsock.
-pub const PROXY_PORT: u32 = 1080;
+/// Proxy port on vsock (must match BUILD_PORT in protocol.rs).
+pub const PROXY_PORT: u32 = 1028;
 
 /// Errors that can occur during proxy operations.
 #[derive(Debug, Error)]
