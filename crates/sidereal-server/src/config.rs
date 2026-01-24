@@ -313,6 +313,9 @@ pub struct StorageSettings {
     /// S3-compatible endpoint URL.
     pub endpoint: Option<String>,
 
+    /// S3 region (use "garage" for Garage).
+    pub region: Option<String>,
+
     /// Bucket name.
     #[serde(default = "default_bucket")]
     pub bucket: String,
@@ -329,6 +332,7 @@ impl Default for StorageSettings {
         Self {
             backend: StorageBackend::default(),
             endpoint: None,
+            region: None,
             bucket: default_bucket(),
             access_key_id: None,
             secret_access_key: None,

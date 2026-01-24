@@ -311,7 +311,7 @@ impl Services {
             storage: StorageConfig {
                 storage_type: storage_type.to_owned(),
                 path: self.config.storage.bucket.clone(),
-                region: None,
+                region: self.config.storage.region.clone(),
                 endpoint: self.config.storage.endpoint.clone(),
                 access_key_id: self.config.storage.access_key_id.clone(),
                 secret_access_key: self.config.storage.secret_access_key.clone(),
