@@ -121,18 +121,40 @@ in
       description = "The sidereal-builder-runtime package (runs inside builder VMs).";
     };
 
-    builderRootfs = lib.mkOption {
-      type = lib.types.path;
+    builderRootfsPackage = lib.mkOption {
+      type = lib.types.package;
       default = pkgs.sidereal-builder-rootfs or (throw "sidereal-builder-rootfs package not found");
       defaultText = lib.literalExpression "pkgs.sidereal-builder-rootfs";
-      description = "Path to the builder VM rootfs image.";
+      description = "Package providing the builder VM rootfs image (copied to dataDir on activation).";
+    };
+
+    builderRootfs = lib.mkOption {
+      type = lib.types.path;
+      default = "${cfg.dataDir}/rootfs/builder.ext4";
+      defaultText = lib.literalExpression ''"''${cfg.dataDir}/rootfs/builder.ext4"'';
+      description = ''
+        Path to the builder VM rootfs image.
+        Defaults to a writable copy in the data directory.
+        The image is copied from builderRootfsPackage during system activation.
+      '';
+    };
+
+    runtimeRootfsPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.sidereal-runtime-rootfs or (throw "sidereal-runtime-rootfs package not found");
+      defaultText = lib.literalExpression "pkgs.sidereal-runtime-rootfs";
+      description = "Package providing the runtime rootfs template image (copied to dataDir on activation).";
     };
 
     runtimeRootfs = lib.mkOption {
       type = lib.types.path;
-      default = pkgs.sidereal-runtime-rootfs or (throw "sidereal-runtime-rootfs package not found");
-      defaultText = lib.literalExpression "pkgs.sidereal-runtime-rootfs";
-      description = "Path to the runtime rootfs template image.";
+      default = "${cfg.dataDir}/rootfs/runtime.ext4";
+      defaultText = lib.literalExpression ''"''${cfg.dataDir}/rootfs/runtime.ext4"'';
+      description = ''
+        Path to the runtime rootfs template image.
+        Defaults to a writable copy in the data directory.
+        The image is copied from runtimeRootfsPackage during system activation.
+      '';
     };
 
     kernelPath = lib.mkOption {
@@ -438,7 +460,15 @@ in
       "d ${cfg.dataDir}/caches 0750 ${cfg.user} ${cfg.group} -"
       "d ${cfg.dataDir}/artifacts 0750 ${cfg.user} ${cfg.group} -"
       "d ${cfg.dataDir}/ssh 0700 ${cfg.user} ${cfg.group} -"
+      "d ${cfg.dataDir}/rootfs 0755 ${cfg.user} ${cfg.group} -"
     ];
+
+    # Copy rootfs images from nix store to writable location on activation
+    system.activationScripts.sidereal-rootfs = lib.mkIf cfg.build.vm.useFirecracker ''
+      echo "Copying Sidereal rootfs images..."
+      install -m 644 -o ${cfg.user} -g ${cfg.group} ${cfg.builderRootfsPackage} ${cfg.dataDir}/rootfs/builder.ext4
+      install -m 644 -o ${cfg.user} -g ${cfg.group} ${cfg.runtimeRootfsPackage} ${cfg.dataDir}/rootfs/runtime.ext4
+    '';
 
     # PostgreSQL setup (if createLocally is true)
     services.postgresql = lib.mkIf cfg.database.createLocally {
