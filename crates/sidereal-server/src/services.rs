@@ -282,10 +282,17 @@ impl Services {
     }
 
     fn create_build_config(&self) -> sidereal_build::ServiceConfig {
+        use sidereal_build::artifact::StorageConfig;
         use sidereal_build::service::{PathsConfig, ServerConfig, WorkerConfig};
         use sidereal_core::Transport;
 
         let socket_path = self.config.server.socket_dir.join("build.sock");
+
+        // Map server storage settings to build service storage config
+        let storage_type = match self.config.storage.backend {
+            crate::config::StorageBackend::Filesystem => "local",
+            crate::config::StorageBackend::S3 => "s3",
+        };
 
         sidereal_build::ServiceConfig {
             server: ServerConfig {
@@ -300,6 +307,12 @@ impl Services {
             },
             worker: WorkerConfig {
                 count: self.config.build.workers,
+            },
+            storage: StorageConfig {
+                storage_type: storage_type.to_owned(),
+                path: self.config.storage.bucket.clone(),
+                region: None,
+                endpoint: self.config.storage.endpoint.clone(),
             },
             forge_auth: self.config.build.forge_auth.clone(),
             ..Default::default()
