@@ -244,11 +244,21 @@ fn create_object_store(config: &StorageConfig) -> BuildResult<Arc<dyn ObjectStor
                     builder = builder.with_allow_http(true);
                 }
             }
-            if let Some(access_key_id) = &config.access_key_id {
-                builder = builder.with_access_key_id(access_key_id);
+            // Use explicit credentials from config, or fall back to environment variables
+            let access_key_id = config
+                .access_key_id
+                .clone()
+                .or_else(|| std::env::var("AWS_ACCESS_KEY_ID").ok());
+            let secret_access_key = config
+                .secret_access_key
+                .clone()
+                .or_else(|| std::env::var("AWS_SECRET_ACCESS_KEY").ok());
+
+            if let Some(key_id) = access_key_id {
+                builder = builder.with_access_key_id(&key_id);
             }
-            if let Some(secret_access_key) = &config.secret_access_key {
-                builder = builder.with_secret_access_key(secret_access_key);
+            if let Some(secret) = secret_access_key {
+                builder = builder.with_secret_access_key(&secret);
             }
 
             let store = builder.build().map_err(|e| {
