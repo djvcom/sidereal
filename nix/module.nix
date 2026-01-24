@@ -137,9 +137,13 @@ in
 
     kernelPath = lib.mkOption {
       type = lib.types.path;
-      default = "${pkgs.linuxPackages_latest.kernel.dev}/vmlinux";
-      defaultText = lib.literalExpression ''"''${pkgs.linuxPackages_latest.kernel.dev}/vmlinux"'';
-      description = "Path to the Linux kernel (vmlinux) for Firecracker VMs.";
+      default = "${pkgs.sidereal-firecracker-kernel.dev}/vmlinux";
+      defaultText = lib.literalExpression ''"''${pkgs.sidereal-firecracker-kernel.dev}/vmlinux"'';
+      description = ''
+        Path to the Linux kernel (vmlinux) for Firecracker VMs.
+        Uses a custom kernel with virtio and ext4 built-in (not as modules)
+        since Firecracker VMs don't have an initrd.
+      '';
     };
 
     mode = lib.mkOption {

@@ -244,6 +244,9 @@
           inherit pkgs;
           sidereal-runtime = buildSiderealRuntime pkgs;
         };
+
+      # Build custom kernel for Firecracker VMs
+      buildFirecrackerKernel = pkgs: import ./nix/firecracker-kernel.nix { inherit pkgs; };
     in
     {
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
@@ -263,6 +266,7 @@
           sidereal-builder-runtime = buildSiderealBuilderRuntime final;
           sidereal-builder-rootfs = buildBuilderRootfs final;
           sidereal-runtime-rootfs = buildRuntimeRootfs final;
+          sidereal-firecracker-kernel = buildFirecrackerKernel final;
         })
       ];
 
@@ -277,6 +281,7 @@
         sidereal-builder-runtime = buildSiderealBuilderRuntime pkgs;
         sidereal-builder-rootfs = buildBuilderRootfs pkgs;
         sidereal-runtime-rootfs = buildRuntimeRootfs pkgs;
+        sidereal-firecracker-kernel = buildFirecrackerKernel pkgs;
       });
 
       devShells = forAllSystems (pkgs: {
