@@ -117,6 +117,7 @@ fn spawn_workers(
             &config.limits,
             Arc::clone(artifact_store),
             forge_auth.clone(),
+            &config.vm,
         )?;
         let cancel = cancel.clone();
         handles.push(tokio::spawn(async move {

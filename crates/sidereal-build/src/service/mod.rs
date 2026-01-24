@@ -222,10 +222,6 @@ const fn default_worker_count() -> usize {
 /// VM-based compilation configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct VmConfig {
-    /// Enable Firecracker VM-based compilation instead of bubblewrap sandbox.
-    #[serde(default)]
-    pub enabled: bool,
-
     /// Path to the Linux kernel for builder VMs.
     #[serde(default = "default_kernel_path")]
     pub kernel_path: PathBuf,
@@ -250,7 +246,6 @@ pub struct VmConfig {
 impl Default for VmConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
             kernel_path: default_kernel_path(),
             builder_rootfs: default_builder_rootfs(),
             vcpu_count: default_vcpu_count(),
