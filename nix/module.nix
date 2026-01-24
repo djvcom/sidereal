@@ -128,9 +128,9 @@ in
 
     kernelPath = lib.mkOption {
       type = lib.types.path;
-      default = "${pkgs.linuxPackages_latest.kernel}/bzImage";
-      defaultText = lib.literalExpression ''"''${pkgs.linuxPackages_latest.kernel}/bzImage"'';
-      description = "Path to the Linux kernel for Firecracker VMs.";
+      default = "${pkgs.linuxPackages_latest.kernel.dev}/vmlinux";
+      defaultText = lib.literalExpression ''"''${pkgs.linuxPackages_latest.kernel.dev}/vmlinux"'';
+      description = "Path to the Linux kernel (vmlinux) for Firecracker VMs.";
     };
 
     mode = lib.mkOption {
@@ -394,6 +394,8 @@ in
       inherit (cfg) group;
       home = cfg.dataDir;
       description = "Sidereal service user";
+      # Add kvm group for Firecracker VM support
+      extraGroups = lib.optional cfg.build.vm.useFirecracker "kvm";
     };
 
     users.groups.${cfg.group} = { };
