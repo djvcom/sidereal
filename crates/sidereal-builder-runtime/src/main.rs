@@ -83,6 +83,13 @@ async fn run_build() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Execute the build (streams output back via vsock)
     build::execute_build(&mut stream, &request).await?;
 
+    // Explicitly shutdown the stream to ensure all data is flushed
+    // before we shutdown the VM. This is critical because the VM shutdown
+    // will kill the vsock device, potentially losing buffered messages.
+    if let Err(e) = stream.shutdown(std::net::Shutdown::Both) {
+        error!(error = %e, "Failed to shutdown vsock stream");
+    }
+
     Ok(())
 }
 
@@ -90,8 +97,10 @@ async fn run_build() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 ///
 /// As PID 1, we need to properly shut down the system.
 fn shutdown_vm() {
-    // Give a moment for any final I/O to complete
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    // Give time for any final I/O (especially vsock messages) to be delivered.
+    // The kernel may buffer vsock data, and we need this to reach the host
+    // before the VM dies. 500ms provides a reasonable margin.
+    std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Sync filesystems
     #[allow(unsafe_code)]
