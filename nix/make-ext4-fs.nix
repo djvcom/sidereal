@@ -66,11 +66,11 @@ pkgs.runCommand "${name}.ext4"
     # Create parent directory for target
     mkdir -p "$staging/$(dirname "${entry.target}")"
 
-    # Copy source to target
+    # Copy source to target (dereference symlinks to avoid dangling refs)
     if [ -d "${entry.source}" ]; then
-      cp -a "${entry.source}/." "$staging${entry.target}/"
+      cp -aL "${entry.source}/." "$staging${entry.target}/"
     else
-      cp -a "${entry.source}" "$staging${entry.target}"
+      cp -aL "${entry.source}" "$staging${entry.target}"
     fi
   '') contents)}
 
