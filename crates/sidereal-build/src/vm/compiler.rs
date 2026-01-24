@@ -220,16 +220,41 @@ impl FirecrackerCompiler {
     }
 }
 
-/// Connect to the builder runtime via vsock.
+/// Connect to the builder runtime via vsock using Firecracker's CONNECT protocol.
 async fn connect_to_builder(vsock_path: &Path, port: u32) -> BuildResult<UnixStream> {
-    // The vsock UDS path format is: <base>_<port>
-    let connect_path = format!("{}_{port}", vsock_path.display());
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     for attempt in 0..30 {
-        match UnixStream::connect(&connect_path).await {
-            Ok(stream) => return Ok(stream),
+        // Connect to the vsock UDS
+        match UnixStream::connect(vsock_path).await {
+            Ok(mut stream) => {
+                // Send CONNECT command
+                let connect_cmd = format!("CONNECT {port}\n");
+                if let Err(e) = stream.write_all(connect_cmd.as_bytes()).await {
+                    debug!(attempt, error = %e, "Failed to send CONNECT command");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+
+                // Read response
+                let mut reader = BufReader::new(&mut stream);
+                let mut response = String::new();
+                if let Err(e) = reader.read_line(&mut response).await {
+                    debug!(attempt, error = %e, "Failed to read CONNECT response");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+
+                if response.starts_with("OK ") {
+                    debug!(port, "vsock connection established");
+                    return Ok(stream);
+                }
+
+                debug!(attempt, response = %response.trim(), "CONNECT failed");
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
             Err(e) => {
-                debug!(attempt, error = %e, "Failed to connect to builder, retrying...");
+                debug!(attempt, error = %e, "Failed to connect to vsock UDS, retrying...");
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
         }
