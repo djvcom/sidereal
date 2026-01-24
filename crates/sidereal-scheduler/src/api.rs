@@ -4,10 +4,10 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::health::HealthTracker;
@@ -36,6 +36,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/workers/{id}/drain", post(drain_worker))
         // Placements
         .route("/placements/{function}", get(get_placement))
+        .route("/placements/{function}", put(set_placement))
         // Metrics
         .route("/metrics", get(metrics))
         .with_state(state)
@@ -125,6 +126,65 @@ async fn get_placement(
         function,
         availability,
     )))
+}
+
+/// Request body for setting a placement.
+#[derive(Debug, Deserialize)]
+pub struct SetPlacementRequest {
+    pub workers: Vec<SetPlacementWorker>,
+}
+
+/// Worker endpoint in a set placement request.
+#[derive(Debug, Deserialize)]
+pub struct SetPlacementWorker {
+    pub worker_id: String,
+    pub address: String,
+    #[serde(default)]
+    pub vsock_cid: Option<u32>,
+    #[serde(default = "default_status")]
+    pub status: String,
+}
+
+fn default_status() -> String {
+    "Healthy".to_owned()
+}
+
+/// Set placement for a function.
+async fn set_placement(
+    State(state): State<Arc<AppState>>,
+    Path(function): Path<String>,
+    Json(request): Json<SetPlacementRequest>,
+) -> Result<StatusCode, StatusCode> {
+    use crate::store::WorkerEndpoint;
+
+    let endpoints: Vec<WorkerEndpoint> = request
+        .workers
+        .into_iter()
+        .map(|w| WorkerEndpoint {
+            worker_id: w.worker_id,
+            address: w
+                .address
+                .parse()
+                .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
+            vsock_cid: w.vsock_cid,
+            status: match w.status.as_str() {
+                "Starting" => WorkerStatus::Starting,
+                "Healthy" => WorkerStatus::Healthy,
+                "Degraded" => WorkerStatus::Degraded,
+                "Unhealthy" => WorkerStatus::Unhealthy,
+                "Draining" => WorkerStatus::Draining,
+                _ => WorkerStatus::Healthy,
+            },
+        })
+        .collect();
+
+    state
+        .placement_store
+        .set_workers(&function, endpoints)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Metrics endpoint.

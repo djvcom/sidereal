@@ -191,6 +191,57 @@ impl SchedulerClient {
         })
     }
 
+    /// Set placement for a function.
+    pub async fn set_placement(
+        &self,
+        function: &str,
+        workers: Vec<super::PlacementWorker>,
+    ) -> ControlResult<()> {
+        let url = format!("{}/placements/{}", self.base_url, function);
+
+        #[derive(serde::Serialize)]
+        struct SetPlacementRequest {
+            workers: Vec<SetPlacementWorker>,
+        }
+
+        #[derive(serde::Serialize)]
+        struct SetPlacementWorker {
+            worker_id: String,
+            address: String,
+            vsock_cid: Option<u32>,
+            status: String,
+        }
+
+        let request = SetPlacementRequest {
+            workers: workers
+                .into_iter()
+                .map(|w| SetPlacementWorker {
+                    worker_id: w.worker_id,
+                    address: w.address,
+                    vsock_cid: None,
+                    status: w.status,
+                })
+                .collect(),
+        };
+
+        let response = self
+            .client
+            .put(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(ControlError::Http)?;
+
+        if !response.status().is_success() {
+            return Err(ControlError::scheduler(format!(
+                "failed to set placement: {}",
+                response.status()
+            )));
+        }
+
+        Ok(())
+    }
+
     /// List workers that can handle a specific function.
     ///
     /// This is a convenience method that gets the placement and returns only

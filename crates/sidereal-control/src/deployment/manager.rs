@@ -57,7 +57,7 @@ struct DeploymentWorkers {
 pub struct DeploymentManager {
     store: Arc<dyn DeploymentStore>,
     provisioner: Arc<dyn WorkerProvisioner>,
-    _scheduler: SchedulerClient,
+    scheduler: SchedulerClient,
     artifact_config: ArtifactConfig,
     deployment_config: DeploymentConfig,
     workers: RwLock<HashMap<String, DeploymentWorkers>>,
@@ -75,7 +75,7 @@ impl DeploymentManager {
         Self {
             store,
             provisioner,
-            _scheduler: scheduler,
+            scheduler,
             artifact_config,
             deployment_config,
             workers: RwLock::new(HashMap::new()),
@@ -158,6 +158,11 @@ impl DeploymentManager {
             .map_err(|e| (Some(registering.data().clone()), e))?;
 
         self.wait_worker_ready(&worker.id)
+            .await
+            .map_err(|e| (Some(registering.data().clone()), e))?;
+
+        // Register function placements with the scheduler
+        self.register_placements(&worker)
             .await
             .map_err(|e| (Some(registering.data().clone()), e))?;
 
@@ -351,6 +356,30 @@ impl DeploymentManager {
         debug!(worker_id = %worker_id, timeout = ?timeout, "waiting for worker ready");
 
         self.provisioner.wait_ready(worker_id, timeout).await
+    }
+
+    async fn register_placements(&self, worker: &ProvisionedWorker) -> ControlResult<()> {
+        use crate::scheduler::PlacementWorker;
+
+        for function in &worker.functions {
+            info!(
+                function = %function,
+                worker_id = %worker.id,
+                "registering function placement"
+            );
+
+            let placement_worker = PlacementWorker {
+                worker_id: worker.id.clone(),
+                address: worker.address.clone(),
+                status: "Healthy".to_owned(),
+            };
+
+            self.scheduler
+                .set_placement(function, vec![placement_worker])
+                .await?;
+        }
+
+        Ok(())
     }
 
     async fn cleanup_workers(&self, deployment_id: &str) {
