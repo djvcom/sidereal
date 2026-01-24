@@ -127,8 +127,8 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
 
     if let Some(ref api_config) = config.api {
         use crate::proxy::{
-            proxy_build, proxy_build_root, proxy_control, proxy_control_root, proxy_keys,
-            ProxyState,
+            proxy_build, proxy_build_root, proxy_callbacks, proxy_control, proxy_control_root,
+            proxy_keys, ProxyState,
         };
         use axum::routing::any;
 
@@ -142,6 +142,7 @@ pub async fn run(config: GatewayConfig, cancel: CancellationToken) -> Result<(),
             .route("/api/builds/{*path}", any(proxy_build))
             .route("/api/deployments", any(proxy_control_root))
             .route("/api/deployments/{*path}", any(proxy_control))
+            .route("/api/callbacks/{*path}", any(proxy_callbacks))
             .route("/api/keys/{*path}", any(proxy_keys))
             .with_state(proxy_state);
 
