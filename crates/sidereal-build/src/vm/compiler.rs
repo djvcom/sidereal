@@ -158,9 +158,6 @@ impl FirecrackerCompiler {
         });
         debug!(port = PROXY_PORT, "Cargo proxy server started");
 
-        // Wait for VM to be ready
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
         // Helper to read console log for error context
         let console_log_path = vm.console_log_path().to_path_buf();
         let read_console_tail = || -> String {
@@ -173,29 +170,43 @@ impl FirecrackerCompiler {
                 .unwrap_or_else(|_| "Unable to read console log".to_owned())
         };
 
+        // Poll VM health while waiting for vsock socket to appear
+        let ready_timeout = Duration::from_secs(5);
+        let poll_interval = Duration::from_millis(100);
+        let start = tokio::time::Instant::now();
+
+        while start.elapsed() < ready_timeout {
+            if let Some(status) = vm.check_exited() {
+                let console_tail = read_console_tail();
+                return Err(BuildError::SandboxSetup(format!(
+                    "VM exited with status {status} during startup\n\nConsole log:\n{console_tail}"
+                )));
+            }
+            if vsock_path.exists() {
+                break;
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+
         // Perform build communication with timeout, capturing errors to enhance with console log
         let timeout = self.config.timeout;
-        let build_result: BuildResult<ProtocolBuildResult> =
-            match tokio::time::timeout(timeout, async {
-                // Connect to the builder runtime
-                let stream = connect_to_builder(&vsock_path, BUILD_PORT).await?;
-
-                // Send build request
-                let request =
-                    BuildRequest::new(uuid::Uuid::new_v4().to_string(), &self.config.target)
-                        .with_release(true)
-                        .with_locked(true);
-
-                send_message(&stream, &BuildMessage::Request(request.clone())).await?;
-
-                // Stream output and collect result
-                receive_build_output(stream, status_tx, cancel.clone()).await
-            })
-            .await
-            {
-                Ok(result) => result,
-                Err(_) => Err(BuildError::Timeout { limit: timeout }),
-            };
+        let target = self.config.target.clone();
+        let build_result: BuildResult<ProtocolBuildResult> = match tokio::time::timeout(
+            timeout,
+            perform_build(
+                &vsock_path,
+                &target,
+                &mut vm,
+                &read_console_tail,
+                status_tx,
+                cancel.clone(),
+            ),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(BuildError::Timeout { limit: timeout }),
+        };
 
         // Shutdown VM
         if let Err(e) = vm.shutdown().await {
@@ -259,10 +270,32 @@ impl FirecrackerCompiler {
 }
 
 /// Connect to the builder runtime via vsock using Firecracker's CONNECT protocol.
-async fn connect_to_builder(vsock_path: &Path, port: u32) -> BuildResult<UnixStream> {
+///
+/// Includes health checks to fail fast if the VM exits unexpectedly.
+async fn connect_to_builder<F>(
+    vsock_path: &Path,
+    port: u32,
+    vm: &mut sidereal_firecracker::VmInstance,
+    read_console_tail: &F,
+) -> BuildResult<UnixStream>
+where
+    F: Fn() -> String,
+{
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    for attempt in 0..30 {
+    let max_attempts = 30;
+    let mut delay = Duration::from_millis(50);
+    let max_delay = Duration::from_millis(500);
+
+    for attempt in 0..max_attempts {
+        // Check VM health before each attempt
+        if let Some(status) = vm.check_exited() {
+            return Err(BuildError::SandboxSetup(format!(
+                "VM exited with status {status} (attempt {attempt})\n\nConsole log:\n{}",
+                read_console_tail()
+            )));
+        }
+
         // Connect to the vsock UDS
         match UnixStream::connect(vsock_path).await {
             Ok(mut stream) => {
@@ -270,7 +303,8 @@ async fn connect_to_builder(vsock_path: &Path, port: u32) -> BuildResult<UnixStr
                 let connect_cmd = format!("CONNECT {port}\n");
                 if let Err(e) = stream.write_all(connect_cmd.as_bytes()).await {
                     debug!(attempt, error = %e, "Failed to send CONNECT command");
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(delay).await;
+                    delay = std::cmp::min(delay * 2, max_delay);
                     continue;
                 }
 
@@ -279,7 +313,8 @@ async fn connect_to_builder(vsock_path: &Path, port: u32) -> BuildResult<UnixStr
                 let mut response = String::new();
                 if let Err(e) = reader.read_line(&mut response).await {
                     debug!(attempt, error = %e, "Failed to read CONNECT response");
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(delay).await;
+                    delay = std::cmp::min(delay * 2, max_delay);
                     continue;
                 }
 
@@ -289,11 +324,13 @@ async fn connect_to_builder(vsock_path: &Path, port: u32) -> BuildResult<UnixStr
                 }
 
                 debug!(attempt, response = %response.trim(), "CONNECT failed");
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay * 2, max_delay);
             }
             Err(e) => {
                 debug!(attempt, error = %e, "Failed to connect to vsock UDS, retrying...");
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay * 2, max_delay);
             }
         }
     }
@@ -301,6 +338,29 @@ async fn connect_to_builder(vsock_path: &Path, port: u32) -> BuildResult<UnixStr
     Err(BuildError::SandboxSetup(
         "Failed to connect to builder VM after 30 attempts".to_owned(),
     ))
+}
+
+/// Perform the build communication with the VM.
+async fn perform_build<F>(
+    vsock_path: &Path,
+    target: &str,
+    vm: &mut sidereal_firecracker::VmInstance,
+    read_console_tail: &F,
+    status_tx: Option<&tokio::sync::mpsc::Sender<BuildStatus>>,
+    cancel: CancellationToken,
+) -> BuildResult<ProtocolBuildResult>
+where
+    F: Fn() -> String,
+{
+    let stream = connect_to_builder(vsock_path, BUILD_PORT, vm, read_console_tail).await?;
+
+    let request = BuildRequest::new(uuid::Uuid::new_v4().to_string(), target)
+        .with_release(true)
+        .with_locked(true);
+
+    send_message(&stream, &BuildMessage::Request(request)).await?;
+
+    receive_build_output(stream, status_tx, cancel, vm, read_console_tail).await
 }
 
 /// Send a message over the stream.
@@ -335,13 +395,20 @@ where
     Ok(())
 }
 
-/// Receive build output and final result.
-async fn receive_build_output(
+/// Receive build output and final result with periodic VM health checks.
+async fn receive_build_output<F>(
     stream: UnixStream,
     status_tx: Option<&tokio::sync::mpsc::Sender<BuildStatus>>,
     cancel: CancellationToken,
-) -> BuildResult<ProtocolBuildResult> {
+    vm: &mut sidereal_firecracker::VmInstance,
+    read_console_tail: &F,
+) -> BuildResult<ProtocolBuildResult>
+where
+    F: Fn() -> String,
+{
     let mut reader = tokio::io::BufReader::new(stream);
+    let health_interval = Duration::from_millis(500);
+    let mut last_health_check = tokio::time::Instant::now();
 
     loop {
         if cancel.is_cancelled() {
@@ -350,11 +417,29 @@ async fn receive_build_output(
             });
         }
 
+        // Periodic health check
+        if last_health_check.elapsed() > health_interval {
+            if let Some(status) = vm.check_exited() {
+                return Err(BuildError::SandboxSetup(format!(
+                    "VM exited unexpectedly with status {status}\n\nConsole log:\n{}",
+                    read_console_tail()
+                )));
+            }
+            last_health_check = tokio::time::Instant::now();
+        }
+
         // Read length header
         let mut len_buf = [0u8; 4];
         match reader.read_exact(&mut len_buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                // Check if VM died - this is likely the cause of EOF
+                if let Some(status) = vm.check_exited() {
+                    return Err(BuildError::SandboxSetup(format!(
+                        "VM exited with status {status} during build\n\nConsole log:\n{}",
+                        read_console_tail()
+                    )));
+                }
                 return Err(BuildError::SandboxSetup(
                     "Connection closed unexpectedly".to_owned(),
                 ));
@@ -362,6 +447,7 @@ async fn receive_build_output(
             Err(e) => return Err(e.into()),
         }
 
+        #[allow(clippy::cast_possible_truncation)]
         let len = u32::from_le_bytes(len_buf) as usize;
 
         // Read message

@@ -401,6 +401,14 @@ impl VmInstance {
     pub fn is_running(&mut self) -> bool {
         matches!(self.process.try_wait(), Ok(None))
     }
+
+    /// Check if the VM process has exited. Returns `Some(ExitStatus)` if dead.
+    pub fn check_exited(&mut self) -> Option<std::process::ExitStatus> {
+        match self.process.try_wait() {
+            Ok(Some(status)) => Some(status),
+            Ok(None) | Err(_) => None,
+        }
+    }
 }
 
 impl Drop for VmInstance {
