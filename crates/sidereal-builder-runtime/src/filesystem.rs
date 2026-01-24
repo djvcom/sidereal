@@ -235,6 +235,27 @@ fn setup_path_symlinks() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         }
     }
 
+    // Set up dynamic linker - required for dynamically linked binaries
+    setup_dynamic_linker()?;
+
+    Ok(())
+}
+
+/// Set up the dynamic linker symlink so dynamically linked binaries can run.
+fn setup_dynamic_linker() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let lib64 = Path::new("/lib64");
+    if !lib64.exists() {
+        fs::create_dir_all(lib64)?;
+    }
+
+    let ld_source = Path::new("/opt/glibc/lib/ld-linux-x86-64.so.2");
+    let ld_target = Path::new("/lib64/ld-linux-x86-64.so.2");
+
+    if ld_source.exists() && !ld_target.exists() {
+        std::os::unix::fs::symlink(ld_source, ld_target)?;
+        debug!("linked dynamic linker");
+    }
+
     Ok(())
 }
 
