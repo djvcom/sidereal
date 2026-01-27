@@ -10,7 +10,7 @@ name = "sidereal-builder-runtime"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { workspace = true, features = ["rt", "io-util", "sync", "macros", "signal", "time", "process", "fs"] }
+tokio = { workspace = true, features = ["rt", "io-util", "sync", "macros", "signal", "time", "process", "fs", "net"] }
 tokio-vsock.workspace = true
 nix = { workspace = true, features = ["mount", "fs", "signal"] }
 libc.workspace = true

@@ -46,7 +46,7 @@ RUN mkdir -p /sbin
 # (can't COPY from host during nix build, so this is done externally)
 
 # Create symlinks directly to toolchain binaries (bypassing rustup shims which try to sync)
-RUN TOOLCHAIN_BIN="/usr/local/rustup/toolchains/1.92-x86_64-unknown-linux-gnu/bin" && \
+RUN TOOLCHAIN_BIN="$(dirname "$(rustup which cargo)")" && \
     ln -sf "$TOOLCHAIN_BIN/cargo" /usr/bin/cargo && \
     ln -sf "$TOOLCHAIN_BIN/rustc" /usr/bin/rustc && \
     ln -sf /usr/local/cargo/bin/cargo-zigbuild /usr/bin/cargo-zigbuild && \

@@ -166,8 +166,9 @@ fn build_cargo_command(request: &BuildRequest) -> Command {
     cmd.env("SSL_CERT_FILE", "/etc/ssl/certs/ca-bundle.crt");
     cmd.env("SSL_CERT_DIR", "/etc/ssl/certs");
 
-    // Offline mode - VM has no network access
-    cmd.env("CARGO_NET_OFFLINE", "true");
+    // Route cargo traffic through the vsock proxy bridge on the host
+    cmd.env("HTTP_PROXY", "http://127.0.0.1:1080");
+    cmd.env("HTTPS_PROXY", "http://127.0.0.1:1080");
     // Use the system rustup/cargo installation and prevent auto-updates
     cmd.env("RUSTUP_HOME", "/usr/local/rustup");
     cmd.env("RUSTUP_TOOLCHAIN", "1.92-x86_64-unknown-linux-gnu");

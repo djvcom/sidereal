@@ -214,14 +214,14 @@ fn setup_path_symlinks_in(root: &Path) -> Result<(), Box<dyn std::error::Error +
     let tools: &[(&[&str], &str)] = &[
         (
             &[
-                "usr/local/rustup/toolchains/1.92-x86_64-unknown-linux-gnu/bin/cargo",
+                "usr/local/rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin/cargo",
                 "opt/rust/bin/cargo",
             ],
             "cargo",
         ),
         (
             &[
-                "usr/local/rustup/toolchains/1.92-x86_64-unknown-linux-gnu/bin/rustc",
+                "usr/local/rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin/rustc",
                 "opt/rust/bin/rustc",
             ],
             "rustc",
@@ -349,7 +349,7 @@ mod tests {
         let root = TempDir::new().unwrap();
         let rustup_cargo = root
             .path()
-            .join("usr/local/rustup/toolchains/1.92-x86_64-unknown-linux-gnu/bin/cargo");
+            .join("usr/local/rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin/cargo");
         create_executable(&rustup_cargo);
         create_executable(&root.path().join("opt/rust/bin/cargo"));
 

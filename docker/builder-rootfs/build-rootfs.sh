@@ -83,7 +83,9 @@ validate_staging() {
     )
 
     for path in "${required_paths[@]}"; do
-        if [[ ! -e "${staging}${path}" ]]; then
+        # Use -e (exists) or -L (symlink) since absolute symlinks are
+        # dangling in the staging context but valid inside the VM rootfs
+        if [[ ! -e "${staging}${path}" && ! -L "${staging}${path}" ]]; then
             missing+=("${path}")
         fi
     done

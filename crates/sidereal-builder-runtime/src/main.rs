@@ -13,6 +13,7 @@ use tracing::{error, info};
 
 mod build;
 mod filesystem;
+mod network;
 mod protocol;
 mod signals;
 mod vsock;
@@ -63,6 +64,21 @@ async fn main() {
     if let Err(e) = filesystem::setup_ssl_certs() {
         error!(error = %e, "Failed to set up SSL certificates");
         // Continue - HTTP may still work
+    }
+
+    // Bring up loopback interface for local proxy bridge
+    if let Err(e) = network::setup_loopback() {
+        error!(error = %e, "Failed to set up loopback interface");
+    }
+
+    // Start vsock-to-TCP proxy bridge for cargo registry access
+    let _proxy_bridge = network::start_proxy_bridge(
+        "127.0.0.1:1080".parse().expect("valid socket address"),
+        1080,
+    )
+    .await;
+    if let Err(ref e) = _proxy_bridge {
+        error!(error = %e, "Failed to start proxy bridge");
     }
 
     // Run the build workflow
