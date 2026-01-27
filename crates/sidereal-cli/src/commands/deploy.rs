@@ -1,9 +1,6 @@
 //! Implementation of the `sidereal deploy` command.
 
-use sidereal_firecracker::{
-    rootfs::{download_kernel, RootfsBuilder},
-    VmConfig, VmManager,
-};
+use sidereal_firecracker::{VmConfig, VmManager};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -27,6 +24,9 @@ pub enum DeployError {
 
     #[error("KVM not available: {0}")]
     KvmNotAvailable(String),
+
+    #[error("Missing file: {0}")]
+    MissingFile(String),
 
     #[error("Firecracker error: {0}")]
     Firecracker(#[from] sidereal_firecracker::FirecrackerError),
@@ -76,13 +76,23 @@ async fn run_local_deploy(args: DeployArgs) -> Result<(), DeployError> {
 
     let sidereal_dir = get_sidereal_dir()?;
     let kernel_path = sidereal_dir.join("kernel/vmlinux");
+    let rootfs_path = sidereal_dir.join("rootfs/builder.ext4");
     let work_dir = sidereal_dir.join("vms");
 
     std::fs::create_dir_all(&work_dir)?;
 
     if !kernel_path.exists() {
-        println!("Downloading Firecracker kernel...");
-        download_kernel(&kernel_path)?;
+        return Err(DeployError::MissingFile(format!(
+            "Kernel not found at {}. Deploy via NixOS or copy manually.",
+            kernel_path.display()
+        )));
+    }
+
+    if !rootfs_path.exists() {
+        return Err(DeployError::MissingFile(format!(
+            "Rootfs not found at {}. Build with: just build-rootfs",
+            rootfs_path.display()
+        )));
     }
 
     if !args.skip_build {
@@ -92,11 +102,6 @@ async fn run_local_deploy(args: DeployArgs) -> Result<(), DeployError> {
 
     let runtime_binary = find_runtime_binary()?;
     println!("Runtime binary: {}", runtime_binary.display());
-
-    println!("Preparing rootfs...");
-    let rootfs_path = work_dir.join("rootfs.ext4");
-    let builder = RootfsBuilder::new(&work_dir);
-    builder.build(&runtime_binary, &rootfs_path)?;
 
     println!("Starting Firecracker VM...");
     let vm_manager = VmManager::new(&work_dir)?;

@@ -19,6 +19,13 @@ mod vsock;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    // Set PATH before any tool lookups. The kernel boots PID 1 with
+    // PATH=/sbin:/bin which misses /usr/bin where cargo and rustc live.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("PATH", "/usr/bin:/usr/local/bin:/sbin:/bin:/usr/sbin");
+    }
+
     // Initialise tracing (no ANSI colours for VM console)
     tracing_subscriber::fmt()
         .with_target(false)

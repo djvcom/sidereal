@@ -229,24 +229,13 @@
           };
         };
 
-      # Build the builder rootfs image
-      buildBuilderRootfs =
+      # Pre-built Firecracker kernel from AWS CI (all required drivers built-in)
+      fetchFirecrackerKernel =
         pkgs:
-        import ./nix/builder-rootfs.nix {
-          inherit pkgs;
-          sidereal-builder-runtime = buildSiderealBuilderRuntime pkgs;
+        pkgs.fetchurl {
+          url = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.14/x86_64/vmlinux-6.1.155";
+          hash = "sha256-5BxwSL0kdefniBU4I/y5Fmp+C3jExEO9ZEbQFfpzX1M=";
         };
-
-      # Build the runtime rootfs image
-      buildRuntimeRootfs =
-        pkgs:
-        import ./nix/runtime-rootfs.nix {
-          inherit pkgs;
-          sidereal-runtime = buildSiderealRuntime pkgs;
-        };
-
-      # Build custom kernel for Firecracker VMs
-      buildFirecrackerKernel = pkgs: import ./nix/firecracker-kernel.nix { inherit pkgs; };
     in
     {
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
@@ -264,9 +253,7 @@
           sidereal-server = buildSidereal final;
           sidereal-runtime = buildSiderealRuntime final;
           sidereal-builder-runtime = buildSiderealBuilderRuntime final;
-          sidereal-builder-rootfs = buildBuilderRootfs final;
-          sidereal-runtime-rootfs = buildRuntimeRootfs final;
-          sidereal-firecracker-kernel = buildFirecrackerKernel final;
+          sidereal-firecracker-kernel = fetchFirecrackerKernel final;
         })
       ];
 
@@ -279,9 +266,7 @@
         sidereal-server = buildSidereal pkgs;
         sidereal-runtime = buildSiderealRuntime pkgs;
         sidereal-builder-runtime = buildSiderealBuilderRuntime pkgs;
-        sidereal-builder-rootfs = buildBuilderRootfs pkgs;
-        sidereal-runtime-rootfs = buildRuntimeRootfs pkgs;
-        sidereal-firecracker-kernel = buildFirecrackerKernel pkgs;
+        sidereal-firecracker-kernel = fetchFirecrackerKernel pkgs;
       });
 
       devShells = forAllSystems (pkgs: {

@@ -1,6 +1,6 @@
 //! Cargo build execution for the builder runtime.
 //!
-//! Executes cargo zigbuild and streams output back to the host via vsock.
+//! Executes cargo build and streams output back to the host via vsock.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;

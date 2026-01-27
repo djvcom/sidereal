@@ -3,12 +3,10 @@
 //! This crate provides functionality for:
 //! - Managing Firecracker microVM lifecycle
 //! - Communication with guest via vsock
-//! - Rootfs preparation and management
 //! - State proxying for guest state operations
 
 pub mod config;
 pub mod error;
-pub mod rootfs;
 pub mod vm;
 pub mod vsock;
 

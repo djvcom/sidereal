@@ -58,15 +58,14 @@ let
         enabled = cfg.build.vm.useFirecracker;
         vcpu_count = cfg.build.vm.vcpuCount;
         mem_size_mib = cfg.build.vm.memoryMb;
-        target = cfg.build.vm.target;
+        inherit (cfg.build.vm) target;
         kernel_path = cfg.kernelPath;
         builder_rootfs = cfg.builderRootfs;
-        runtime_rootfs = cfg.runtimeRootfs;
       };
     }
     // lib.optionalAttrs (cfg.build.forgeAuth.type != "none") {
       forge_auth = {
-        type = cfg.build.forgeAuth.type;
+        inherit (cfg.build.forgeAuth) type;
         key_path = cfg.build.forgeAuth.sshKeyPath;
       };
     };
@@ -114,57 +113,25 @@ in
       description = "The sidereal-runtime package (runs inside Firecracker VMs).";
     };
 
-    builderRuntimePackage = lib.mkOption {
-      type = lib.types.package;
-      default = pkgs.sidereal-builder-runtime or (throw "sidereal-builder-runtime package not found");
-      defaultText = lib.literalExpression "pkgs.sidereal-builder-runtime";
-      description = "The sidereal-builder-runtime package (runs inside builder VMs).";
-    };
-
-    builderRootfsPackage = lib.mkOption {
-      type = lib.types.package;
-      default = pkgs.sidereal-builder-rootfs or (throw "sidereal-builder-rootfs package not found");
-      defaultText = lib.literalExpression "pkgs.sidereal-builder-rootfs";
-      description = "Package providing the builder VM rootfs image (copied to dataDir on activation).";
-    };
-
     builderRootfs = lib.mkOption {
       type = lib.types.path;
       default = "${cfg.dataDir}/rootfs/builder.ext4";
       defaultText = lib.literalExpression ''"''${cfg.dataDir}/rootfs/builder.ext4"'';
       description = ''
         Path to the builder VM rootfs image.
-        Defaults to a writable copy in the data directory.
-        The image is copied from builderRootfsPackage during system activation.
-      '';
-    };
-
-    runtimeRootfsPackage = lib.mkOption {
-      type = lib.types.package;
-      default = pkgs.sidereal-runtime-rootfs or (throw "sidereal-runtime-rootfs package not found");
-      defaultText = lib.literalExpression "pkgs.sidereal-runtime-rootfs";
-      description = "Package providing the runtime rootfs template image (copied to dataDir on activation).";
-    };
-
-    runtimeRootfs = lib.mkOption {
-      type = lib.types.path;
-      default = "${cfg.dataDir}/rootfs/runtime.ext4";
-      defaultText = lib.literalExpression ''"''${cfg.dataDir}/rootfs/runtime.ext4"'';
-      description = ''
-        Path to the runtime rootfs template image.
-        Defaults to a writable copy in the data directory.
-        The image is copied from runtimeRootfsPackage during system activation.
+        Built from Docker using docker/builder-rootfs/build-rootfs.sh
+        and deployed to the data directory.
       '';
     };
 
     kernelPath = lib.mkOption {
       type = lib.types.path;
-      default = "${pkgs.sidereal-firecracker-kernel.dev}/vmlinux";
-      defaultText = lib.literalExpression ''"''${pkgs.sidereal-firecracker-kernel.dev}/vmlinux"'';
+      default = "${pkgs.sidereal-firecracker-kernel}";
+      defaultText = lib.literalExpression ''"''${pkgs.sidereal-firecracker-kernel}"'';
       description = ''
         Path to the Linux kernel (vmlinux) for Firecracker VMs.
-        Uses a custom kernel with virtio and ext4 built-in (not as modules)
-        since Firecracker VMs don't have an initrd.
+        Defaults to a pre-built kernel from the Firecracker CI bucket
+        with virtio, vsock, and ext4 drivers built-in.
       '';
     };
 
@@ -463,11 +430,10 @@ in
       "d ${cfg.dataDir}/rootfs 0755 ${cfg.user} ${cfg.group} -"
     ];
 
-    # Copy rootfs images from nix store to writable location on activation
-    system.activationScripts.sidereal-rootfs = lib.mkIf cfg.build.vm.useFirecracker ''
-      echo "Copying Sidereal rootfs images..."
-      install -m 644 -o ${cfg.user} -g ${cfg.group} ${cfg.builderRootfsPackage} ${cfg.dataDir}/rootfs/builder.ext4
-      install -m 644 -o ${cfg.user} -g ${cfg.group} ${cfg.runtimeRootfsPackage} ${cfg.dataDir}/rootfs/runtime.ext4
+    # Copy kernel from nix store on activation
+    system.activationScripts.sidereal-kernel = lib.mkIf cfg.build.vm.useFirecracker ''
+      echo "Installing Sidereal Firecracker kernel..."
+      install -Dm 644 -o ${cfg.user} -g ${cfg.group} ${cfg.kernelPath} ${cfg.dataDir}/kernel/vmlinux
     '';
 
     # PostgreSQL setup (if createLocally is true)

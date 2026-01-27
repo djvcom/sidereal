@@ -28,7 +28,6 @@ log() { echo -e "${GREEN}[+]${NC} $*"; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[-]${NC} $*" >&2; }
 
-# Check dependencies
 check_deps() {
     local missing=()
     command -v docker >/dev/null || missing+=("docker")
@@ -40,7 +39,6 @@ check_deps() {
     fi
 }
 
-# Build or find the builder-runtime binary
 get_builder_runtime() {
     local runtime_path="${PROJECT_ROOT}/target/x86_64-unknown-linux-musl/release/sidereal-builder-runtime"
 
@@ -57,45 +55,70 @@ get_builder_runtime() {
     echo "${runtime_path}"
 }
 
-# Build the Docker image
 build_image() {
     log "Building Docker image..."
     docker build -t "${IMAGE_NAME}" "${SCRIPT_DIR}"
 }
 
-# Create rootfs ext4 image
+smoke_test() {
+    log "Running smoke tests..."
+    docker run --rm "${IMAGE_NAME}" /usr/bin/cargo --version
+    docker run --rm "${IMAGE_NAME}" /usr/bin/rustc --version
+    docker run --rm "${IMAGE_NAME}" /bin/bash -c 'echo "shell OK"'
+    docker run --rm "${IMAGE_NAME}" /usr/bin/git --version
+    log "Smoke tests passed"
+}
+
+validate_staging() {
+    local staging="$1"
+    local missing=()
+
+    local required_paths=(
+        /sbin/init
+        /usr/bin/cargo
+        /usr/bin/rustc
+        /bin/bash
+        /etc/ssl/certs
+        /usr/bin/git
+    )
+
+    for path in "${required_paths[@]}"; do
+        if [[ ! -e "${staging}${path}" ]]; then
+            missing+=("${path}")
+        fi
+    done
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        error "Missing required files in rootfs: ${missing[*]}"
+        exit 1
+    fi
+
+    log "Rootfs validation passed"
+}
+
 create_rootfs() {
     local runtime_path="$1"
     local staging_dir
     staging_dir="$(mktemp -d)"
 
-    # Cleanup function
     cleanup() {
         if [[ -n "${staging_dir:-}" && -d "${staging_dir}" ]]; then
             rm -rf "${staging_dir}"
         fi
-        # Also clean up any leftover container
         docker rm "${CONTAINER_NAME}" 2>/dev/null || true
     }
     trap cleanup EXIT
 
     log "Creating container and exporting filesystem..."
 
-    # Create container (don't start it)
     docker create --name "${CONTAINER_NAME}" "${IMAGE_NAME}" /bin/true
-
-    # Export filesystem
     docker export "${CONTAINER_NAME}" | tar -C "${staging_dir}" -xf -
-
-    # Clean up container
     docker rm "${CONTAINER_NAME}"
 
-    # Copy builder-runtime as /sbin/init
     log "Installing builder-runtime as /sbin/init..."
     cp "${runtime_path}" "${staging_dir}/sbin/init"
     chmod 755 "${staging_dir}/sbin/init"
 
-    # Remove unnecessary files to reduce size
     log "Cleaning up unnecessary files..."
     rm -rf "${staging_dir}/var/cache/apt" \
            "${staging_dir}/var/lib/apt/lists"/* \
@@ -104,10 +127,10 @@ create_rootfs() {
            "${staging_dir}/usr/share/locale" \
            2>/dev/null || true
 
-    # Create ext4 image
+    validate_staging "${staging_dir}"
+
     log "Creating ext4 filesystem (${ROOTFS_SIZE})..."
 
-    # Parse size to bytes
     local size_bytes
     case "${ROOTFS_SIZE}" in
         *G) size_bytes=$(( ${ROOTFS_SIZE%G} * 1024 * 1024 * 1024 )) ;;
@@ -117,10 +140,8 @@ create_rootfs() {
     esac
     local size_blocks=$(( size_bytes / 1024 ))
 
-    # Ensure output directory exists
     mkdir -p "$(dirname "${OUTPUT_PATH}")"
 
-    # Create ext4 image from staging directory
     mkfs.ext4 -d "${staging_dir}" -L "builder" -q "${OUTPUT_PATH}" "${size_blocks}"
 
     log "Created rootfs: ${OUTPUT_PATH}"
@@ -137,6 +158,7 @@ main() {
     log "Using builder-runtime: ${runtime_path}"
 
     build_image
+    smoke_test
     create_rootfs "${runtime_path}"
 
     log "Done! Rootfs image: ${OUTPUT_PATH}"

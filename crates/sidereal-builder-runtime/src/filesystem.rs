@@ -164,29 +164,30 @@ fn mount_dev() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 ///
 /// Creates necessary directories and sets up symlinks for tools.
 pub fn setup_build_environment() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    setup_build_environment_in(Path::new("/"))
+}
+
+fn setup_build_environment_in(root: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Setting up build environment");
 
-    // Ensure /bin/sh exists (required by cargo for build scripts)
-    let bin_sh = Path::new("/bin/sh");
+    let bin_sh = root.join("bin/sh");
     if !bin_sh.exists() {
-        // Try to find busybox or bash
         let shell_candidates = [
-            "/opt/busybox/bin/busybox",
-            "/opt/busybox/bin/sh",
-            "/usr/bin/bash",
-            "/bin/bash",
+            "bin/bash",
+            "usr/bin/bash",
+            "bin/dash",
+            "opt/busybox/bin/sh",
+            "opt/busybox/bin/busybox",
         ];
 
         for candidate in shell_candidates {
-            let candidate_path = Path::new(candidate);
+            let candidate_path = root.join(candidate);
             if candidate_path.exists() {
                 if let Some(parent) = bin_sh.parent() {
                     fs::create_dir_all(parent)?;
                 }
 
-                // Create symlink to the shell
-                std::os::unix::fs::symlink(candidate_path, bin_sh)?;
-
+                std::os::unix::fs::symlink(&candidate_path, &bin_sh)?;
                 debug!(shell = %candidate, "linked /bin/sh");
                 break;
             }
@@ -197,62 +198,85 @@ pub fn setup_build_environment() -> Result<(), Box<dyn std::error::Error + Send 
         }
     }
 
-    // Set up PATH components
-    setup_path_symlinks()?;
+    setup_path_symlinks_in(root)?;
 
     Ok(())
 }
 
-/// Create symlinks in /usr/bin for tools installed in /opt.
-fn setup_path_symlinks() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let usr_bin = Path::new("/usr/bin");
+/// Create symlinks in /usr/bin for tools, checking Docker and Nix locations.
+fn setup_path_symlinks_in(root: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let usr_bin = root.join("usr/bin");
     if !usr_bin.exists() {
-        fs::create_dir_all(usr_bin)?;
+        fs::create_dir_all(&usr_bin)?;
     }
 
-    // Tools we need accessible in PATH
-    let tools = [
-        ("/opt/rust/bin/cargo", "/usr/bin/cargo"),
-        ("/opt/rust/bin/rustc", "/usr/bin/rustc"),
+    // Each entry: (possible source locations checked in order, target under usr/bin)
+    let tools: &[(&[&str], &str)] = &[
         (
-            "/opt/cargo-zigbuild/bin/cargo-zigbuild",
-            "/usr/bin/cargo-zigbuild",
+            &[
+                "usr/local/rustup/toolchains/1.92-x86_64-unknown-linux-gnu/bin/cargo",
+                "opt/rust/bin/cargo",
+            ],
+            "cargo",
         ),
-        ("/opt/zig/bin/zig", "/usr/bin/zig"),
-        ("/opt/gcc/bin/gcc", "/usr/bin/gcc"),
-        ("/opt/gcc/bin/cc", "/usr/bin/cc"),
-        ("/opt/git/bin/git", "/usr/bin/git"),
-        ("/opt/pkg-config/bin/pkg-config", "/usr/bin/pkg-config"),
+        (
+            &[
+                "usr/local/rustup/toolchains/1.92-x86_64-unknown-linux-gnu/bin/rustc",
+                "opt/rust/bin/rustc",
+            ],
+            "rustc",
+        ),
+        (
+            &[
+                "usr/local/cargo/bin/cargo-zigbuild",
+                "opt/cargo-zigbuild/bin/cargo-zigbuild",
+            ],
+            "cargo-zigbuild",
+        ),
+        (&["opt/zig/bin/zig"], "zig"),
+        (&["usr/bin/gcc", "opt/gcc/bin/gcc"], "gcc"),
+        (&["usr/bin/cc", "opt/gcc/bin/cc"], "cc"),
+        (&["usr/bin/git", "opt/git/bin/git"], "git"),
+        (
+            &["usr/bin/pkg-config", "opt/pkg-config/bin/pkg-config"],
+            "pkg-config",
+        ),
     ];
 
-    for (source, target) in tools {
-        let source_path = Path::new(source);
-        let target_path = Path::new(target);
+    for (sources, name) in tools {
+        let target_path = usr_bin.join(name);
+        if target_path.exists() {
+            continue;
+        }
 
-        if source_path.exists() && !target_path.exists() {
-            std::os::unix::fs::symlink(source_path, target_path)?;
-            debug!(source = %source, target = %target, "created symlink");
+        for source in *sources {
+            let source_path = root.join(source);
+            if source_path.exists() {
+                std::os::unix::fs::symlink(&source_path, &target_path)?;
+                debug!(source = %source, target = %name, "created symlink");
+                break;
+            }
         }
     }
 
-    // Set up dynamic linker - required for dynamically linked binaries
-    setup_dynamic_linker()?;
+    setup_dynamic_linker_in(root)?;
 
     Ok(())
 }
 
 /// Set up the dynamic linker symlink so dynamically linked binaries can run.
-fn setup_dynamic_linker() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let lib64 = Path::new("/lib64");
-    if !lib64.exists() {
-        fs::create_dir_all(lib64)?;
+fn setup_dynamic_linker_in(root: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let lib64 = root.join("lib64");
+    let ld_target = lib64.join("ld-linux-x86-64.so.2");
+
+    if ld_target.exists() {
+        return Ok(());
     }
 
-    let ld_source = Path::new("/opt/glibc/lib/ld-linux-x86-64.so.2");
-    let ld_target = Path::new("/lib64/ld-linux-x86-64.so.2");
-
-    if ld_source.exists() && !ld_target.exists() {
-        std::os::unix::fs::symlink(ld_source, ld_target)?;
+    let ld_source = root.join("opt/glibc/lib/ld-linux-x86-64.so.2");
+    if ld_source.exists() {
+        fs::create_dir_all(&lib64)?;
+        std::os::unix::fs::symlink(&ld_source, &ld_target)?;
         debug!("linked dynamic linker");
     }
 
@@ -261,19 +285,144 @@ fn setup_dynamic_linker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
 
 /// Set up SSL certificate paths for cargo to use HTTPS.
 pub fn setup_ssl_certs() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let etc_ssl = Path::new("/etc/ssl");
-    if !etc_ssl.exists() {
-        fs::create_dir_all(etc_ssl)?;
+    setup_ssl_certs_in(Path::new("/"))
+}
+
+fn setup_ssl_certs_in(root: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let certs_target = root.join("etc/ssl/certs");
+    if certs_target.exists() {
+        return Ok(());
     }
 
-    // Link CA certificates
-    let cacert_source = Path::new("/opt/cacert/etc/ssl/certs");
-    let certs_target = Path::new("/etc/ssl/certs");
-
-    if cacert_source.exists() && !certs_target.exists() {
-        std::os::unix::fs::symlink(cacert_source, certs_target)?;
+    let cacert_source = root.join("opt/cacert/etc/ssl/certs");
+    if cacert_source.exists() {
+        let etc_ssl = root.join("etc/ssl");
+        fs::create_dir_all(&etc_ssl)?;
+        std::os::unix::fs::symlink(&cacert_source, &certs_target)?;
         debug!("linked SSL certificates");
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::TempDir;
+
+    fn create_executable(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn docker_paths_already_present_are_skipped() {
+        let root = TempDir::new().unwrap();
+        create_executable(&root.path().join("usr/bin/cargo"));
+
+        setup_path_symlinks_in(root.path()).unwrap();
+
+        assert!(!root.path().join("usr/bin/cargo").is_symlink());
+    }
+
+    #[test]
+    fn nix_paths_get_symlinked_to_usr_bin() {
+        let root = TempDir::new().unwrap();
+        create_executable(&root.path().join("opt/rust/bin/cargo"));
+
+        setup_path_symlinks_in(root.path()).unwrap();
+
+        let link = root.path().join("usr/bin/cargo");
+        assert!(link.is_symlink());
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            root.path().join("opt/rust/bin/cargo")
+        );
+    }
+
+    #[test]
+    fn rustup_toolchain_preferred_over_opt() {
+        let root = TempDir::new().unwrap();
+        let rustup_cargo = root
+            .path()
+            .join("usr/local/rustup/toolchains/1.92-x86_64-unknown-linux-gnu/bin/cargo");
+        create_executable(&rustup_cargo);
+        create_executable(&root.path().join("opt/rust/bin/cargo"));
+
+        setup_path_symlinks_in(root.path()).unwrap();
+
+        let link = root.path().join("usr/bin/cargo");
+        assert!(link.is_symlink());
+        assert_eq!(fs::read_link(&link).unwrap(), rustup_cargo);
+    }
+
+    #[test]
+    fn shell_detection_finds_bash() {
+        let root = TempDir::new().unwrap();
+        create_executable(&root.path().join("bin/bash"));
+
+        setup_build_environment_in(root.path()).unwrap();
+
+        let sh = root.path().join("bin/sh");
+        assert!(sh.exists());
+        assert!(sh.is_symlink());
+    }
+
+    #[test]
+    fn shell_detection_skips_when_sh_exists() {
+        let root = TempDir::new().unwrap();
+        create_executable(&root.path().join("bin/sh"));
+        create_executable(&root.path().join("bin/bash"));
+
+        setup_build_environment_in(root.path()).unwrap();
+
+        assert!(!root.path().join("bin/sh").is_symlink());
+    }
+
+    #[test]
+    fn ssl_certs_skipped_when_present() {
+        let root = TempDir::new().unwrap();
+        fs::create_dir_all(root.path().join("etc/ssl/certs")).unwrap();
+
+        setup_ssl_certs_in(root.path()).unwrap();
+
+        assert!(!root.path().join("etc/ssl/certs").is_symlink());
+    }
+
+    #[test]
+    fn ssl_certs_linked_from_nix_cacert() {
+        let root = TempDir::new().unwrap();
+        fs::create_dir_all(root.path().join("opt/cacert/etc/ssl/certs")).unwrap();
+
+        setup_ssl_certs_in(root.path()).unwrap();
+
+        let link = root.path().join("etc/ssl/certs");
+        assert!(link.is_symlink());
+    }
+
+    #[test]
+    fn dynamic_linker_skipped_when_present() {
+        let root = TempDir::new().unwrap();
+        let ld = root.path().join("lib64/ld-linux-x86-64.so.2");
+        create_executable(&ld);
+
+        setup_dynamic_linker_in(root.path()).unwrap();
+
+        assert!(!ld.is_symlink());
+    }
+
+    #[test]
+    fn dynamic_linker_linked_from_nix_glibc() {
+        let root = TempDir::new().unwrap();
+        create_executable(&root.path().join("opt/glibc/lib/ld-linux-x86-64.so.2"));
+
+        setup_dynamic_linker_in(root.path()).unwrap();
+
+        let link = root.path().join("lib64/ld-linux-x86-64.so.2");
+        assert!(link.is_symlink());
+    }
 }

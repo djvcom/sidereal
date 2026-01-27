@@ -41,9 +41,6 @@ pub enum FirecrackerError {
     #[error("Protocol error: {0}")]
     ProtocolError(String),
 
-    #[error("Rootfs preparation failed: {0}")]
-    RootfsFailed(String),
-
     #[error("Cross-compilation failed: {0}")]
     CrossCompileFailed(String),
 
