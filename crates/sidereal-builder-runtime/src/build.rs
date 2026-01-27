@@ -86,6 +86,14 @@ pub async fn execute_build(
         }
     };
 
+    // Log captured output for debugging
+    if !stderr_lines.is_empty() {
+        error!(stderr = %stderr_lines.join("\n"), "Cargo stderr output");
+    }
+    if !stdout_lines.is_empty() {
+        info!(stdout = %stdout_lines.join("\n"), "Cargo stdout output");
+    }
+
     let duration_secs = start_time.elapsed().as_secs_f64();
 
     #[allow(clippy::as_conversions)]
@@ -127,8 +135,8 @@ fn setup_environment(cargo_home: &Path, target_dir: &Path) -> Result<(), VsockEr
 fn build_cargo_command(request: &BuildRequest) -> Command {
     let mut cmd = Command::new("cargo");
 
-    // Use zigbuild for cross-compilation
-    cmd.arg("zigbuild");
+    // Use regular build (zigbuild triggers rustup network calls)
+    cmd.arg("build");
 
     // Build all workspace members
     cmd.arg("--workspace");
@@ -158,10 +166,12 @@ fn build_cargo_command(request: &BuildRequest) -> Command {
     cmd.env("SSL_CERT_FILE", "/etc/ssl/certs/ca-bundle.crt");
     cmd.env("SSL_CERT_DIR", "/etc/ssl/certs");
 
-    // Cargo proxy via vsock (HTTP_PROXY format for cargo)
-    // The proxy runs on the host and is accessible via vsock
-    cmd.env("HTTP_PROXY", "http://vsock:1080");
-    cmd.env("HTTPS_PROXY", "http://vsock:1080");
+    // Offline mode - VM has no network access
+    cmd.env("CARGO_NET_OFFLINE", "true");
+    // Use the system rustup/cargo installation and prevent auto-updates
+    cmd.env("RUSTUP_HOME", "/usr/local/rustup");
+    cmd.env("RUSTUP_TOOLCHAIN", "1.92-x86_64-unknown-linux-gnu");
+    cmd.env("RUSTUP_UPDATE_ROOT", "file:///nonexistent");
 
     // Disable incremental compilation (not useful for ephemeral VMs)
     cmd.env("CARGO_INCREMENTAL", "0");

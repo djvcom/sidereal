@@ -7,17 +7,17 @@
 //! and handle shutdown requests.
 
 use nix::sys::signal::{signal, SigHandler, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::Pid;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 /// Set up signal handlers for the builder VM init process.
 pub fn setup_signal_handlers() {
     info!("Setting up signal handlers");
 
     unsafe {
-        // Reap zombie processes (important as PID 1)
-        let _ = signal(Signal::SIGCHLD, SigHandler::Handler(handle_sigchld));
+        // NOTE: We intentionally do NOT install a SIGCHLD handler that reaps children.
+        // While PID 1 normally needs to reap orphans, our builder VM only spawns cargo
+        // as a child, and we wait on it explicitly. A reaping handler would cause ECHILD
+        // when we try to wait. Since we have no orphan processes, this is safe.
 
         // Handle termination signals
         let _ = signal(Signal::SIGTERM, SigHandler::Handler(handle_sigterm));
@@ -26,26 +26,6 @@ pub fn setup_signal_handlers() {
         // Ignore these signals
         let _ = signal(Signal::SIGHUP, SigHandler::SigIgn);
         let _ = signal(Signal::SIGPIPE, SigHandler::SigIgn);
-    }
-}
-
-/// Handle SIGCHLD - reap zombie child processes.
-extern "C" fn handle_sigchld(_: libc::c_int) {
-    loop {
-        match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::Exited(pid, status)) => {
-                debug!(pid = pid.as_raw(), status = status, "Child exited");
-            }
-            Ok(WaitStatus::Signaled(pid, sig, _)) => {
-                debug!(pid = pid.as_raw(), signal = ?sig, "Child signaled");
-            }
-            Ok(WaitStatus::StillAlive) | Err(nix::errno::Errno::ECHILD) => break,
-            Err(e) => {
-                warn!("waitpid error: {}", e);
-                break;
-            }
-            _ => {}
-        }
     }
 }
 
