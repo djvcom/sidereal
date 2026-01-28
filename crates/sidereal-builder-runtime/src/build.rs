@@ -135,8 +135,7 @@ fn setup_environment(cargo_home: &Path, target_dir: &Path) -> Result<(), VsockEr
 fn build_cargo_command(request: &BuildRequest) -> Command {
     let mut cmd = Command::new("cargo");
 
-    // Use regular build (zigbuild triggers rustup network calls)
-    cmd.arg("build");
+    cmd.arg("zigbuild");
 
     // Build all workspace members
     cmd.arg("--workspace");

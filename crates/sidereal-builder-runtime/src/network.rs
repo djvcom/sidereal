@@ -39,7 +39,11 @@ pub fn setup_loopback() -> std::io::Result<()> {
         ifr.ifr_name[..name.len()].copy_from_slice(&name.map(|b| b as libc::c_char));
         ifr.ifr_ifru.ifru_flags = libc::IFF_UP as libc::c_short;
 
-        let ret = libc::ioctl(sock, libc::SIOCSIFFLAGS, &ifr);
+        #[cfg(target_env = "musl")]
+        let request = libc::SIOCSIFFLAGS as libc::c_int;
+        #[cfg(not(target_env = "musl"))]
+        let request = libc::SIOCSIFFLAGS;
+        let ret = libc::ioctl(sock, request, &ifr);
         libc::close(sock);
 
         if ret < 0 {
