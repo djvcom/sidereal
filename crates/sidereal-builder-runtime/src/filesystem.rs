@@ -1,7 +1,11 @@
 //! Filesystem setup for the builder VM.
 //!
-//! Mounts required filesystems and prepares mount points for
-//! virtio-blk drives containing source code, target directory, and cargo cache.
+//! Mounts required filesystems and prepares the build environment.
+//!
+//! The rootfs is mounted read-only to prevent state leakage between builds.
+//! Working directories (`/source`, `/cargo`, `/output`) are mounted as tmpfs,
+//! ensuring each build starts with a clean slate. The `/target` directory is
+//! mounted from a fresh virtio-blk drive for each build.
 
 use nix::mount::{mount, MsFlags};
 use std::fs;
@@ -20,18 +24,26 @@ pub fn mount_filesystems() -> Result<(), Box<dyn std::error::Error + Send + Sync
     Ok(())
 }
 
-/// Mount virtio-blk drives for build output.
+/// Mount build drives and working directories.
 ///
 /// Mounts:
-/// - `/dev/vdb` to `/target` (read-write) - compilation output
+/// - `/dev/vdb` to `/target` (read-write) - compilation output (fresh ext4 per build)
+/// - tmpfs to `/source` (1GB) - git clone destination
+/// - tmpfs to `/cargo` (1GB) - cargo registry cache
+/// - tmpfs to `/output` (512MB) - artifact staging
 ///
-/// Note: Source code is cloned by the VM via git, not mounted from host.
+/// Working directories use tmpfs to ensure isolation between builds. The rootfs
+/// directories exist but are shadowed by the tmpfs mounts.
 pub fn mount_build_drives() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Mounting build drives");
 
-    create_mount_points()?;
+    // Mount tmpfs over working directories for isolation
+    // These directories exist in the rootfs but we shadow them with tmpfs
+    mount_working_tmpfs("/source", "1G")?;
+    mount_working_tmpfs("/cargo", "1G")?;
+    mount_working_tmpfs("/output", "512M")?;
 
-    // Mount target drive (read-write)
+    // Mount target drive (read-write) - fresh ext4 image created per build
     let target_dev = Path::new("/dev/vdb");
     let target_mount = Path::new("/target");
 
@@ -51,24 +63,50 @@ pub fn mount_build_drives() -> Result<(), Box<dyn std::error::Error + Send + Syn
     Ok(())
 }
 
-/// Create mount points and working directories.
-///
-/// Creates:
-/// - /source: Where git clones the repository
-/// - /target: Compilation output (mounted from virtio-blk)
-/// - /cargo: Cargo registry cache
-/// - /output: Artifact output directory
-pub fn create_mount_points() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let dirs = ["/source", "/target", "/cargo", "/output"];
+/// Mount a tmpfs at the given path with the specified size.
+fn mount_working_tmpfs(
+    path: &str,
+    size: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let target = Path::new(path);
 
-    for dir in dirs {
-        let path = Path::new(dir);
-        if !path.exists() {
-            fs::create_dir_all(path)?;
-            debug!(path = %dir, "created directory");
-        }
+    // Create mount point if it doesn't exist (shouldn't happen with proper rootfs)
+    if !target.exists() {
+        info!(path = %path, "Creating mount point");
+        fs::create_dir_all(target)?;
     }
 
+    let options = format!("size={size}");
+    info!(path = %path, size = %size, "Mounting tmpfs for working directory");
+    mount(
+        Some("tmpfs"),
+        target,
+        Some("tmpfs"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
+        Some(options.as_str()),
+    )?;
+    info!(path = %path, "tmpfs mounted successfully");
+
+    Ok(())
+}
+
+/// Remount the rootfs as read-only.
+///
+/// This prevents any accidental writes to the rootfs and ensures complete
+/// isolation between builds. Should be called after all setup that requires
+/// writing to the rootfs is complete.
+pub fn remount_rootfs_readonly() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    info!("Remounting rootfs read-only");
+
+    mount(
+        None::<&str>,
+        "/",
+        None::<&str>,
+        MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
+        None::<&str>,
+    )?;
+
+    debug!("Rootfs is now read-only");
     Ok(())
 }
 

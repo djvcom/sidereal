@@ -2,19 +2,21 @@
 //!
 //! This binary:
 //! 1. Mounts required filesystems (proc, sys, tmp, dev)
-//! 2. Sets up signal handlers (PID 1 responsibilities)
-//! 3. Sets up the build environment (symlinks, certificates)
-//! 4. Listens on vsock port 1028 for a build request
-//! 5. Clones the git repository
-//! 6. Pulls caches from S3 (if configured)
-//! 7. Downloads the runtime binary from S3
-//! 8. Executes cargo zigbuild with streaming output
-//! 9. Discovers deployable projects
-//! 10. Creates artifact rootfs images
-//! 11. Uploads artifacts to S3
-//! 12. Pushes caches to S3 (if configured)
-//! 13. Sends the build result back to the host
-//! 14. Shuts down the VM
+//! 2. Mounts tmpfs over working directories for build isolation
+//! 3. Sets up signal handlers (PID 1 responsibilities)
+//! 4. Sets up the build environment (symlinks, certificates)
+//! 5. Remounts rootfs read-only to prevent state leakage
+//! 6. Listens on vsock port 1028 for a build request
+//! 7. Clones the git repository
+//! 8. Pulls caches from S3 (if configured)
+//! 9. Downloads the runtime binary from S3
+//! 10. Executes cargo zigbuild with streaming output
+//! 11. Discovers deployable projects
+//! 12. Creates artifact rootfs images
+//! 13. Uploads artifacts to S3
+//! 14. Pushes caches to S3 (if configured)
+//! 15. Sends the build result back to the host
+//! 16. Shuts down the VM
 
 use std::path::Path;
 use std::time::Instant;
@@ -49,26 +51,32 @@ async fn main() {
 
     info!("Sidereal builder runtime starting (PID 1)");
 
+    // Mount core filesystems (proc, sys, tmp, dev)
     if let Err(e) = filesystem::mount_filesystems() {
         error!(error = %e, "Failed to mount filesystems");
     }
 
-    if let Err(e) = filesystem::create_mount_points() {
-        error!(error = %e, "Failed to create mount points");
-    }
-
+    // Mount build drives and tmpfs working directories
     if let Err(e) = filesystem::mount_build_drives() {
         error!(error = %e, "Failed to mount build drives");
     }
 
     signals::setup_signal_handlers();
 
+    // Set up build environment (symlinks for tools)
     if let Err(e) = filesystem::setup_build_environment() {
         error!(error = %e, "Failed to set up build environment");
     }
 
+    // Set up SSL certificates for HTTPS
     if let Err(e) = filesystem::setup_ssl_certs() {
         error!(error = %e, "Failed to set up SSL certificates");
+    }
+
+    // Remount rootfs read-only now that setup is complete
+    // This prevents any state leakage between builds
+    if let Err(e) = filesystem::remount_rootfs_readonly() {
+        error!(error = %e, "Failed to remount rootfs read-only");
     }
 
     if let Err(e) = network::setup_loopback() {

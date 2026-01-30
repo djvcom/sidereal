@@ -266,6 +266,10 @@ fn build_cargo_command(request: &BuildRequest) -> Command {
 
     cmd.env("CARGO_INCREMENTAL", "0");
 
+    // Ensure cache directories go to writable tmpfs, not read-only rootfs
+    cmd.env("HOME", "/tmp");
+    cmd.env("XDG_CACHE_HOME", "/tmp/.cache");
+
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 

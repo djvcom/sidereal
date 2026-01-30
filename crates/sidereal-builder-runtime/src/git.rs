@@ -92,8 +92,24 @@ pub async fn clone_repository(config: &GitConfig, target_dir: &Path) -> Result<(
 
 /// Perform the actual git clone and checkout.
 async fn do_clone(config: &GitConfig, https_url: &str, target_dir: &Path) -> Result<(), GitError> {
-    // Ensure target directory exists
-    tokio::fs::create_dir_all(target_dir).await?;
+    // Clean up any existing content in the target directory.
+    // Note: We clear contents rather than removing the directory itself because
+    // /source is a tmpfs mount point - removing it would fail on read-only rootfs.
+    if target_dir.exists() {
+        let mut entries = tokio::fs::read_dir(target_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_dir() {
+                tokio::fs::remove_dir_all(&path).await?;
+            } else {
+                tokio::fs::remove_file(&path).await?;
+            }
+        }
+        debug!(path = %target_dir.display(), "Cleared directory contents");
+    } else {
+        // Create the directory if it doesn't exist (shouldn't happen with tmpfs mount)
+        tokio::fs::create_dir_all(target_dir).await?;
+    }
 
     // Clone the repository with shallow depth for efficiency
     // Configure git to use the HTTP proxy and mark directory as safe
