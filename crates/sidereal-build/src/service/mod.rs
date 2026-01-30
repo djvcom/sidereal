@@ -188,7 +188,7 @@ impl Default for LimitsConfig {
 }
 
 const fn default_timeout_secs() -> u64 {
-    600
+    1800
 }
 
 const fn default_memory_limit() -> u32 {
@@ -264,11 +264,11 @@ fn default_builder_rootfs() -> PathBuf {
 }
 
 const fn default_vcpu_count() -> u8 {
-    2
+    8
 }
 
 const fn default_vm_memory() -> u32 {
-    4096
+    16384
 }
 
 fn default_target() -> String {
@@ -287,6 +287,6 @@ mod tests {
             Transport::Unix { .. } => panic!("expected TCP transport"),
         }
         assert_eq!(config.worker.count, 2);
-        assert_eq!(config.limits.timeout(), Duration::from_secs(600));
+        assert_eq!(config.limits.timeout(), Duration::from_secs(1800));
     }
 }

@@ -54,6 +54,9 @@ let
       paths = {
         runtime = "${cfg.runtimePackage}/bin/sidereal-runtime";
       };
+      limits = {
+        timeout_secs = cfg.build.timeoutSecs;
+      };
       vm = {
         enabled = cfg.build.vm.useFirecracker;
         vcpu_count = cfg.build.vm.vcpuCount;
@@ -224,6 +227,12 @@ in
         description = "Number of concurrent build workers.";
       };
 
+      timeoutSecs = lib.mkOption {
+        type = lib.types.int;
+        default = 1800;
+        description = "Build timeout in seconds.";
+      };
+
       forgeAuth = {
         type = lib.mkOption {
           type = lib.types.enum [
@@ -245,13 +254,13 @@ in
       vm = {
         vcpuCount = lib.mkOption {
           type = lib.types.int;
-          default = 2;
+          default = 8;
           description = "Number of vCPUs for builder VMs.";
         };
 
         memoryMb = lib.mkOption {
           type = lib.types.int;
-          default = 4096;
+          default = 16384;
           description = "Memory in MB for builder VMs.";
         };
 
