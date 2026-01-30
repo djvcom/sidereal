@@ -387,7 +387,7 @@ in
         "debug"
         "trace"
       ];
-      default = "info";
+      default = "debug";
       description = "Log level for the Sidereal services.";
     };
 
