@@ -26,7 +26,9 @@ use crate::protocol::{
     BuildResult as ProtocolBuildResult, CacheConfig as ProtocolCacheConfig, GitConfig,
     RuntimeConfig, S3Config, BUILD_PORT,
 };
-use crate::proxy::{CargoProxy, ProxyConfig, ProxyServer, PROXY_PORT};
+use crate::proxy::{
+    CargoProxy, ProxyConfig, ProxyServer, TcpForwarder, PROXY_PORT, S3_FORWARD_PORT,
+};
 use crate::types::{BuildStatus, FunctionMetadata, ProjectId};
 
 /// Configuration for the VM-based compiler.
@@ -202,6 +204,20 @@ impl FirecrackerCompiler {
         });
         debug!(port = PROXY_PORT, "Cargo proxy server started");
 
+        // Start S3/Garage forwarder
+        let s3_path = PathBuf::from(format!("{}_{S3_FORWARD_PORT}", vsock_path.display()));
+        let s3_target = self.get_s3_forward_target();
+        let s3_forwarder = TcpForwarder::new(s3_target);
+        let s3_cancel = cancel.child_token();
+
+        let s3_cancel_trigger = s3_cancel.clone();
+        let s3_handle = tokio::spawn(async move {
+            if let Err(e) = s3_forwarder.run(&s3_path, s3_cancel).await {
+                warn!(error = %e, "S3 forwarder error");
+            }
+        });
+        debug!(port = S3_FORWARD_PORT, target = %s3_target, "S3 forwarder started");
+
         let console_log_path = vm.console_log_path().to_path_buf();
         let read_console_tail = || -> String {
             std::fs::read_to_string(&console_log_path)
@@ -223,7 +239,9 @@ impl FirecrackerCompiler {
                 let console_tail = read_console_tail();
                 // Clean up
                 proxy_cancel_trigger.cancel();
+                s3_cancel_trigger.cancel();
                 let _ = proxy_handle.await;
+                let _ = s3_handle.await;
                 let _ = std::fs::remove_dir_all(&build_dir);
 
                 return Err(BuildError::SandboxSetup(format!(
@@ -264,7 +282,9 @@ impl FirecrackerCompiler {
         }
 
         proxy_cancel_trigger.cancel();
+        s3_cancel_trigger.cancel();
         let _ = proxy_handle.await;
+        let _ = s3_handle.await;
 
         // Clean up build directory
         let _ = std::fs::remove_dir_all(&build_dir);
@@ -342,6 +362,41 @@ impl FirecrackerCompiler {
         }
 
         config
+    }
+
+    /// Get the target address for S3 forwarding.
+    ///
+    /// Extracts host and port from the S3 endpoint URL.
+    fn get_s3_forward_target(&self) -> std::net::SocketAddr {
+        let endpoint = &self.config.s3.endpoint;
+
+        // Parse the endpoint URL to extract host and port
+        if let Some(rest) = endpoint.strip_prefix("http://") {
+            if let Some((host, port)) = rest.split_once(':') {
+                let port = port.trim_end_matches('/').parse().unwrap_or(80);
+                if let Ok(addr) = format!("{host}:{port}").parse() {
+                    return addr;
+                }
+            }
+            // No port specified, use default
+            if let Ok(addr) = format!("{rest}:80").parse() {
+                return addr;
+            }
+        } else if let Some(rest) = endpoint.strip_prefix("https://") {
+            if let Some((host, port)) = rest.split_once(':') {
+                let port = port.trim_end_matches('/').parse().unwrap_or(443);
+                if let Ok(addr) = format!("{host}:{port}").parse() {
+                    return addr;
+                }
+            }
+            // No port specified, use default
+            if let Ok(addr) = format!("{rest}:443").parse() {
+                return addr;
+            }
+        }
+
+        // Default fallback
+        "127.0.0.1:3900".parse().unwrap()
     }
 
     fn create_build_request(&self, input: &BuildInput) -> BuildRequest {

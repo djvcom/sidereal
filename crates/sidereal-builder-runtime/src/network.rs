@@ -22,6 +22,9 @@ use tracing::{debug, error, info};
 /// Vsock CID for the host (always 2 in Firecracker).
 const VMADDR_CID_HOST: u32 = 2;
 
+/// Vsock port for S3/Garage forwarding (distinct from proxy port).
+pub const S3_FORWARD_PORT: u32 = 3900;
+
 /// Bring up the loopback (`lo`) interface so 127.0.0.1 is reachable.
 ///
 /// The VM kernel does not auto-configure loopback; PID 1 must do it.
@@ -113,6 +116,65 @@ pub async fn start_proxy_bridge(
                 }
 
                 debug!(%peer, "Proxy bridge connection closed");
+            });
+        }
+    });
+
+    Ok(handle)
+}
+
+/// Start an S3/Garage bridge that forwards local port 3900 to the host.
+///
+/// This allows the VM to access Garage running on the host at 127.0.0.1:3900.
+/// The S3 client in the VM connects to 127.0.0.1:3900 and traffic is bridged
+/// via vsock to the host's S3 forwarder.
+pub async fn start_s3_bridge(listen_port: u16) -> std::io::Result<JoinHandle<()>> {
+    let listen_addr: SocketAddr = format!("127.0.0.1:{listen_port}").parse().unwrap();
+    let listener = TcpListener::bind(listen_addr).await?;
+    info!(%listen_addr, "S3 bridge listening");
+
+    let handle = tokio::spawn(async move {
+        loop {
+            let (tcp_stream, peer) = match listener.accept().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    error!(error = %e, "S3 bridge accept failed");
+                    continue;
+                }
+            };
+
+            debug!(%peer, "S3 bridge accepted connection");
+
+            tokio::spawn(async move {
+                let vsock_addr = VsockAddr::new(VMADDR_CID_HOST, S3_FORWARD_PORT);
+                let vsock_stream = match VsockStream::connect(vsock_addr).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!(error = %e, "S3 bridge vsock connect failed");
+                        return;
+                    }
+                };
+
+                let (mut tcp_read, mut tcp_write) = tokio::io::split(tcp_stream);
+                let (mut vsock_read, mut vsock_write) = tokio::io::split(vsock_stream);
+
+                let client_to_host = tokio::io::copy(&mut tcp_read, &mut vsock_write);
+                let host_to_client = tokio::io::copy(&mut vsock_read, &mut tcp_write);
+
+                tokio::select! {
+                    result = client_to_host => {
+                        if let Err(e) = result {
+                            debug!(error = %e, "S3 bridge client->host ended");
+                        }
+                    }
+                    result = host_to_client => {
+                        if let Err(e) = result {
+                            debug!(error = %e, "S3 bridge host->client ended");
+                        }
+                    }
+                }
+
+                debug!(%peer, "S3 bridge connection closed");
             });
         }
     });

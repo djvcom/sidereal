@@ -47,6 +47,9 @@ pub struct S3Client {
 
 impl S3Client {
     /// Create a new S3 client from configuration.
+    ///
+    /// The S3 client connects to the endpoint directly. In the VM, a bridge
+    /// forwards port 3900 to the host via vsock.
     pub fn new(config: &S3Config) -> Result<Self, S3Error> {
         let store = AmazonS3Builder::new()
             .with_endpoint(&config.endpoint)

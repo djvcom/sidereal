@@ -6,19 +6,41 @@ use std::path::Path;
 use std::process::Stdio;
 
 use tokio::process::Command;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::protocol::GitConfig;
+
+/// HTTP proxy address for git operations.
+const HTTP_PROXY: &str = "http://127.0.0.1:1080";
+
+/// Convert SSH-style git URLs to HTTPS URLs.
+///
+/// Examples:
+/// - `git@github.com:user/repo.git` -> `https://github.com/user/repo.git`
+/// - `ssh://git@github.com/user/repo.git` -> `https://github.com/user/repo.git`
+/// - `https://github.com/user/repo.git` -> unchanged
+fn ssh_to_https(url: &str) -> String {
+    // Handle git@host:path format
+    if let Some(rest) = url.strip_prefix("git@") {
+        if let Some(colon_pos) = rest.find(':') {
+            let host = &rest[..colon_pos];
+            let path = &rest[colon_pos + 1..];
+            return format!("https://{host}/{path}");
+        }
+    }
+
+    // Handle ssh://git@host/path format
+    if let Some(rest) = url.strip_prefix("ssh://git@") {
+        return format!("https://{rest}");
+    }
+
+    // Already HTTPS or other format, return as-is
+    url.to_owned()
+}
 
 /// Error type for git operations.
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
-    #[error("failed to write SSH key: {0}")]
-    SshKeyWrite(std::io::Error),
-
-    #[error("failed to set SSH key permissions: {0}")]
-    SshKeyPermissions(std::io::Error),
-
     #[error("git clone failed: {0}")]
     CloneFailed(String),
 
@@ -38,28 +60,20 @@ pub enum GitError {
 /// Clone a git repository to the target directory.
 ///
 /// Handles SSH key authentication if provided, and checks out the specific commit.
+/// SSH URLs are converted to HTTPS to work through the HTTP proxy.
 pub async fn clone_repository(config: &GitConfig, target_dir: &Path) -> Result<(), GitError> {
+    // Convert SSH URL to HTTPS for proxy compatibility
+    let https_url = ssh_to_https(&config.repo_url);
+
     info!(
-        repo = %config.repo_url,
+        repo = %https_url,
         branch = %config.branch,
         commit = %config.commit_sha,
         "Cloning repository"
     );
 
-    // Set up SSH key if provided
-    let ssh_key_path = if let Some(ref key) = config.ssh_key {
-        Some(setup_ssh_key(key).await?)
-    } else {
-        None
-    };
-
-    // Build the clone result, ensuring we clean up the SSH key regardless of outcome
-    let result = do_clone(config, target_dir, ssh_key_path.as_deref()).await;
-
-    // Clean up SSH key
-    if let Some(ref path) = ssh_key_path {
-        cleanup_ssh_key(path).await;
-    }
+    // Build the clone result
+    let result = do_clone(config, &https_url, target_dir).await;
 
     result?;
 
@@ -76,71 +90,30 @@ pub async fn clone_repository(config: &GitConfig, target_dir: &Path) -> Result<(
     Ok(())
 }
 
-/// Set up the SSH key for git operations.
-async fn setup_ssh_key(key_contents: &str) -> Result<String, GitError> {
-    let ssh_key_path = "/tmp/git-ssh-key";
-
-    // Write key with restrictive permissions
-    tokio::fs::write(ssh_key_path, key_contents)
-        .await
-        .map_err(GitError::SshKeyWrite)?;
-
-    // Set permissions to 0600 (owner read/write only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        tokio::fs::set_permissions(ssh_key_path, perms)
-            .await
-            .map_err(GitError::SshKeyPermissions)?;
-    }
-
-    debug!("SSH key written to {}", ssh_key_path);
-    Ok(ssh_key_path.to_owned())
-}
-
-/// Clean up the SSH key file.
-async fn cleanup_ssh_key(path: &str) {
-    if let Err(e) = tokio::fs::remove_file(path).await {
-        warn!(path = %path, error = %e, "Failed to remove SSH key file");
-    } else {
-        debug!(path = %path, "SSH key file removed");
-    }
-}
-
 /// Perform the actual git clone and checkout.
-async fn do_clone(
-    config: &GitConfig,
-    target_dir: &Path,
-    ssh_key_path: Option<&str>,
-) -> Result<(), GitError> {
+async fn do_clone(config: &GitConfig, https_url: &str, target_dir: &Path) -> Result<(), GitError> {
     // Ensure target directory exists
     tokio::fs::create_dir_all(target_dir).await?;
 
-    // Build SSH command if using SSH key
-    let ssh_command = ssh_key_path.map(|path| {
-        format!(
-            "ssh -i {} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null",
-            path
-        )
-    });
-
     // Clone the repository with shallow depth for efficiency
+    // Configure git to use the HTTP proxy and mark directory as safe
     let mut cmd = Command::new("git");
-    cmd.arg("clone")
+    cmd.arg("-c")
+        .arg(format!("http.proxy={HTTP_PROXY}"))
+        .arg("-c")
+        .arg(format!("https.proxy={HTTP_PROXY}"))
+        .arg("-c")
+        .arg(format!("safe.directory={}", target_dir.display()))
+        .arg("clone")
         .arg("--depth")
         .arg("1")
         .arg("--branch")
         .arg(&config.branch)
         .arg("--single-branch")
-        .arg(&config.repo_url)
+        .arg(https_url)
         .arg(target_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    if let Some(ref ssh_cmd) = ssh_command {
-        cmd.env("GIT_SSH_COMMAND", ssh_cmd);
-    }
 
     debug!(command = ?cmd, "Running git clone");
 
@@ -161,7 +134,7 @@ async fn do_clone(
         );
 
         // Fetch the specific commit
-        fetch_commit(target_dir, &config.commit_sha, ssh_key_path).await?;
+        fetch_commit(target_dir, &config.commit_sha).await?;
 
         // Checkout the commit
         checkout_commit(target_dir, &config.commit_sha).await?;
@@ -175,6 +148,8 @@ async fn do_clone(
 /// Get the HEAD commit SHA.
 async fn get_head_sha(repo_dir: &Path) -> Result<String, GitError> {
     let output = Command::new("git")
+        .arg("-c")
+        .arg(format!("safe.directory={}", repo_dir.display()))
         .arg("rev-parse")
         .arg("HEAD")
         .current_dir(repo_dir)
@@ -194,13 +169,15 @@ async fn get_head_sha(repo_dir: &Path) -> Result<String, GitError> {
 }
 
 /// Fetch a specific commit from the remote.
-async fn fetch_commit(
-    repo_dir: &Path,
-    commit_sha: &str,
-    ssh_key_path: Option<&str>,
-) -> Result<(), GitError> {
+async fn fetch_commit(repo_dir: &Path, commit_sha: &str) -> Result<(), GitError> {
     let mut cmd = Command::new("git");
-    cmd.arg("fetch")
+    cmd.arg("-c")
+        .arg(format!("http.proxy={HTTP_PROXY}"))
+        .arg("-c")
+        .arg(format!("https.proxy={HTTP_PROXY}"))
+        .arg("-c")
+        .arg(format!("safe.directory={}", repo_dir.display()))
+        .arg("fetch")
         .arg("--depth")
         .arg("1")
         .arg("origin")
@@ -208,16 +185,6 @@ async fn fetch_commit(
         .current_dir(repo_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    if let Some(path) = ssh_key_path {
-        cmd.env(
-            "GIT_SSH_COMMAND",
-            format!(
-                "ssh -i {} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null",
-                path
-            ),
-        );
-    }
 
     let output = cmd.output().await?;
 
@@ -232,6 +199,8 @@ async fn fetch_commit(
 /// Checkout a specific commit.
 async fn checkout_commit(repo_dir: &Path, commit_sha: &str) -> Result<(), GitError> {
     let output = Command::new("git")
+        .arg("-c")
+        .arg(format!("safe.directory={}", repo_dir.display()))
         .arg("checkout")
         .arg(commit_sha)
         .current_dir(repo_dir)
@@ -265,5 +234,33 @@ mod tests {
         let err = GitError::SubpathNotFound("packages/foo".to_owned());
         assert!(err.to_string().contains("packages/foo"));
         assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn ssh_to_https_converts_git_at_format() {
+        assert_eq!(
+            ssh_to_https("git@github.com:user/repo.git"),
+            "https://github.com/user/repo.git"
+        );
+        assert_eq!(
+            ssh_to_https("git@gitlab.com:org/project.git"),
+            "https://gitlab.com/org/project.git"
+        );
+    }
+
+    #[test]
+    fn ssh_to_https_converts_ssh_protocol() {
+        assert_eq!(
+            ssh_to_https("ssh://git@github.com/user/repo.git"),
+            "https://github.com/user/repo.git"
+        );
+    }
+
+    #[test]
+    fn ssh_to_https_preserves_https() {
+        assert_eq!(
+            ssh_to_https("https://github.com/user/repo.git"),
+            "https://github.com/user/repo.git"
+        );
     }
 }

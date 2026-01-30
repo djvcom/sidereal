@@ -84,6 +84,11 @@ async fn main() {
         error!(error = %e, "Failed to start proxy bridge");
     }
 
+    let _s3_bridge = network::start_s3_bridge(3900).await;
+    if let Err(ref e) = _s3_bridge {
+        error!(error = %e, "Failed to start S3 bridge");
+    }
+
     if let Err(e) = run_build().await {
         error!(error = %e, "Build workflow failed");
     }

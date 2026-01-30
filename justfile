@@ -52,9 +52,9 @@ deploy:
     nix flake update sidereal --flake /etc/nixos
     sudo nixos-rebuild switch --flake /etc/nixos#terminus
 
-# Build the builder-runtime binary (static musl)
+# Build the builder-runtime binary (static musl via zig)
 build-runtime:
-    cargo build --release -p sidereal-builder-runtime --target x86_64-unknown-linux-musl
+    cargo zigbuild --release -p sidereal-builder-runtime --target x86_64-unknown-linux-musl
 
 # Build the builder VM rootfs from Docker (includes smoke tests)
 build-rootfs: build-runtime

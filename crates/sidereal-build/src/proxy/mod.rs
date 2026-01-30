@@ -377,6 +377,109 @@ impl ProxyServer {
 
 /// Parse an HTTP CONNECT request line.
 ///
+/// Vsock port for S3/Garage forwarding.
+pub const S3_FORWARD_PORT: u32 = 3900;
+
+/// Simple TCP forwarder that listens on a vsock Unix socket and forwards
+/// all connections to a fixed TCP address.
+///
+/// Used to allow the VM to access S3/Garage running on the host.
+pub struct TcpForwarder {
+    target_addr: std::net::SocketAddr,
+}
+
+impl TcpForwarder {
+    /// Create a new TCP forwarder targeting the given address.
+    pub fn new(target_addr: std::net::SocketAddr) -> Self {
+        Self { target_addr }
+    }
+
+    /// Run the forwarder, listening on the given vsock Unix socket path.
+    ///
+    /// The vsock path format for Firecracker is: `<vsock_uds_path>_<port>`
+    pub async fn run(&self, vsock_path: &Path, cancel: CancellationToken) -> ProxyResult<()> {
+        // Remove existing socket if present
+        if vsock_path.exists() {
+            tokio::fs::remove_file(vsock_path).await?;
+        }
+
+        // Create parent directory if needed
+        if let Some(parent) = vsock_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let listener = UnixListener::bind(vsock_path)?;
+        info!(
+            path = %vsock_path.display(),
+            target = %self.target_addr,
+            "TCP forwarder listening"
+        );
+
+        loop {
+            tokio::select! {
+                biased;
+
+                () = cancel.cancelled() => {
+                    info!("TCP forwarder shutting down");
+                    break;
+                }
+
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, _addr)) => {
+                            let target = self.target_addr;
+                            tokio::spawn(async move {
+                                if let Err(e) = forward_connection(stream, target).await {
+                                    debug!(error = %e, "TCP forwarder connection error");
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            error!(error = %e, "TCP forwarder accept failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Clean up socket file
+        let _ = tokio::fs::remove_file(vsock_path).await;
+
+        Ok(())
+    }
+}
+
+/// Forward a single connection to the target address.
+async fn forward_connection(
+    client_stream: tokio::net::UnixStream,
+    target: std::net::SocketAddr,
+) -> ProxyResult<()> {
+    let upstream = tokio::net::TcpStream::connect(target)
+        .await
+        .map_err(|e| ProxyError::UpstreamConnection(format!("{target}: {e}")))?;
+
+    let (mut client_read, mut client_write) = tokio::io::split(client_stream);
+    let (mut upstream_read, mut upstream_write) = tokio::io::split(upstream);
+
+    let client_to_upstream = tokio::io::copy(&mut client_read, &mut upstream_write);
+    let upstream_to_client = tokio::io::copy(&mut upstream_read, &mut client_write);
+
+    tokio::select! {
+        result = client_to_upstream => {
+            if let Err(e) = result {
+                debug!(error = %e, "TCP forward client->upstream ended");
+            }
+        }
+        result = upstream_to_client => {
+            if let Err(e) = result {
+                debug!(error = %e, "TCP forward upstream->client ended");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Format: "CONNECT host:port HTTP/1.x"
 fn parse_connect_request(line: &str) -> ProxyResult<(String, u16)> {
     let parts: Vec<&str> = line.split_whitespace().collect();
