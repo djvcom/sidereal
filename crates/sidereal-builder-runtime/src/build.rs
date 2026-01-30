@@ -2,6 +2,7 @@
 //!
 //! Executes cargo build and streams output back to the host via vsock.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Instant;
@@ -233,7 +234,8 @@ async fn discover_binaries(request: &BuildRequest) -> Vec<BinaryInfo> {
         return binaries;
     }
 
-    // Read directory entries
+    let crate_dirs = get_binary_crate_dirs(&request.source_path()).await;
+
     let mut entries = match tokio::fs::read_dir(&bin_dir).await {
         Ok(entries) => entries,
         Err(e) => {
@@ -242,41 +244,35 @@ async fn discover_binaries(request: &BuildRequest) -> Vec<BinaryInfo> {
         }
     };
 
-    // Look for ELF binaries
     while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
 
-        // Skip non-files
         if !path.is_file() {
             continue;
         }
 
-        // Skip files with extensions (we want bare executables)
         if path.extension().is_some() {
             continue;
         }
 
-        // Get file name
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(name) => name.to_owned(),
             None => continue,
         };
 
-        // Skip common non-binary files (hidden files and .d files)
         if name.starts_with('.') {
             continue;
         }
 
-        // Check if it's an ELF binary by reading the magic bytes
         if !is_elf_binary(&path).await {
             continue;
         }
 
         info!(name = %name, path = %path.display(), "Found binary");
 
-        // Try to find the crate directory
-        let crate_dir = find_crate_dir(&request.source_path(), &name)
-            .await
+        let crate_dir = crate_dirs
+            .get(&name)
+            .cloned()
             .unwrap_or_else(|| request.source_path());
 
         binaries.push(BinaryInfo::new(
@@ -306,56 +302,77 @@ async fn is_elf_binary(path: &Path) -> bool {
     magic == [0x7f, b'E', b'L', b'F']
 }
 
-/// Find the crate directory for a binary name.
-///
-/// Searches for a Cargo.toml that defines a binary with the given name.
-async fn find_crate_dir(source_dir: &Path, binary_name: &str) -> Option<PathBuf> {
-    // First check if the root Cargo.toml has this binary
-    let root_cargo = source_dir.join("Cargo.toml");
-    if let Some(crate_dir) = check_cargo_toml(&root_cargo, binary_name).await {
-        return Some(crate_dir);
-    }
+/// Get a mapping of binary names to their crate directories using cargo metadata.
+async fn get_binary_crate_dirs(source_dir: &Path) -> HashMap<String, PathBuf> {
+    let mut map = HashMap::new();
 
-    // Check common workspace member locations
-    let workspace_dirs = ["crates", "packages", "libs", "apps"];
-
-    for dir in workspace_dirs {
-        let workspace_path = source_dir.join(dir);
-        if !workspace_path.exists() {
-            continue;
+    let output = match Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(source_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output.stdout,
+        Ok(output) => {
+            warn!(
+                status = ?output.status,
+                "cargo metadata failed"
+            );
+            return map;
         }
+        Err(e) => {
+            warn!(error = %e, "Failed to run cargo metadata");
+            return map;
+        }
+    };
 
-        let Ok(mut entries) = tokio::fs::read_dir(&workspace_path).await else {
+    let json: serde_json::Value = match serde_json::from_slice(&output) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(error = %e, "Failed to parse cargo metadata JSON");
+            return map;
+        }
+    };
+
+    let Some(packages) = json.get("packages").and_then(|p| p.as_array()) else {
+        return map;
+    };
+
+    for package in packages {
+        let Some(manifest_path) = package.get("manifest_path").and_then(|p| p.as_str()) else {
+            continue;
+        };
+        let crate_dir = match Path::new(manifest_path).parent() {
+            Some(dir) => dir.to_path_buf(),
+            None => continue,
+        };
+
+        let Some(targets) = package.get("targets").and_then(|t| t.as_array()) else {
             continue;
         };
 
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let cargo_toml = entry.path().join("Cargo.toml");
-            if let Some(crate_dir) = check_cargo_toml(&cargo_toml, binary_name).await {
-                return Some(crate_dir);
+        for target in targets {
+            let Some(kinds) = target.get("kind").and_then(|k| k.as_array()) else {
+                continue;
+            };
+            let is_bin = kinds.iter().any(|k| k.as_str() == Some("bin"));
+            if !is_bin {
+                continue;
             }
+
+            let Some(name) = target.get("name").and_then(|n| n.as_str()) else {
+                continue;
+            };
+
+            map.insert(name.to_owned(), crate_dir.clone());
         }
     }
 
-    None
-}
-
-/// Check if a Cargo.toml defines a binary with the given name.
-async fn check_cargo_toml(path: &Path, binary_name: &str) -> Option<PathBuf> {
-    let content = tokio::fs::read_to_string(path).await.ok()?;
-
-    // Simple check: look for the package name matching the binary name
-    // This is a heuristic - proper parsing would require a TOML parser
-    if content.contains(&format!("name = \"{binary_name}\""))
-        || content.contains(&format!("name = '{binary_name}'"))
-    {
-        return path.parent().map(Path::to_path_buf);
-    }
-
-    // Check for [[bin]] sections
-    if content.contains("[[bin]]") && content.contains(binary_name) {
-        return path.parent().map(Path::to_path_buf);
-    }
-
-    None
+    debug!(
+        binary_count = map.len(),
+        "Loaded binary crate mappings from cargo metadata"
+    );
+    map
 }
