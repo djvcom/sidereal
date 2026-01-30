@@ -646,6 +646,13 @@ async fn handle_build_output(
         }
         ProtocolBuildOutput::Stderr(line) => {
             debug!("[cargo stderr] {line}");
+            if let Some(tx) = status_tx {
+                let _ = tx
+                    .send(BuildStatus::Compiling {
+                        progress: Some(line.clone()),
+                    })
+                    .await;
+            }
         }
         ProtocolBuildOutput::Progress { stage, progress } => {
             debug!("[progress] {stage}: {:.1}%", progress * 100.0);
