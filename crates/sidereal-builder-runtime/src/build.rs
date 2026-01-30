@@ -46,36 +46,71 @@ pub async fn execute_build(
         }
     };
 
-    // Stream stdout
+    // Take stdout and stderr for concurrent reading
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
     let mut stdout_lines = Vec::new();
     let mut stderr_lines = Vec::new();
 
-    // Process stdout
-    if let Some(stdout) = stdout {
-        let mut reader = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            stdout_lines.push(line.clone());
-            if let Err(e) = send_output(stream, BuildOutput::Stdout(line)).await {
-                warn!(error = %e, "Failed to send stdout");
+    // Create line readers for both streams
+    let mut stdout_reader = stdout.map(|s| BufReader::new(s).lines());
+    let mut stderr_reader = stderr.map(|s| BufReader::new(s).lines());
+
+    let mut stdout_done = stdout_reader.is_none();
+    let mut stderr_done = stderr_reader.is_none();
+
+    // Read stdout and stderr concurrently using select
+    while !stdout_done || !stderr_done {
+        tokio::select! {
+            line = async {
+                match stdout_reader.as_mut() {
+                    Some(reader) => reader.next_line().await,
+                    None => std::future::pending().await,
+                }
+            }, if !stdout_done => {
+                match line {
+                    Ok(Some(line)) => {
+                        stdout_lines.push(line.clone());
+                        if let Err(e) = send_output(stream, BuildOutput::Stdout(line)).await {
+                            warn!(error = %e, "Failed to send stdout");
+                        }
+                    }
+                    Ok(None) => {
+                        stdout_done = true;
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Error reading stdout");
+                        stdout_done = true;
+                    }
+                }
+            }
+            line = async {
+                match stderr_reader.as_mut() {
+                    Some(reader) => reader.next_line().await,
+                    None => std::future::pending().await,
+                }
+            }, if !stderr_done => {
+                match line {
+                    Ok(Some(line)) => {
+                        stderr_lines.push(line.clone());
+                        if let Err(e) = send_output(stream, BuildOutput::Stderr(line)).await {
+                            warn!(error = %e, "Failed to send stderr");
+                        }
+                    }
+                    Ok(None) => {
+                        stderr_done = true;
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Error reading stderr");
+                        stderr_done = true;
+                    }
+                }
             }
         }
     }
 
-    // Process stderr
-    if let Some(stderr) = stderr {
-        let mut reader = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            stderr_lines.push(line.clone());
-            if let Err(e) = send_output(stream, BuildOutput::Stderr(line)).await {
-                warn!(error = %e, "Failed to send stderr");
-            }
-        }
-    }
-
-    // Wait for process to complete
+    // Wait for process to complete (should already be done since pipes are closed)
     let status = match child.wait().await {
         Ok(status) => status,
         Err(e) => {
