@@ -309,15 +309,20 @@ async fn get_binary_crate_dirs(source_dir: &Path) -> HashMap<String, PathBuf> {
     let output = match Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--no-deps"])
         .current_dir(source_dir)
+        .env("CARGO_HOME", "/cargo")
+        .env("RUSTUP_HOME", "/usr/local/rustup")
+        .env("RUSTUP_TOOLCHAIN", "1.92-x86_64-unknown-linux-gnu")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .output()
         .await
     {
         Ok(output) if output.status.success() => output.stdout,
         Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             warn!(
                 status = ?output.status,
+                stderr = %stderr,
                 "cargo metadata failed"
             );
             return map;
@@ -366,11 +371,12 @@ async fn get_binary_crate_dirs(source_dir: &Path) -> HashMap<String, PathBuf> {
                 continue;
             };
 
+            debug!(binary = %name, crate_dir = %crate_dir.display(), "Mapped binary to crate");
             map.insert(name.to_owned(), crate_dir.clone());
         }
     }
 
-    debug!(
+    info!(
         binary_count = map.len(),
         "Loaded binary crate mappings from cargo metadata"
     );
