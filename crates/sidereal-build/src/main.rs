@@ -11,9 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use sidereal_build::{
-    api, artifact::ArtifactStore, service::BuildWorker, BuildQueue, ForgeAuth, ServiceConfig,
-};
+use sidereal_build::{api, service::BuildWorker, BuildQueue, ForgeAuth, ServiceConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,10 +37,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ensure directories exist
     ensure_directories(&config).await?;
 
-    // Create artifact store
-    let artifact_store = Arc::new(ArtifactStore::new(&config.storage)?);
-    info!("artifact store initialised");
-
     // Create build queue
     let queue = Arc::new(BuildQueue::new(config.server.max_queue_size));
     info!(
@@ -54,14 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let forge_auth = ForgeAuth::from_config(&config.forge_auth)?;
 
-    let worker_handles = spawn_workers(
-        config.worker.count,
-        &queue,
-        &config,
-        &artifact_store,
-        &cancel,
-        &forge_auth,
-    )?;
+    let worker_handles = spawn_workers(config.worker.count, &queue, &config, &cancel, &forge_auth)?;
     info!(count = config.worker.count, "build workers started");
 
     let state = Arc::new(api::AppState {
@@ -104,7 +91,6 @@ fn spawn_workers(
     count: usize,
     queue: &Arc<BuildQueue>,
     config: &ServiceConfig,
-    artifact_store: &Arc<ArtifactStore>,
     cancel: &CancellationToken,
     forge_auth: &ForgeAuth,
 ) -> Result<Vec<tokio::task::JoinHandle<()>>, sidereal_build::BuildError> {
@@ -115,9 +101,9 @@ fn spawn_workers(
             Arc::clone(queue),
             &config.paths,
             &config.limits,
-            Arc::clone(artifact_store),
             forge_auth.clone(),
             &config.vm,
+            &config.storage,
         )?;
         let cancel = cancel.clone();
         handles.push(tokio::spawn(async move {

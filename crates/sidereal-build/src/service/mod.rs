@@ -241,6 +241,10 @@ pub struct VmConfig {
     /// Rust target triple.
     #[serde(default = "default_target")]
     pub target: String,
+
+    /// S3 key for the runtime binary.
+    #[serde(default = "default_runtime_s3_key")]
+    pub runtime_s3_key: String,
 }
 
 impl Default for VmConfig {
@@ -251,8 +255,13 @@ impl Default for VmConfig {
             vcpu_count: default_vcpu_count(),
             mem_size_mib: default_vm_memory(),
             target: default_target(),
+            runtime_s3_key: default_runtime_s3_key(),
         }
     }
+}
+
+fn default_runtime_s3_key() -> String {
+    "runtime/sidereal-runtime".to_owned()
 }
 
 fn default_kernel_path() -> PathBuf {

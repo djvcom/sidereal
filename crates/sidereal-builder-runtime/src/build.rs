@@ -11,57 +11,80 @@ use tokio::process::Command;
 use tokio_vsock::VsockStream;
 use tracing::{debug, error, info, warn};
 
-use crate::protocol::{BinaryInfo, BuildOutput, BuildRequest, BuildResult};
-use crate::vsock::{send_output, send_result, VsockError};
+use crate::protocol::{BinaryInfo, BuildOutput, BuildRequest};
+use crate::vsock::{send_output, VsockError};
 
-/// Execute a cargo build based on the request.
+/// Result of a compilation.
+#[derive(Debug)]
+pub struct CompileResult {
+    /// Whether compilation succeeded.
+    pub success: bool,
+    /// Exit code from cargo.
+    pub exit_code: i32,
+    /// Compilation duration in seconds.
+    pub duration_secs: f64,
+    /// Captured stdout.
+    pub stdout: String,
+    /// Captured stderr.
+    pub stderr: String,
+}
+
+impl CompileResult {
+    /// Create a failure result for spawn/wait errors.
+    fn spawn_error(error: &str) -> Self {
+        Self {
+            success: false,
+            exit_code: -1,
+            duration_secs: 0.0,
+            stdout: String::new(),
+            stderr: error.to_owned(),
+        }
+    }
+}
+
+/// Execute cargo build and stream output back to the host.
 ///
-/// Streams stdout/stderr back to the host and returns the final result.
-pub async fn execute_build(
+/// Returns the compilation result without sending the final BuildResult.
+/// The caller is responsible for constructing and sending the final result.
+pub async fn compile(
     stream: &mut VsockStream,
     request: &BuildRequest,
-) -> Result<(), VsockError> {
+) -> Result<CompileResult, VsockError> {
     let start_time = Instant::now();
 
     info!(
         build_id = %request.build_id,
-        source = %request.source_path,
-        target = %request.target_path,
-        "Starting build"
+        source = %request.source_path().display(),
+        target = %request.target_path().display(),
+        "Starting compilation"
     );
 
-    // Set up environment
     setup_environment(&request.cargo_home(), &request.target_path())?;
 
-    // Build cargo command
     let mut cmd = build_cargo_command(request);
 
-    // Spawn the process
     let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
             error!(error = %e, "Failed to spawn cargo");
-            let result = BuildResult::failure(-1, format!("Failed to spawn cargo: {e}"), 0.0);
-            send_result(stream, result).await?;
-            return Ok(());
+            return Ok(CompileResult::spawn_error(&format!(
+                "Failed to spawn cargo: {e}"
+            )));
         }
     };
 
-    // Take stdout and stderr for concurrent reading
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
     let mut stdout_lines = Vec::new();
     let mut stderr_lines = Vec::new();
 
-    // Create line readers for both streams
     let mut stdout_reader = stdout.map(|s| BufReader::new(s).lines());
     let mut stderr_reader = stderr.map(|s| BufReader::new(s).lines());
 
     let mut stdout_done = stdout_reader.is_none();
     let mut stderr_done = stderr_reader.is_none();
 
-    // Read stdout and stderr concurrently using select
     while !stdout_done || !stderr_done {
         tokio::select! {
             line = async {
@@ -77,9 +100,7 @@ pub async fn execute_build(
                             warn!(error = %e, "Failed to send stdout");
                         }
                     }
-                    Ok(None) => {
-                        stdout_done = true;
-                    }
+                    Ok(None) => stdout_done = true,
                     Err(e) => {
                         warn!(error = %e, "Error reading stdout");
                         stdout_done = true;
@@ -99,9 +120,7 @@ pub async fn execute_build(
                             warn!(error = %e, "Failed to send stderr");
                         }
                     }
-                    Ok(None) => {
-                        stderr_done = true;
-                    }
+                    Ok(None) => stderr_done = true,
                     Err(e) => {
                         warn!(error = %e, "Error reading stderr");
                         stderr_done = true;
@@ -111,24 +130,15 @@ pub async fn execute_build(
         }
     }
 
-    // Wait for process to complete (should already be done since pipes are closed)
     let status = match child.wait().await {
         Ok(status) => status,
         Err(e) => {
             error!(error = %e, "Failed to wait for cargo");
-            let result = BuildResult::failure(-1, format!("Failed to wait for cargo: {e}"), 0.0);
-            send_result(stream, result).await?;
-            return Ok(());
+            return Ok(CompileResult::spawn_error(&format!(
+                "Failed to wait for cargo: {e}"
+            )));
         }
     };
-
-    // Log captured output for debugging
-    if !stderr_lines.is_empty() {
-        error!(stderr = %stderr_lines.join("\n"), "Cargo stderr output");
-    }
-    if !stdout_lines.is_empty() {
-        info!(stdout = %stdout_lines.join("\n"), "Cargo stdout output");
-    }
 
     let duration_secs = start_time.elapsed().as_secs_f64();
 
@@ -136,91 +146,22 @@ pub async fn execute_build(
     let exit_code = status.code().unwrap_or(-1) as i32;
 
     if status.success() {
-        info!(duration_secs, "Build completed successfully");
-
-        // Discover compiled binaries
-        let binaries = discover_binaries(request).await;
-
-        let result = BuildResult::success(binaries, duration_secs)
-            .with_stdout(stdout_lines.join("\n"))
-            .with_stderr(stderr_lines.join("\n"));
-
-        send_result(stream, result).await?;
+        info!(duration_secs, "Compilation completed successfully");
     } else {
-        error!(exit_code, "Build failed");
-
-        let result = BuildResult::failure(exit_code, stderr_lines.join("\n"), duration_secs)
-            .with_stdout(stdout_lines.join("\n"));
-
-        send_result(stream, result).await?;
+        error!(exit_code, "Compilation failed");
     }
 
-    Ok(())
-}
-
-/// Set up the build environment.
-fn setup_environment(cargo_home: &Path, target_dir: &Path) -> Result<(), VsockError> {
-    // Ensure directories exist
-    std::fs::create_dir_all(cargo_home).map_err(VsockError::Io)?;
-    std::fs::create_dir_all(target_dir).map_err(VsockError::Io)?;
-
-    Ok(())
-}
-
-/// Build the cargo command for the build request.
-fn build_cargo_command(request: &BuildRequest) -> Command {
-    let mut cmd = Command::new("cargo");
-
-    cmd.arg("zigbuild");
-
-    // Build all workspace members
-    cmd.arg("--workspace");
-
-    // Target specification
-    cmd.arg("--target");
-    cmd.arg(&request.target_triple);
-
-    // Release mode
-    if request.release {
-        cmd.arg("--release");
-    }
-
-    // Locked dependencies
-    if request.locked {
-        cmd.arg("--locked");
-    }
-
-    // Set working directory
-    cmd.current_dir(&request.source_path);
-
-    // Environment variables
-    cmd.env("CARGO_HOME", &request.cargo_home);
-    cmd.env("CARGO_TARGET_DIR", &request.target_path);
-
-    // SSL certificates
-    cmd.env("SSL_CERT_FILE", "/etc/ssl/certs/ca-bundle.crt");
-    cmd.env("SSL_CERT_DIR", "/etc/ssl/certs");
-
-    // Route cargo traffic through the vsock proxy bridge on the host
-    cmd.env("HTTP_PROXY", "http://127.0.0.1:1080");
-    cmd.env("HTTPS_PROXY", "http://127.0.0.1:1080");
-    // Use the system rustup/cargo installation and prevent auto-updates
-    cmd.env("RUSTUP_HOME", "/usr/local/rustup");
-    cmd.env("RUSTUP_TOOLCHAIN", "1.92-x86_64-unknown-linux-gnu");
-    cmd.env("RUSTUP_UPDATE_ROOT", "file:///nonexistent");
-
-    // Disable incremental compilation (not useful for ephemeral VMs)
-    cmd.env("CARGO_INCREMENTAL", "0");
-
-    // Configure stdout/stderr
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    cmd
+    Ok(CompileResult {
+        success: status.success(),
+        exit_code,
+        duration_secs,
+        stdout: stdout_lines.join("\n"),
+        stderr: stderr_lines.join("\n"),
+    })
 }
 
 /// Discover compiled binaries in the target directory.
-async fn discover_binaries(request: &BuildRequest) -> Vec<BinaryInfo> {
+pub async fn discover_binaries(request: &BuildRequest) -> Vec<BinaryInfo> {
     let mut binaries = Vec::new();
 
     let target_dir = request.target_path();
@@ -285,7 +226,52 @@ async fn discover_binaries(request: &BuildRequest) -> Vec<BinaryInfo> {
     binaries
 }
 
-/// Check if a file is an ELF binary by reading magic bytes.
+fn setup_environment(cargo_home: &Path, target_dir: &Path) -> Result<(), VsockError> {
+    std::fs::create_dir_all(cargo_home).map_err(VsockError::Io)?;
+    std::fs::create_dir_all(target_dir).map_err(VsockError::Io)?;
+    Ok(())
+}
+
+fn build_cargo_command(request: &BuildRequest) -> Command {
+    let mut cmd = Command::new("cargo");
+
+    cmd.arg("zigbuild");
+    cmd.arg("--workspace");
+
+    cmd.arg("--target");
+    cmd.arg(&request.target_triple);
+
+    if request.release {
+        cmd.arg("--release");
+    }
+
+    if request.locked {
+        cmd.arg("--locked");
+    }
+
+    cmd.current_dir(request.source_path());
+
+    cmd.env("CARGO_HOME", request.cargo_home());
+    cmd.env("CARGO_TARGET_DIR", request.target_path());
+
+    cmd.env("SSL_CERT_FILE", "/etc/ssl/certs/ca-bundle.crt");
+    cmd.env("SSL_CERT_DIR", "/etc/ssl/certs");
+
+    cmd.env("HTTP_PROXY", "http://127.0.0.1:1080");
+    cmd.env("HTTPS_PROXY", "http://127.0.0.1:1080");
+
+    cmd.env("RUSTUP_HOME", "/usr/local/rustup");
+    cmd.env("RUSTUP_TOOLCHAIN", "1.92-x86_64-unknown-linux-gnu");
+    cmd.env("RUSTUP_UPDATE_ROOT", "file:///nonexistent");
+
+    cmd.env("CARGO_INCREMENTAL", "0");
+
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    cmd
+}
+
 async fn is_elf_binary(path: &Path) -> bool {
     let Ok(file) = tokio::fs::File::open(path).await else {
         return false;
@@ -298,11 +284,9 @@ async fn is_elf_binary(path: &Path) -> bool {
         return false;
     }
 
-    // ELF magic: 0x7f 'E' 'L' 'F'
     magic == [0x7f, b'E', b'L', b'F']
 }
 
-/// Get a mapping of binary names to their crate directories using cargo metadata.
 async fn get_binary_crate_dirs(source_dir: &Path) -> HashMap<String, PathBuf> {
     let mut map = HashMap::new();
 

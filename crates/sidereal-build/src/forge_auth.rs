@@ -138,6 +138,27 @@ impl ForgeAuth {
     pub const fn is_configured(&self) -> bool {
         !matches!(self, Self::None)
     }
+
+    /// Get the SSH private key contents for a given repository URL.
+    ///
+    /// Returns the private key contents if SSH authentication is configured and
+    /// the URL is an SSH URL (starts with `git@`). Returns `None` for HTTPS URLs
+    /// or if SSH authentication is not configured.
+    #[must_use]
+    pub fn ssh_key_for_url(&self, url: &str) -> Option<String> {
+        match self {
+            Self::Ssh {
+                private_key_path, ..
+            } => {
+                // Only provide SSH key for SSH URLs
+                if !url.starts_with("git@") {
+                    return None;
+                }
+                std::fs::read_to_string(private_key_path).ok()
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Ensure an SSH key exists at the given path, generating one if needed.

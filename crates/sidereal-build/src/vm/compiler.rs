@@ -1,7 +1,8 @@
 //! Firecracker-based compiler implementation.
 //!
-//! Provides compilation inside Firecracker microVMs for stronger isolation
-//! than bubblewrap sandboxes.
+//! Provides a complete build pipeline inside Firecracker microVMs. The VM handles
+//! everything: git clone, caching, compilation, project discovery, artifact creation,
+//! and upload to S3. The host only manages VM lifecycle and credential passing.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,12 +22,12 @@ use tracing::{debug, info, warn};
 
 use crate::error::{BuildError, BuildResult};
 use crate::protocol::{
-    BuildMessage, BuildOutput, BuildRequest, BuildResult as ProtocolBuildResult, BUILD_PORT,
+    BuildMessage, BuildOutput as ProtocolBuildOutput, BuildRequest,
+    BuildResult as ProtocolBuildResult, CacheConfig as ProtocolCacheConfig, GitConfig,
+    RuntimeConfig, S3Config, BUILD_PORT,
 };
-use crate::proxy::{CargoProxy, ProxyServer, PROXY_PORT};
-use crate::sandbox::{BinaryInfo, WorkspaceCompileOutput};
-use crate::source::SourceCheckout;
-use crate::types::{BuildStatus, ProjectId};
+use crate::proxy::{CargoProxy, ProxyConfig, ProxyServer, PROXY_PORT};
+use crate::types::{BuildStatus, FunctionMetadata, ProjectId};
 
 /// Configuration for the VM-based compiler.
 #[derive(Debug, Clone)]
@@ -36,9 +37,6 @@ pub struct VmCompilerConfig {
 
     /// Path to the builder rootfs image.
     pub builder_rootfs: PathBuf,
-
-    /// Path to the cargo registry cache.
-    pub cargo_cache_dir: PathBuf,
 
     /// Number of vCPUs for builder VMs.
     pub vcpu_count: u8,
@@ -51,20 +49,79 @@ pub struct VmCompilerConfig {
 
     /// Build timeout.
     pub timeout: Duration,
+
+    /// S3 configuration for artifacts and caches.
+    pub s3: S3Config,
+
+    /// S3 key for the runtime binary.
+    pub runtime_s3_key: String,
+
+    /// Additional domains to allow through the proxy.
+    pub additional_proxy_domains: Vec<String>,
 }
 
-impl Default for VmCompilerConfig {
-    fn default() -> Self {
+impl VmCompilerConfig {
+    /// Create a new configuration with required S3 settings.
+    #[must_use]
+    pub fn new(s3: S3Config, runtime_s3_key: impl Into<String>) -> Self {
         Self {
             kernel_path: PathBuf::from("/var/lib/sidereal/kernel/vmlinux"),
             builder_rootfs: PathBuf::from("/var/lib/sidereal/rootfs/builder.ext4"),
-            cargo_cache_dir: PathBuf::from("/var/lib/sidereal/cargo"),
             vcpu_count: 2,
             mem_size_mib: 4096,
             target: "x86_64-unknown-linux-musl".to_owned(),
             timeout: Duration::from_secs(600),
+            s3,
+            runtime_s3_key: runtime_s3_key.into(),
+            additional_proxy_domains: Vec::new(),
         }
     }
+
+    /// Add additional domains to the proxy allowlist.
+    #[must_use]
+    pub fn with_proxy_domains(
+        mut self,
+        domains: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.additional_proxy_domains = domains.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+/// Input parameters for a build operation.
+#[derive(Debug, Clone)]
+pub struct BuildInput {
+    /// Unique build identifier.
+    pub build_id: String,
+    /// Project identifier.
+    pub project_id: ProjectId,
+    /// Repository URL.
+    pub repo_url: String,
+    /// Branch name.
+    pub branch: String,
+    /// Commit SHA.
+    pub commit_sha: String,
+    /// SSH key for private repos (optional).
+    pub ssh_key: Option<String>,
+    /// Subdirectory within the repo (optional).
+    pub subpath: Option<String>,
+    /// Registry cache S3 key (optional).
+    pub registry_cache_key: Option<String>,
+    /// Target cache S3 key (optional).
+    pub target_cache_key: Option<String>,
+}
+
+/// Output from a successful build operation.
+#[derive(Debug, Clone)]
+pub struct BuildOutput {
+    /// S3 URL of the uploaded artifact.
+    pub artifact_url: String,
+    /// SHA-256 hash of the artifact.
+    pub artifact_hash: String,
+    /// Discovered functions.
+    pub functions: Vec<FunctionMetadata>,
+    /// Build duration in seconds.
+    pub duration_secs: f64,
 }
 
 /// Compiler that uses Firecracker VMs for isolation.
@@ -82,35 +139,30 @@ impl FirecrackerCompiler {
         Ok(Self { config, vm_manager })
     }
 
-    /// Return the cargo home directory path.
-    #[must_use]
-    pub fn cargo_home(&self) -> &Path {
-        &self.config.cargo_cache_dir
-    }
-
-    /// Compile the workspace in a Firecracker VM.
-    pub async fn compile_workspace(
+    /// Execute a complete build in a Firecracker VM.
+    ///
+    /// The VM handles all phases: clone, cache pull, compile, discovery, artifact
+    /// creation, upload, and cache push.
+    pub async fn build(
         &self,
-        project_id: &ProjectId,
-        checkout: &SourceCheckout,
-        target_dir: &Path,
+        input: &BuildInput,
         cancel: CancellationToken,
         status_tx: Option<&tokio::sync::mpsc::Sender<BuildStatus>>,
-    ) -> BuildResult<WorkspaceCompileOutput> {
-        info!(project = %project_id, "Starting VM-based workspace compilation");
-
-        let build_dir = target_dir.parent().unwrap_or(target_dir);
-        std::fs::create_dir_all(build_dir)?;
-
-        // Create source drive from checkout directory
-        let source_img = build_dir.join("source.ext4");
-        create_ext4_from_dir(&checkout.path, &source_img, "source", 512)?;
+    ) -> BuildResult<BuildOutput> {
+        info!(
+            project = %input.project_id,
+            build_id = %input.build_id,
+            "Starting VM-based build pipeline"
+        );
 
         // Create empty target drive for build output (6GB)
+        let build_dir = self.vm_manager.work_dir().join(&input.build_id);
+        std::fs::create_dir_all(&build_dir)?;
+
         let target_img = build_dir.join("target.ext4");
         create_empty_ext4(&target_img, 6144, "target")?;
 
-        // Configure VM with source and target as additional drives
+        // Configure VM with only the target drive (source will be cloned inside)
         let vm_config = VmConfig {
             kernel_path: self.config.kernel_path.clone(),
             rootfs_path: self.config.builder_rootfs.clone(),
@@ -118,20 +170,12 @@ impl FirecrackerCompiler {
             mem_size_mib: self.config.mem_size_mib,
             vsock_cid: 3,
             boot_args: "console=ttyS0 reboot=k panic=1 pci=off rw".to_owned(),
-            additional_drives: vec![
-                DriveConfig {
-                    drive_id: "source".to_owned(),
-                    path: source_img.clone(),
-                    is_root_device: false,
-                    is_read_only: true,
-                },
-                DriveConfig {
-                    drive_id: "target".to_owned(),
-                    path: target_img.clone(),
-                    is_root_device: false,
-                    is_read_only: false,
-                },
-            ],
+            additional_drives: vec![DriveConfig {
+                drive_id: "target".to_owned(),
+                path: target_img.clone(),
+                is_root_device: false,
+                is_read_only: false,
+            }],
         };
 
         // Start VM
@@ -141,12 +185,13 @@ impl FirecrackerCompiler {
             .await
             .map_err(|e| BuildError::SandboxSetup(format!("Failed to start VM: {e}")))?;
 
-        // Connect to builder via vsock
         let vsock_path = vm.vsock_uds_path().to_path_buf();
         debug!(path = %vsock_path.display(), "Connecting to builder VM via vsock");
 
+        // Start proxy server with S3 endpoint added to allowed domains
         let proxy_path = PathBuf::from(format!("{}_{PROXY_PORT}", vsock_path.display()));
-        let proxy_server = ProxyServer::new(CargoProxy::with_defaults());
+        let proxy_config = self.create_proxy_config();
+        let proxy_server = ProxyServer::new(CargoProxy::new(proxy_config));
         let proxy_cancel = cancel.child_token();
         let proxy_cancel_trigger = proxy_cancel.clone();
 
@@ -156,6 +201,7 @@ impl FirecrackerCompiler {
             }
         });
         debug!(port = PROXY_PORT, "Cargo proxy server started");
+
         let console_log_path = vm.console_log_path().to_path_buf();
         let read_console_tail = || -> String {
             std::fs::read_to_string(&console_log_path)
@@ -175,6 +221,11 @@ impl FirecrackerCompiler {
         while start.elapsed() < ready_timeout {
             if let Some(status) = vm.check_exited() {
                 let console_tail = read_console_tail();
+                // Clean up
+                proxy_cancel_trigger.cancel();
+                let _ = proxy_handle.await;
+                let _ = std::fs::remove_dir_all(&build_dir);
+
                 return Err(BuildError::SandboxSetup(format!(
                     "VM exited with status {status} during startup\n\nConsole log:\n{console_tail}"
                 )));
@@ -185,14 +236,16 @@ impl FirecrackerCompiler {
             tokio::time::sleep(poll_interval).await;
         }
 
-        // Perform build communication with timeout, capturing errors to enhance with console log
+        // Build the protocol request
+        let request = self.create_build_request(input);
+
+        // Perform build communication with timeout
         let timeout = self.config.timeout;
-        let target = self.config.target.clone();
         let build_result: BuildResult<ProtocolBuildResult> = match tokio::time::timeout(
             timeout,
             perform_build(
                 &vsock_path,
-                &target,
+                request,
                 &mut vm,
                 &read_console_tail,
                 status_tx,
@@ -213,11 +266,10 @@ impl FirecrackerCompiler {
         proxy_cancel_trigger.cancel();
         let _ = proxy_handle.await;
 
-        // Clean up drive images
-        let _ = std::fs::remove_file(&source_img);
-        let _ = std::fs::remove_file(&target_img);
+        // Clean up build directory
+        let _ = std::fs::remove_dir_all(&build_dir);
 
-        // Handle build result, adding console log context on error
+        // Handle build result
         let result = match build_result {
             Ok(r) => r,
             Err(e) => {
@@ -228,46 +280,113 @@ impl FirecrackerCompiler {
             }
         };
 
-        // Convert protocol result to compile output
+        // Convert protocol result to build output
         if result.success {
-            let binaries: Vec<BinaryInfo> = result
-                .binaries
+            let artifact_url = result.artifact_url.ok_or_else(|| {
+                BuildError::Internal("Build succeeded but no artifact URL returned".to_owned())
+            })?;
+            let artifact_hash = result.artifact_hash.ok_or_else(|| {
+                BuildError::Internal("Build succeeded but no artifact hash returned".to_owned())
+            })?;
+
+            let functions: Vec<FunctionMetadata> = result
+                .functions
                 .into_iter()
-                .map(|b| BinaryInfo {
-                    name: b.name,
-                    path: PathBuf::from(&b.path),
-                    crate_dir: PathBuf::from(&b.crate_dir),
+                .map(|f| FunctionMetadata {
+                    name: f.name,
+                    route: f.route,
+                    method: f.method,
+                    queue: f.queue,
                 })
                 .collect();
 
             info!(
-                binary_count = binaries.len(),
+                artifact_url = %artifact_url,
+                function_count = functions.len(),
                 duration_secs = result.duration_secs,
-                "VM compilation complete"
+                "VM build complete"
             );
 
-            Ok(WorkspaceCompileOutput {
-                binaries,
-                duration: Duration::from_secs_f64(result.duration_secs),
-                stdout: result.stdout,
-                stderr: result.stderr,
+            Ok(BuildOutput {
+                artifact_url,
+                artifact_hash,
+                functions,
+                duration_secs: result.duration_secs,
             })
         } else {
             let console_tail = read_console_tail();
+            let error_message = result
+                .error_message
+                .unwrap_or_else(|| result.stderr.clone());
             Err(BuildError::CompileFailed {
                 stderr: format!(
                     "{}\n\nVM console log (last 50 lines):\n{console_tail}",
-                    result.stderr
+                    error_message
                 ),
                 exit_code: result.exit_code,
             })
         }
     }
+
+    fn create_proxy_config(&self) -> ProxyConfig {
+        let mut config = ProxyConfig::default();
+
+        // Add S3 endpoint domain to allowlist
+        if let Some(domain) = extract_domain(&self.config.s3.endpoint) {
+            config.allow_domain(domain);
+        }
+
+        // Add any additional configured domains
+        for domain in &self.config.additional_proxy_domains {
+            config.allow_domain(domain.clone());
+        }
+
+        config
+    }
+
+    fn create_build_request(&self, input: &BuildInput) -> BuildRequest {
+        let cache = if input.registry_cache_key.is_some() || input.target_cache_key.is_some() {
+            Some(ProtocolCacheConfig {
+                registry_key: input.registry_cache_key.clone(),
+                target_key: input.target_cache_key.clone(),
+            })
+        } else {
+            None
+        };
+
+        BuildRequest {
+            build_id: input.build_id.clone(),
+            project_id: input.project_id.to_string(),
+            git: GitConfig {
+                repo_url: input.repo_url.clone(),
+                branch: input.branch.clone(),
+                commit_sha: input.commit_sha.clone(),
+                ssh_key: input.ssh_key.clone(),
+                subpath: input.subpath.clone(),
+            },
+            s3: self.config.s3.clone(),
+            cache,
+            runtime: RuntimeConfig {
+                s3_key: self.config.runtime_s3_key.clone(),
+            },
+            target_triple: self.config.target.clone(),
+            release: true,
+            locked: true,
+            artifact_key_prefix: format!("artifacts/{}", input.project_id),
+        }
+    }
+}
+
+/// Extract domain from a URL.
+fn extract_domain(url: &str) -> Option<String> {
+    url.trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .map(|s| s.split(':').next().unwrap_or(s).to_owned())
 }
 
 /// Connect to the builder runtime via vsock using Firecracker's CONNECT protocol.
-///
-/// Includes health checks to fail fast if the VM exits unexpectedly.
 async fn connect_to_builder<F>(
     vsock_path: &Path,
     port: u32,
@@ -284,7 +403,6 @@ where
     let max_delay = Duration::from_millis(500);
 
     for attempt in 0..max_attempts {
-        // Check VM health before each attempt
         if let Some(status) = vm.check_exited() {
             return Err(BuildError::SandboxSetup(format!(
                 "VM exited with status {status} (attempt {attempt})\n\nConsole log:\n{}",
@@ -292,10 +410,8 @@ where
             )));
         }
 
-        // Connect to the vsock UDS
         match UnixStream::connect(vsock_path).await {
             Ok(mut stream) => {
-                // Send CONNECT command
                 let connect_cmd = format!("CONNECT {port}\n");
                 if let Err(e) = stream.write_all(connect_cmd.as_bytes()).await {
                     debug!(attempt, error = %e, "Failed to send CONNECT command");
@@ -304,7 +420,6 @@ where
                     continue;
                 }
 
-                // Read response
                 let mut reader = BufReader::new(&mut stream);
                 let mut response = String::new();
                 if let Err(e) = reader.read_line(&mut response).await {
@@ -339,7 +454,7 @@ where
 /// Perform the build communication with the VM.
 async fn perform_build<F>(
     vsock_path: &Path,
-    target: &str,
+    request: BuildRequest,
     vm: &mut sidereal_firecracker::VmInstance,
     read_console_tail: &F,
     status_tx: Option<&tokio::sync::mpsc::Sender<BuildStatus>>,
@@ -349,10 +464,6 @@ where
     F: Fn() -> String,
 {
     let stream = connect_to_builder(vsock_path, BUILD_PORT, vm, read_console_tail).await?;
-
-    let request = BuildRequest::new(uuid::Uuid::new_v4().to_string(), target)
-        .with_release(true)
-        .with_locked(true);
 
     send_message(&stream, &BuildMessage::Request(request)).await?;
 
@@ -373,7 +484,6 @@ where
 
     stream.writable().await?;
 
-    // Write in a single call using try_write for the header
     let mut buf = Vec::with_capacity(4 + bytes.len());
     buf.extend_from_slice(&len.to_le_bytes());
     buf.extend_from_slice(&bytes);
@@ -413,7 +523,6 @@ where
             });
         }
 
-        // Periodic health check
         if last_health_check.elapsed() > health_interval {
             if let Some(status) = vm.check_exited() {
                 return Err(BuildError::SandboxSetup(format!(
@@ -424,12 +533,10 @@ where
             last_health_check = tokio::time::Instant::now();
         }
 
-        // Read length header
         let mut len_buf = [0u8; 4];
         match reader.read_exact(&mut len_buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                // Check if VM died - this is likely the cause of EOF
                 if let Some(status) = vm.check_exited() {
                     return Err(BuildError::SandboxSetup(format!(
                         "VM exited with status {status} during build\n\nConsole log:\n{}",
@@ -446,11 +553,9 @@ where
         #[allow(clippy::cast_possible_truncation)]
         let len = u32::from_le_bytes(len_buf) as usize;
 
-        // Read message
         let mut buf = vec![0u8; len];
         reader.read_exact(&mut buf).await?;
 
-        // Deserialise
         let message: BuildMessage = rkyv::from_bytes::<BuildMessage, RkyvError>(&buf)
             .map_err(|e| BuildError::SandboxSetup(format!("Deserialisation failed: {e}")))?;
 
@@ -458,24 +563,9 @@ where
             BuildMessage::Request(_) => {
                 warn!("Received unexpected request message from builder");
             }
-            BuildMessage::Output(output) => match &output {
-                BuildOutput::Stdout(line) => {
-                    debug!("[cargo stdout] {line}");
-                    if let Some(tx) = status_tx {
-                        let _ = tx
-                            .send(BuildStatus::Compiling {
-                                progress: Some(line.clone()),
-                            })
-                            .await;
-                    }
-                }
-                BuildOutput::Stderr(line) => {
-                    debug!("[cargo stderr] {line}");
-                }
-                BuildOutput::Progress { stage, progress } => {
-                    debug!("[progress] {stage}: {:.1}%", progress * 100.0);
-                }
-            },
+            BuildMessage::Output(output) => {
+                handle_build_output(&output, status_tx).await;
+            }
             BuildMessage::Result(result) => {
                 return Ok(result);
             }
@@ -483,45 +573,69 @@ where
     }
 }
 
-/// Create an ext4 filesystem image from a directory.
-fn create_ext4_from_dir(
-    source: &Path,
-    output: &Path,
-    label: &str,
-    size_mb: u32,
-) -> BuildResult<()> {
-    // Create a sparse file of the target size
-    let size = format!("{}M", size_mb);
-    let status = Command::new("truncate")
-        .args(["-s", &size])
-        .arg(output)
-        .status()?;
-
-    if !status.success() {
-        return Err(BuildError::SandboxSetup(
-            "truncate failed to create sparse file".to_owned(),
-        ));
+/// Handle a build output message, updating status as appropriate.
+async fn handle_build_output(
+    output: &ProtocolBuildOutput,
+    status_tx: Option<&tokio::sync::mpsc::Sender<BuildStatus>>,
+) {
+    match output {
+        ProtocolBuildOutput::Stdout(line) => {
+            debug!("[cargo stdout] {line}");
+            if let Some(tx) = status_tx {
+                let _ = tx
+                    .send(BuildStatus::Compiling {
+                        progress: Some(line.clone()),
+                    })
+                    .await;
+            }
+        }
+        ProtocolBuildOutput::Stderr(line) => {
+            debug!("[cargo stderr] {line}");
+        }
+        ProtocolBuildOutput::Progress { stage, progress } => {
+            debug!("[progress] {stage}: {:.1}%", progress * 100.0);
+        }
+        ProtocolBuildOutput::Cloning { repo } => {
+            info!("[clone] Cloning {repo}");
+            if let Some(tx) = status_tx {
+                let _ = tx.send(BuildStatus::CheckingOut).await;
+            }
+        }
+        ProtocolBuildOutput::PullingCache => {
+            info!("[cache] Pulling build caches");
+            if let Some(tx) = status_tx {
+                let _ = tx.send(BuildStatus::PullingCache).await;
+            }
+        }
+        ProtocolBuildOutput::PushingCache => {
+            info!("[cache] Pushing build caches");
+            if let Some(tx) = status_tx {
+                let _ = tx.send(BuildStatus::PushingCache).await;
+            }
+        }
+        ProtocolBuildOutput::CreatingArtifact => {
+            info!("[artifact] Creating rootfs artifact");
+            if let Some(tx) = status_tx {
+                let _ = tx.send(BuildStatus::GeneratingArtifact).await;
+            }
+        }
+        ProtocolBuildOutput::UploadingArtifact { progress } => {
+            debug!("[upload] Uploading artifact: {:.1}%", progress * 100.0);
+        }
+        ProtocolBuildOutput::DiscoveringProjects => {
+            info!("[discovery] Discovering deployable projects");
+            if let Some(tx) = status_tx {
+                let _ = tx.send(BuildStatus::DiscoveringProjects).await;
+            }
+        }
+        ProtocolBuildOutput::DownloadingRuntime => {
+            info!("[runtime] Downloading runtime binary");
+        }
     }
-
-    // Create ext4 filesystem and populate with source directory contents
-    let status = Command::new("mkfs.ext4")
-        .args(["-d", &source.to_string_lossy()])
-        .args(["-L", label])
-        .arg(output)
-        .status()?;
-
-    if !status.success() {
-        return Err(BuildError::SandboxSetup(
-            "mkfs.ext4 failed to create filesystem".to_owned(),
-        ));
-    }
-
-    Ok(())
 }
 
 /// Create an empty ext4 filesystem image.
 fn create_empty_ext4(output: &Path, size_mb: u32, label: &str) -> BuildResult<()> {
-    // Create a sparse file
     let size = format!("{}M", size_mb);
     let status = Command::new("truncate")
         .args(["-s", &size])
@@ -534,7 +648,6 @@ fn create_empty_ext4(output: &Path, size_mb: u32, label: &str) -> BuildResult<()
         ));
     }
 
-    // Format as ext4
     let status = Command::new("mkfs.ext4")
         .args(["-L", label])
         .arg(output)
@@ -547,4 +660,30 @@ fn create_empty_ext4(output: &Path, size_mb: u32, label: &str) -> BuildResult<()
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_domain_https() {
+        assert_eq!(
+            extract_domain("https://s3.amazonaws.com/bucket"),
+            Some("s3.amazonaws.com".to_owned())
+        );
+    }
+
+    #[test]
+    fn extract_domain_with_port() {
+        assert_eq!(
+            extract_domain("http://localhost:9000"),
+            Some("localhost".to_owned())
+        );
+    }
+
+    #[test]
+    fn extract_domain_empty() {
+        assert_eq!(extract_domain(""), Some(String::new()));
+    }
 }

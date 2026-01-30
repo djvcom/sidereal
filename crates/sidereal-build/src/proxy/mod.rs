@@ -51,6 +51,13 @@ pub const DEFAULT_ALLOWED_DOMAINS: &[&str] = &[
     // Common CDNs used by crates.io
     "cloudfront.net",
     "fastly.net",
+    // AWS S3 (for artifacts and caches)
+    "s3.amazonaws.com",
+    "s3.us-east-1.amazonaws.com",
+    "s3.us-west-2.amazonaws.com",
+    "s3.eu-west-1.amazonaws.com",
+    // Note: Custom S3-compatible endpoints (e.g., Garage, MinIO)
+    // should be added via ProxyConfig::allow_domain()
 ];
 
 /// Proxy port on vsock (must be DIFFERENT from BUILD_PORT in protocol.rs).

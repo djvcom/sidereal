@@ -1,27 +1,21 @@
 //! Build worker implementation.
 //!
-//! Processes builds from the queue.
+//! Processes builds from the queue using Firecracker VMs.
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
-use crate::artifact::{Artifact, ArtifactBuilder, ArtifactStore, BuildInput};
-use crate::cache::{CacheConfig, CacheManager, CacheResult};
-use crate::discovery;
 use crate::error::{BuildError, BuildStage, CancelReason};
 use crate::forge_auth::ForgeAuth;
-use crate::project::{discover_projects, DeployableProject};
+use crate::protocol::S3Config;
 use crate::queue::{BuildHandle, BuildQueue};
-use crate::sandbox::{fetch_dependencies, FetchConfig};
-use crate::source::SourceManager;
 use crate::types::{ArtifactId, BuildRequest, BuildStatus, FunctionMetadata};
-use crate::vm::{FirecrackerCompiler, VmCompilerConfig};
+use crate::vm::{BuildInput, FirecrackerCompiler, VmCompilerConfig};
 
-use super::{LimitsConfig, PathsConfig, VmConfig};
+use super::{LimitsConfig, PathsConfig, StorageConfig, VmConfig};
 
 /// Payload sent to the callback URL when a build completes.
 #[derive(Debug, Serialize)]
@@ -109,14 +103,9 @@ struct BuildOutput {
 pub struct BuildWorker {
     id: usize,
     queue: Arc<BuildQueue>,
-    source_manager: Arc<SourceManager>,
     compiler: Arc<FirecrackerCompiler>,
-    artifact_builder: Arc<ArtifactBuilder>,
-    artifact_store: Arc<ArtifactStore>,
-    cache_manager: Option<Arc<CacheManager>>,
+    forge_auth: ForgeAuth,
     http_client: reqwest::Client,
-    runtime_path: PathBuf,
-    target_base_dir: PathBuf,
 }
 
 impl BuildWorker {
@@ -130,58 +119,25 @@ impl BuildWorker {
         queue: Arc<BuildQueue>,
         paths: &PathsConfig,
         limits: &LimitsConfig,
-        artifact_store: Arc<ArtifactStore>,
         forge_auth: ForgeAuth,
         vm_config: &VmConfig,
+        storage_config: &StorageConfig,
     ) -> Result<Self, BuildError> {
-        Self::with_cache(
-            id,
-            queue,
-            paths,
-            limits,
-            artifact_store,
-            forge_auth,
-            vm_config,
-            None,
-        )
-    }
-
-    /// Create a new build worker with optional cache configuration.
-    pub fn with_cache(
-        id: usize,
-        queue: Arc<BuildQueue>,
-        paths: &PathsConfig,
-        limits: &LimitsConfig,
-        artifact_store: Arc<ArtifactStore>,
-        forge_auth: ForgeAuth,
-        vm_config: &VmConfig,
-        cache_config: Option<CacheConfig>,
-    ) -> Result<Self, BuildError> {
-        let source_manager = Arc::new(SourceManager::new(
-            &paths.checkouts,
-            &paths.caches,
-            forge_auth,
-        ));
+        let s3_config = storage_config_to_s3(storage_config)?;
 
         let vm_compiler_config = VmCompilerConfig {
             kernel_path: vm_config.kernel_path.clone(),
             builder_rootfs: vm_config.builder_rootfs.clone(),
-            cargo_cache_dir: paths.caches.join("cargo"),
             vcpu_count: vm_config.vcpu_count,
             mem_size_mib: vm_config.mem_size_mib,
             target: vm_config.target.clone(),
             timeout: limits.timeout(),
+            s3: s3_config,
+            runtime_s3_key: vm_config.runtime_s3_key.clone(),
+            additional_proxy_domains: Vec::new(),
         };
         let work_dir = paths.artifacts.join("vm-work");
         let compiler = Arc::new(FirecrackerCompiler::new(vm_compiler_config, work_dir)?);
-
-        let artifact_builder = Arc::new(ArtifactBuilder::new(&paths.artifacts));
-
-        let cache_manager = cache_config
-            .filter(|c| c.enabled)
-            .map(|c| CacheManager::new(c))
-            .transpose()?
-            .map(Arc::new);
 
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -191,14 +147,9 @@ impl BuildWorker {
         Ok(Self {
             id,
             queue,
-            source_manager,
             compiler,
-            artifact_builder,
-            artifact_store,
-            cache_manager,
+            forge_auth,
             http_client,
-            runtime_path: paths.runtime.clone(),
-            target_base_dir: paths.caches.join("targets"),
         })
     }
 
@@ -347,140 +298,37 @@ impl BuildWorker {
         request: &BuildRequest,
         cancel: &CancellationToken,
     ) -> Result<BuildOutput, BuildError> {
-        // Phase 1: Checkout source
-        self.queue
-            .update_status(&request.id, BuildStatus::CheckingOut);
-
         if cancel.is_cancelled() {
             return Err(BuildError::Cancelled {
                 reason: CancelReason::UserRequested,
             });
         }
 
-        let mut checkout = self
-            .source_manager
-            .checkout(&request.project_id, &request.repo_url, &request.commit_sha)
-            .await?;
+        // Get SSH key for private repos from forge auth
+        let ssh_key = self.forge_auth.ssh_key_for_url(&request.repo_url);
 
-        if let Some(ref subpath) = request.path {
-            let subdir = checkout.path.join(subpath);
-            if !subdir.exists() {
-                return Err(BuildError::CompileFailed {
-                    stderr: format!("subdirectory '{}' not found in repository", subpath),
-                    exit_code: 0,
-                });
-            }
-            checkout.path = subdir.clone();
-            checkout.cargo_toml = {
-                let toml = subdir.join("Cargo.toml");
-                toml.exists().then_some(toml)
-            };
-            checkout.cargo_lock = {
-                let lock = subdir.join("Cargo.lock");
-                lock.exists().then_some(lock)
-            };
-        }
-
-        info!(
-            build_id = %request.id,
-            path = %checkout.path.display(),
-            "source checked out"
-        );
-
-        // Phase 2: Pull caches (if enabled)
-        let target_dir = self
-            .target_base_dir
-            .join(request.project_id.as_str())
-            .join(&request.branch);
-
-        if let Some(ref cache_manager) = self.cache_manager {
-            self.queue
-                .update_status(&request.id, BuildStatus::PullingCache);
-
-            if cancel.is_cancelled() {
-                return Err(BuildError::Cancelled {
-                    reason: CancelReason::UserRequested,
-                });
-            }
-
-            let registry_result = cache_manager
-                .pull_registry(self.compiler.cargo_home())
-                .await;
-            match registry_result {
-                Ok(CacheResult::Hit) => {
-                    info!(build_id = %request.id, "registry cache hit");
-                }
-                Ok(CacheResult::Miss) => {
-                    debug!(build_id = %request.id, "registry cache miss");
-                }
-                Err(e) => {
-                    warn!(build_id = %request.id, error = %e, "failed to pull registry cache");
-                }
-            }
-
-            let target_result = cache_manager
-                .pull_target(&request.project_id, &request.branch, &target_dir)
-                .await;
-            match target_result {
-                Ok(CacheResult::Hit) => {
-                    info!(build_id = %request.id, "target cache hit");
-                }
-                Ok(CacheResult::Miss) => {
-                    debug!(build_id = %request.id, "target cache miss");
-                }
-                Err(e) => {
-                    warn!(build_id = %request.id, error = %e, "failed to pull target cache");
-                }
-            }
-        }
-
-        // Phase 3: Fetch dependencies (outside sandbox, needs network)
-        self.queue
-            .update_status(&request.id, BuildStatus::FetchingDeps);
-
-        if cancel.is_cancelled() {
-            return Err(BuildError::Cancelled {
-                reason: CancelReason::UserRequested,
-            });
-        }
-
-        let fetch_config = FetchConfig {
-            cargo_home: self.compiler.cargo_home().to_owned(),
-            ..FetchConfig::default()
+        // Build the input for the VM
+        let build_input = BuildInput {
+            build_id: request.id.to_string(),
+            project_id: request.project_id.clone(),
+            repo_url: request.repo_url.clone(),
+            branch: request.branch.clone(),
+            commit_sha: request.commit_sha.clone(),
+            ssh_key,
+            subpath: request.path.clone(),
+            registry_cache_key: None, // TODO: implement cache key generation
+            target_cache_key: None,
         };
-
-        let fetch_output = fetch_dependencies(
-            &request.project_id,
-            &checkout,
-            &fetch_config,
-            cancel.clone(),
-        )
-        .await?;
-
-        info!(
-            build_id = %request.id,
-            duration_secs = fetch_output.duration.as_secs_f32(),
-            "dependencies fetched"
-        );
-
-        // Phase 4: Compile workspace (sandboxed)
-        self.queue
-            .update_status(&request.id, BuildStatus::Compiling { progress: None });
-
-        if cancel.is_cancelled() {
-            return Err(BuildError::Cancelled {
-                reason: CancelReason::UserRequested,
-            });
-        }
 
         // Create channel for build status updates
         let (status_tx, mut status_rx) = tokio::sync::mpsc::channel::<BuildStatus>(100);
         let queue_clone = Arc::clone(&self.queue);
         let build_id_clone = request.id.clone();
 
-        // Spawn task to receive status updates and store them as logs
+        // Spawn task to receive status updates
         let log_task = tokio::spawn(async move {
             while let Some(status) = status_rx.recv().await {
+                queue_clone.update_status(&build_id_clone, status.clone());
                 if let BuildStatus::Compiling {
                     progress: Some(line),
                 } = status
@@ -490,171 +338,67 @@ impl BuildWorker {
             }
         });
 
-        let compile_output = self
+        // Execute build in VM
+        let vm_output = self
             .compiler
-            .compile_workspace(
-                &request.project_id,
-                &checkout,
-                &target_dir,
-                cancel.clone(),
-                Some(&status_tx),
-            )
+            .build(&build_input, cancel.clone(), Some(&status_tx))
             .await;
 
         // Drop sender to signal we're done, wait for log task to finish
         drop(status_tx);
         let _ = log_task.await;
 
-        let compile_output = compile_output?;
+        let vm_output = vm_output?;
+
+        // Generate artifact ID from the hash
+        let artifact_id = ArtifactId::from(format!("art_{}", &vm_output.artifact_hash[..16]));
 
         info!(
             build_id = %request.id,
-            binary_count = compile_output.binaries.len(),
-            duration_secs = compile_output.duration.as_secs(),
-            "workspace compilation completed"
+            artifact_id = %artifact_id,
+            function_count = vm_output.functions.len(),
+            duration_secs = vm_output.duration_secs,
+            "VM build pipeline completed"
         );
-
-        // Phase 5: Discover deployable projects
-        self.queue
-            .update_status(&request.id, BuildStatus::DiscoveringProjects);
-
-        if cancel.is_cancelled() {
-            return Err(BuildError::Cancelled {
-                reason: CancelReason::UserRequested,
-            });
-        }
-
-        let deployable_projects = discover_projects(&checkout, &compile_output.binaries)?;
-
-        if deployable_projects.is_empty() {
-            return Err(BuildError::NoDeployableProjects);
-        }
-
-        info!(
-            build_id = %request.id,
-            project_count = deployable_projects.len(),
-            projects = ?deployable_projects.iter().map(|p| &p.name).collect::<Vec<_>>(),
-            "discovered deployable projects"
-        );
-
-        // Phase 6: Generate and upload artifacts
-        self.queue
-            .update_status(&request.id, BuildStatus::GeneratingArtifact);
-
-        if cancel.is_cancelled() {
-            return Err(BuildError::Cancelled {
-                reason: CancelReason::UserRequested,
-            });
-        }
-
-        let first_project = &deployable_projects[0];
-        let (artifact_id, artifact_url, functions) =
-            self.build_project_artifact(request, first_project).await?;
-
-        // Phase 7: Push caches (if enabled)
-        if let Some(ref cache_manager) = self.cache_manager {
-            self.queue
-                .update_status(&request.id, BuildStatus::PushingCache);
-
-            if let Err(e) = cache_manager
-                .push_registry(self.compiler.cargo_home())
-                .await
-            {
-                warn!(build_id = %request.id, error = %e, "failed to push registry cache");
-            }
-
-            if let Err(e) = cache_manager
-                .push_target(&request.project_id, &request.branch, &target_dir)
-                .await
-            {
-                warn!(build_id = %request.id, error = %e, "failed to push target cache");
-            }
-        }
-
-        // Phase 8: Cleanup (only if caching is disabled, otherwise keep target for incremental)
-        if self.cache_manager.is_none() {
-            self.cleanup_build_dirs(&target_dir).await;
-        }
 
         Ok(BuildOutput {
             artifact_id,
-            artifact_url,
-            functions,
+            artifact_url: vm_output.artifact_url,
+            functions: vm_output.functions,
         })
     }
+}
 
-    async fn build_project_artifact(
-        &self,
-        request: &BuildRequest,
-        project: &DeployableProject,
-    ) -> Result<(ArtifactId, String, Vec<FunctionMetadata>), BuildError> {
-        let functions = discovery::discover_from_source(&project.path).unwrap_or_default();
-
-        info!(
-            build_id = %request.id,
-            project = %project.name,
-            function_count = functions.len(),
-            "functions discovered for project"
-        );
-
-        let discovered_functions = functions.clone();
-
-        let output_dir = PathBuf::from("/tmp")
-            .join("sidereal-build")
-            .join(request.id.as_str())
-            .join(&project.name);
-
-        let artifact = self.artifact_builder.build(BuildInput {
-            project_id: &request.project_id,
-            branch: &request.branch,
-            commit_sha: &request.commit_sha,
-            runtime_binary: &self.runtime_path,
-            user_binary: &project.binary_path,
-            functions,
-            output_dir: &output_dir,
-        })?;
-
-        let artifact_id = artifact.id.clone();
-
-        let rootfs_path = output_dir.join("rootfs.ext4");
-        let artifact_url = self.upload_artifact(&artifact, &rootfs_path).await?;
-
-        if let Err(e) = tokio::fs::remove_dir_all(&output_dir).await {
-            warn!(
-                path = %output_dir.display(),
-                error = %e,
-                "failed to clean up build output"
-            );
-        }
-
-        Ok((artifact_id, artifact_url, discovered_functions))
+/// Convert StorageConfig to S3Config for the VM.
+fn storage_config_to_s3(config: &StorageConfig) -> Result<S3Config, BuildError> {
+    if config.storage_type != "s3" {
+        return Err(BuildError::ConfigParse(
+            "VM-based builds require S3 storage configuration".to_owned(),
+        ));
     }
 
-    async fn upload_artifact(
-        &self,
-        artifact: &Artifact,
-        rootfs_path: &Path,
-    ) -> Result<String, BuildError> {
-        let artifact_url = self.artifact_store.upload(artifact, rootfs_path).await?;
-        info!(
-            artifact_id = %artifact.id,
-            project = %artifact.project_id,
-            branch = %artifact.branch,
-            url = %artifact_url,
-            "artifact uploaded"
-        );
-        Ok(artifact_url)
-    }
+    let endpoint = config.endpoint.clone().ok_or_else(|| {
+        BuildError::ConfigParse("S3 endpoint is required for VM builds".to_owned())
+    })?;
 
-    async fn cleanup_build_dirs(&self, target_dir: &Path) {
-        if let Err(e) = tokio::fs::remove_dir_all(target_dir).await {
-            warn!(
-                path = %target_dir.display(),
-                error = %e,
-                "failed to clean up target directory"
-            );
-        }
-    }
+    let access_key_id = config.access_key_id.clone().ok_or_else(|| {
+        BuildError::ConfigParse("S3 access_key_id is required for VM builds".to_owned())
+    })?;
+
+    let secret_access_key = config.secret_access_key.clone().ok_or_else(|| {
+        BuildError::ConfigParse("S3 secret_access_key is required for VM builds".to_owned())
+    })?;
+
+    Ok(S3Config {
+        endpoint,
+        bucket: config.path.clone(),
+        region: config
+            .region
+            .clone()
+            .unwrap_or_else(|| "us-east-1".to_owned()),
+        access_key_id,
+        secret_access_key,
+    })
 }
 
 /// Map a BuildError to a stage and error message.

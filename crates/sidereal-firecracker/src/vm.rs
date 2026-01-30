@@ -76,6 +76,12 @@ impl VmManager {
         )))
     }
 
+    /// Return the work directory path.
+    #[must_use]
+    pub fn work_dir(&self) -> &Path {
+        &self.work_dir
+    }
+
     /// Check if KVM is available.
     pub fn check_kvm() -> Result<()> {
         let kvm_path = Path::new("/dev/kvm");

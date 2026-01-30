@@ -468,9 +468,7 @@ async fn run_build(
     config: sidereal_build::ServiceConfig,
     cancel: CancellationToken,
 ) -> anyhow::Result<()> {
-    use sidereal_build::{
-        api, artifact::ArtifactStore, service::BuildWorker, BuildQueue, ForgeAuth,
-    };
+    use sidereal_build::{api, service::BuildWorker, BuildQueue, ForgeAuth};
 
     // Ensure directories exist
     tokio::fs::create_dir_all(&config.paths.checkouts).await?;
@@ -479,7 +477,6 @@ async fn run_build(
 
     let forge_auth = ForgeAuth::from_config(&config.forge_auth)?;
 
-    let artifact_store = Arc::new(ArtifactStore::new(&config.storage)?);
     let queue = Arc::new(BuildQueue::new(config.server.max_queue_size));
 
     // Spawn build workers
@@ -490,9 +487,9 @@ async fn run_build(
             Arc::clone(&queue),
             &config.paths,
             &config.limits,
-            Arc::clone(&artifact_store),
             forge_auth.clone(),
             &config.vm,
+            &config.storage,
         )?;
         let worker_cancel = cancel.clone();
         worker_handles.push(tokio::spawn(async move {

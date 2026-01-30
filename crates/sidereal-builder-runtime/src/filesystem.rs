@@ -20,40 +20,23 @@ pub fn mount_filesystems() -> Result<(), Box<dyn std::error::Error + Send + Sync
     Ok(())
 }
 
-/// Mount virtio-blk drives for source code and build output.
+/// Mount virtio-blk drives for build output.
 ///
 /// Mounts:
-/// - `/dev/vdb` to `/source` (read-only) - user's git checkout
-/// - `/dev/vdc` to `/target` (read-write) - compilation output
+/// - `/dev/vdb` to `/target` (read-write) - compilation output
+///
+/// Note: Source code is cloned by the VM via git, not mounted from host.
 pub fn mount_build_drives() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Mounting build drives");
 
-    // Ensure mount points exist
     create_mount_points()?;
 
-    // Mount source drive (read-only)
-    let source_dev = Path::new("/dev/vdb");
-    let source_mount = Path::new("/source");
-
-    if source_dev.exists() {
-        debug!("Mounting /dev/vdb to /source (read-only)");
-        mount(
-            Some(source_dev),
-            source_mount,
-            Some("ext4"),
-            MsFlags::MS_RDONLY,
-            None::<&str>,
-        )?;
-    } else {
-        warn!("/dev/vdb not present, skipping source mount");
-    }
-
     // Mount target drive (read-write)
-    let target_dev = Path::new("/dev/vdc");
+    let target_dev = Path::new("/dev/vdb");
     let target_mount = Path::new("/target");
 
     if target_dev.exists() {
-        debug!("Mounting /dev/vdc to /target (read-write)");
+        debug!("Mounting /dev/vdb to /target (read-write)");
         mount(
             Some(target_dev),
             target_mount,
@@ -62,26 +45,27 @@ pub fn mount_build_drives() -> Result<(), Box<dyn std::error::Error + Send + Syn
             None::<&str>,
         )?;
     } else {
-        warn!("/dev/vdc not present, skipping target mount");
+        warn!("/dev/vdb not present, skipping target mount");
     }
 
     Ok(())
 }
 
-/// Create mount points for virtio-blk drives.
+/// Create mount points and working directories.
 ///
-/// These directories will be used by the host to mount:
-/// - /source: User's git checkout (read-only)
-/// - /target: Compilation output (read-write)
-/// - /cargo: Cargo registry cache (read-write)
+/// Creates:
+/// - /source: Where git clones the repository
+/// - /target: Compilation output (mounted from virtio-blk)
+/// - /cargo: Cargo registry cache
+/// - /output: Artifact output directory
 pub fn create_mount_points() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let dirs = ["/source", "/target", "/cargo"];
+    let dirs = ["/source", "/target", "/cargo", "/output"];
 
     for dir in dirs {
         let path = Path::new(dir);
         if !path.exists() {
             fs::create_dir_all(path)?;
-            debug!(path = %dir, "created mount point");
+            debug!(path = %dir, "created directory");
         }
     }
 
