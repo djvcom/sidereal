@@ -41,7 +41,6 @@ pub enum S3Error {
 /// S3 client wrapper for builder runtime operations.
 pub struct S3Client {
     store: AmazonS3,
-    endpoint: String,
     bucket: String,
 }
 
@@ -70,7 +69,6 @@ impl S3Client {
 
         Ok(Self {
             store,
-            endpoint: config.endpoint.clone(),
             bucket: config.bucket.clone(),
         })
     }
@@ -131,7 +129,8 @@ impl S3Client {
                 source: e,
             })?;
 
-        let url = format!("{}/{}/{}", self.endpoint, self.bucket, key);
+        // Return s3:// URL format for compatibility with deployment manager
+        let url = format!("s3://{}/{}", self.bucket, key);
 
         info!(
             key = %key,
@@ -221,7 +220,8 @@ impl S3Client {
 
         progress_fn(1.0);
 
-        let url = format!("{}/{}/{}", self.endpoint, self.bucket, key);
+        // Return s3:// URL format for compatibility with deployment manager
+        let url = format!("s3://{}/{}", self.bucket, key);
 
         info!(
             key = %key,
