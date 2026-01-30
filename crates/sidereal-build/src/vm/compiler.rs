@@ -145,11 +145,10 @@ impl FirecrackerCompiler {
         let vsock_path = vm.vsock_uds_path().to_path_buf();
         debug!(path = %vsock_path.display(), "Connecting to builder VM via vsock");
 
-        // Start the cargo proxy server for this VM
-        // The proxy listens on {vsock_path}_{PROXY_PORT} for connections from the VM
         let proxy_path = PathBuf::from(format!("{}_{PROXY_PORT}", vsock_path.display()));
         let proxy_server = ProxyServer::new(CargoProxy::with_defaults());
-        let proxy_cancel = cancel.clone();
+        let proxy_cancel = cancel.child_token();
+        let proxy_cancel_trigger = proxy_cancel.clone();
 
         let proxy_handle = tokio::spawn(async move {
             if let Err(e) = proxy_server.run(&proxy_path, proxy_cancel).await {
@@ -157,8 +156,6 @@ impl FirecrackerCompiler {
             }
         });
         debug!(port = PROXY_PORT, "Cargo proxy server started");
-
-        // Helper to read console log for error context
         let console_log_path = vm.console_log_path().to_path_buf();
         let read_console_tail = || -> String {
             std::fs::read_to_string(&console_log_path)
@@ -213,8 +210,7 @@ impl FirecrackerCompiler {
             warn!("Failed to shutdown VM cleanly: {e}");
         }
 
-        // Cancel and wait for proxy to stop
-        cancel.cancel();
+        proxy_cancel_trigger.cancel();
         let _ = proxy_handle.await;
 
         // Clean up drive images
