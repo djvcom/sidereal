@@ -95,6 +95,9 @@ let
     }
     // lib.optionalAttrs (cfg.storage.secretAccessKey != null) {
       secret_access_key = cfg.storage.secretAccessKey;
+    }
+    // lib.optionalAttrs (cfg.storage.credentialsFile != null) {
+      credentials_file = cfg.storage.credentialsFile;
     };
   };
 in

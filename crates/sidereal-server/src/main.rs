@@ -49,10 +49,15 @@ async fn main() -> anyhow::Result<()> {
     info!("Sidereal server starting");
 
     // Load configuration
-    let config = ServerConfig::load(cli.config.as_deref()).unwrap_or_else(|e| {
+    let mut config = ServerConfig::load(cli.config.as_deref()).unwrap_or_else(|e| {
         info!(error = %e, "Failed to load config, using defaults");
         ServerConfig::default()
     });
+
+    // Load credentials from file if configured
+    if let Err(e) = config.storage.load_credentials() {
+        error!(error = %e, "Failed to load storage credentials from file");
+    }
 
     info!(
         mode = ?config.server.mode,

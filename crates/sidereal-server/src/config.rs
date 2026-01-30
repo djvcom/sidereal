@@ -330,6 +330,42 @@ pub struct StorageSettings {
 
     /// Secret access key (or use environment/IAM).
     pub secret_access_key: Option<String>,
+
+    /// Path to credentials file (KEY=VALUE format with ACCESS_KEY_ID and SECRET_ACCESS_KEY).
+    pub credentials_file: Option<std::path::PathBuf>,
+}
+
+impl StorageSettings {
+    /// Load credentials from file if configured, merging with any direct config values.
+    pub fn load_credentials(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref path) = self.credentials_file {
+            let contents = std::fs::read_to_string(path)?;
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    let key = key.trim();
+                    let value = value.trim();
+                    match key {
+                        "ACCESS_KEY_ID" | "AWS_ACCESS_KEY_ID" => {
+                            if self.access_key_id.is_none() {
+                                self.access_key_id = Some(value.to_owned());
+                            }
+                        }
+                        "SECRET_ACCESS_KEY" | "AWS_SECRET_ACCESS_KEY" => {
+                            if self.secret_access_key.is_none() {
+                                self.secret_access_key = Some(value.to_owned());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for StorageSettings {
@@ -341,6 +377,7 @@ impl Default for StorageSettings {
             bucket: default_bucket(),
             access_key_id: None,
             secret_access_key: None,
+            credentials_file: None,
         }
     }
 }
