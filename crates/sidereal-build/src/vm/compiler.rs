@@ -106,9 +106,9 @@ impl FirecrackerCompiler {
         let source_img = build_dir.join("source.ext4");
         create_ext4_from_dir(&checkout.path, &source_img, "source", 512)?;
 
-        // Create empty target drive for build output (2GB)
+        // Create empty target drive for build output (6GB)
         let target_img = build_dir.join("target.ext4");
-        create_empty_ext4(&target_img, 2048, "target")?;
+        create_empty_ext4(&target_img, 6144, "target")?;
 
         // Configure VM with source and target as additional drives
         let vm_config = VmConfig {
