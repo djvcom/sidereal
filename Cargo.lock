@@ -6364,6 +6364,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "nix 0.29.0",
+ "reqwest 0.13.1",
  "serde",
  "serde_json",
  "sidereal-firecracker",

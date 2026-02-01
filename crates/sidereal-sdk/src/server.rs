@@ -37,7 +37,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::post,
+    routing::{get, post},
     Router,
 };
 use sidereal_secrets::{SecretsConfig, SecretsProvider};
@@ -231,6 +231,7 @@ pub async fn run(config: ServerConfig) -> Result<(), ServerError> {
     }
 
     let mut app = Router::new()
+        .route("/health", get(handle_health))
         .route("/{function}", post(handle_function))
         .layer(OtelTraceLayer::new())
         .with_state(state);
@@ -244,7 +245,13 @@ pub async fn run(config: ServerConfig) -> Result<(), ServerError> {
         }
     }
 
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
+    // Allow environment variable to override port (used by runtime in VMs)
+    let port = std::env::var("SIDEREAL_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(config.port);
+
+    let addr: SocketAddr = format!("{}:{}", config.host, port).parse()?;
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -339,6 +346,10 @@ fn print_startup_info(
         }
         println!();
     }
+}
+
+async fn handle_health() -> impl IntoResponse {
+    (StatusCode::OK, "OK")
 }
 
 async fn handle_function(

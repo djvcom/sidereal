@@ -3,10 +3,11 @@
 //! This binary:
 //! 1. Mounts required filesystems (proc, sys, tmp)
 //! 2. Sets up signal handlers
-//! 3. Connects to host state server (optional)
-//! 4. Listens on vsock for requests from the host
-//! 5. Executes function invocations
-//! 6. Handles graceful shutdown
+//! 3. Spawns the user's application
+//! 4. Connects to host state server (optional)
+//! 5. Listens on vsock for requests from the host
+//! 6. Proxies function invocations to the user's HTTP server
+//! 7. Handles graceful shutdown
 
 use sidereal_proto::codec::{Codec, FrameHeader, MessageType, FRAME_HEADER_SIZE, MAX_MESSAGE_SIZE};
 use sidereal_proto::ports::FUNCTION as VSOCK_PORT;
@@ -15,15 +16,27 @@ use sidereal_proto::{
 };
 use sidereal_state::VsockStateClient;
 use std::io::ErrorKind;
+use std::path::Path;
+use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
 use tracing::{debug, error, info, warn};
+
+const APP_ENTRYPOINT: &str = "/app/entrypoint";
+const APP_HTTP_PORT: u16 = 3000;
+const APP_READY_TIMEOUT: Duration = Duration::from_secs(60);
+const APP_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 mod filesystem;
 mod signals;
 
 /// Global state client for functions to access KV/Queue/Lock.
 static STATE_CLIENT: OnceLock<Arc<VsockStateClient>> = OnceLock::new();
+
+/// HTTP client for proxying requests to the user's application.
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -42,6 +55,69 @@ async fn main() {
 
     // Try to connect to host state server (optional - may not be configured)
     init_state_client().await;
+
+    // Spawn the user's application if it exists
+    if Path::new(APP_ENTRYPOINT).exists() {
+        info!(entrypoint = APP_ENTRYPOINT, "Starting user application");
+
+        // Generate worker ID from hostname or use a default
+        let worker_id = std::fs::read_to_string("/etc/hostname")
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_else(|_| "worker".to_owned());
+
+        let mut child = match Command::new(APP_ENTRYPOINT)
+            .env("SIDEREAL_WORKER_ID", &worker_id)
+            .env("SIDEREAL_PORT", APP_HTTP_PORT.to_string())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(e) => {
+                error!(error = %e, "Failed to spawn user application");
+                std::process::exit(1);
+            }
+        };
+
+        // Initialise the HTTP client for proxying
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("failed to create HTTP client");
+        let _ = HTTP_CLIENT.set(client);
+
+        // Wait for the application to be ready
+        if let Err(e) = wait_for_app_ready().await {
+            error!(error = %e, "Application failed to start");
+            let _ = child.kill().await;
+            std::process::exit(1);
+        }
+
+        info!("User application ready");
+
+        // Spawn a task to monitor the child process
+        tokio::spawn(async move {
+            match child.wait().await {
+                Ok(status) => {
+                    if status.success() {
+                        info!("User application exited normally");
+                    } else {
+                        error!(code = ?status.code(), "User application exited with error");
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Failed to wait for user application");
+                }
+            }
+            // If the app exits, we should shut down
+            std::process::exit(1);
+        });
+    } else {
+        info!(
+            entrypoint = APP_ENTRYPOINT,
+            "No user application found, running in standalone mode"
+        );
+    }
 
     if let Err(e) = run_vsock_server().await {
         error!("vsock server error: {}", e);
@@ -69,6 +145,32 @@ async fn init_state_client() {
 #[allow(dead_code)]
 pub fn state_client() -> Option<Arc<VsockStateClient>> {
     STATE_CLIENT.get().cloned()
+}
+
+/// Wait for the user's HTTP server to be ready.
+async fn wait_for_app_ready() -> Result<(), Box<dyn std::error::Error>> {
+    let client = HTTP_CLIENT.get().ok_or("HTTP client not initialised")?;
+    let url = format!("http://127.0.0.1:{APP_HTTP_PORT}/health");
+    let deadline = tokio::time::Instant::now() + APP_READY_TIMEOUT;
+
+    debug!(url = %url, "Waiting for application to be ready");
+
+    while tokio::time::Instant::now() < deadline {
+        match client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => {
+                return Ok(());
+            }
+            Ok(response) => {
+                debug!(status = %response.status(), "Application not ready yet");
+            }
+            Err(e) => {
+                debug!(error = %e, "Application not ready yet");
+            }
+        }
+        tokio::time::sleep(APP_READY_POLL_INTERVAL).await;
+    }
+
+    Err("timeout waiting for application".into())
 }
 
 async fn run_vsock_server() -> Result<(), Box<dyn std::error::Error>> {
@@ -133,7 +235,7 @@ async fn handle_connection(
         let shutdown = match header.message_type {
             MessageType::Function => {
                 let envelope: Envelope<FunctionMessage> = Codec::decode(&buf)?;
-                let response = handle_function_message(envelope);
+                let response = handle_function_message(envelope).await;
 
                 // Encode and send response
                 let bytes = {
@@ -181,23 +283,19 @@ async fn handle_connection(
     }
 }
 
-fn handle_function_message(envelope: Envelope<FunctionMessage>) -> Envelope<FunctionMessage> {
+async fn handle_function_message(envelope: Envelope<FunctionMessage>) -> Envelope<FunctionMessage> {
     match envelope.payload {
-        FunctionMessage::Invoke(request) => {
-            info!(function = %request.function_name, "Invoking function");
-
-            match invoke_function(&request) {
-                Ok(response) => {
-                    debug!(function = %request.function_name, status = response.status, "Function completed");
-                    Envelope::response_to(&envelope.header, FunctionMessage::Response(response))
-                }
-                Err(e) => {
-                    error!(function = %request.function_name, error = %e, "Function failed");
-                    let response = InvokeResponse::error(e.to_string());
-                    Envelope::response_to(&envelope.header, FunctionMessage::Response(response))
-                }
+        FunctionMessage::Invoke(request) => match invoke_function(&request).await {
+            Ok(response) => {
+                debug!(function = %request.function_name, status = response.status, "Function completed");
+                Envelope::response_to(&envelope.header, FunctionMessage::Response(response))
             }
-        }
+            Err(e) => {
+                error!(function = %request.function_name, error = %e, "Function failed");
+                let response = InvokeResponse::error(e.to_string());
+                Envelope::response_to(&envelope.header, FunctionMessage::Response(response))
+            }
+        },
         FunctionMessage::Response(_) => {
             warn!("Received unexpected Response message");
             let response = InvokeResponse::bad_request("Unexpected Response message");
@@ -232,19 +330,52 @@ fn handle_control_message(envelope: &Envelope<ControlMessage>) -> (Envelope<Cont
     }
 }
 
-fn invoke_function(request: &InvokeRequest) -> Result<InvokeResponse, Box<dyn std::error::Error>> {
-    // TODO: Implement actual function invocation
-    // For now, return a placeholder response
+async fn invoke_function(
+    request: &InvokeRequest,
+) -> Result<InvokeResponse, Box<dyn std::error::Error>> {
     info!(
         function = %request.function_name,
         payload_len = request.payload.len(),
-        "Function invocation (placeholder)"
+        "Invoking function"
     );
 
-    let response = serde_json::json!({
-        "message": format!("Function '{}' executed successfully (placeholder)", request.function_name),
-        "payload_received": request.payload.len()
-    });
+    // Check if we have an HTTP client (user app is running)
+    let Some(client) = HTTP_CLIENT.get() else {
+        // No user app, return placeholder response
+        let response = serde_json::json!({
+            "error": "No user application running",
+        });
+        return Ok(InvokeResponse::error(serde_json::to_string(&response)?));
+    };
 
-    Ok(InvokeResponse::ok(serde_json::to_vec(&response)?))
+    // Proxy the request to the user's HTTP server
+    let url = format!("http://127.0.0.1:{APP_HTTP_PORT}/{}", request.function_name);
+
+    let http_response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(request.payload.clone())
+        .send()
+        .await?;
+
+    let status = http_response.status();
+    let body = http_response.bytes().await?;
+
+    debug!(
+        function = %request.function_name,
+        status = %status,
+        body_len = body.len(),
+        "Function response received"
+    );
+
+    if status.is_success() {
+        Ok(InvokeResponse::ok(body.to_vec()))
+    } else {
+        // Include status code in the response
+        Ok(InvokeResponse {
+            status: status.as_u16().into(),
+            headers: Vec::new(),
+            body: body.to_vec(),
+        })
+    }
 }

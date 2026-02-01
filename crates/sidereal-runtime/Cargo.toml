@@ -25,6 +25,7 @@ sidereal-proto = { version = "0.1.0", path = "../sidereal-proto" }
 
 # State client for accessing KV/Queue/Lock from functions
 sidereal-state = { version = "0.1.0", path = "../sidereal-state", features = ["vsock"] }
+reqwest = { version = "0.13.1", features = ["json"] }
 
 [lints]
 workspace = true
