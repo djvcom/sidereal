@@ -7,6 +7,7 @@
 
 pub mod config;
 pub mod error;
+pub mod registration;
 pub mod vm;
 pub mod vsock;
 
@@ -15,6 +16,7 @@ pub mod state_server;
 
 pub use config::VmConfig;
 pub use error::FirecrackerError;
+pub use registration::{wait_for_registration, wait_for_registration_vsock, RegistrationInfo};
 pub use vm::{VmInstance, VmManager};
 pub use vsock::VsockClient;
 

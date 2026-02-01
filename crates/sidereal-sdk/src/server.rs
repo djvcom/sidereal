@@ -4,6 +4,7 @@
 //! and manages the lifecycle of background and router services.
 
 use crate::config::{ConfigManager, SiderealConfig};
+use crate::registration::{is_vsock_available, register_with_host};
 use thiserror::Error;
 
 /// Errors that can occur during server startup and operation.
@@ -122,6 +123,26 @@ pub async fn run(config: ServerConfig) -> Result<(), ServerError> {
         eprintln!("Warning: No functions or services registered.");
         eprintln!("  Use #[sidereal_sdk::function] for functions");
         eprintln!("  Use #[sidereal_sdk::service] for services");
+    }
+
+    if is_vsock_available() {
+        let worker_id =
+            std::env::var("SIDEREAL_WORKER_ID").unwrap_or_else(|_| "unknown".to_owned());
+        eprintln!("Running in VM, registering with host (worker_id={worker_id})");
+
+        match register_with_host(&worker_id).await {
+            Ok(info) => {
+                eprintln!(
+                    "Registered {} function(s) with host (heartbeat={}s)",
+                    info.functions.len(),
+                    info.heartbeat_interval_secs
+                );
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to register with host: {e}");
+                eprintln!("  Continuing without host registration (local development mode)");
+            }
+        }
     }
 
     let config_manager = match ConfigManager::load() {

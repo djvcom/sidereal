@@ -157,12 +157,40 @@ impl DeploymentManager {
             .await
             .map_err(|e| (Some(registering.data().clone()), e))?;
 
+        // Wait for registration FIRST - the SDK registers before starting its HTTP server,
+        // so we need to be listening before calling wait_worker_ready()
+        let timeout = Duration::from_secs(self.deployment_config.timeout_secs);
+        let discovered_functions = self
+            .provisioner
+            .wait_for_registration(&worker.id, timeout)
+            .await
+            .map_err(|e| (Some(registering.data().clone()), e))?;
+
+        // Now wait for the HTTP server to be ready (the SDK starts it after registration)
         self.wait_worker_ready(&worker.id)
             .await
             .map_err(|e| (Some(registering.data().clone()), e))?;
 
-        // Register function placements with the scheduler
-        self.register_placements(&worker)
+        if discovered_functions.is_empty() {
+            return Err((
+                Some(registering.data().clone()),
+                ControlError::provisioning("worker registered with no functions"),
+            ));
+        }
+
+        info!(
+            deployment_id = %deployment_id,
+            functions = ?discovered_functions,
+            "worker reported {} function(s)",
+            discovered_functions.len()
+        );
+
+        let updated_worker = ProvisionedWorker {
+            functions: discovered_functions,
+            ..worker
+        };
+
+        self.register_placements(&updated_worker)
             .await
             .map_err(|e| (Some(registering.data().clone()), e))?;
 
@@ -171,7 +199,7 @@ impl DeploymentManager {
             let entry = workers
                 .entry(deployment_id.to_string())
                 .or_insert_with(DeploymentWorkers::default);
-            entry.worker_ids.push(worker.id);
+            entry.worker_ids.push(updated_worker.id);
         }
 
         let active = registering.activate();

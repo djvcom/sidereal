@@ -7,7 +7,9 @@ use std::sync::RwLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use sidereal_firecracker::{VmConfig, VmInstance, VmManager, VsockClient};
+use sidereal_firecracker::{
+    wait_for_registration as fc_wait_for_registration, VmConfig, VmInstance, VmManager, VsockClient,
+};
 use sidereal_proto::ports::FUNCTION as VSOCK_PORT;
 use tracing::{debug, info, warn};
 
@@ -229,6 +231,45 @@ impl WorkerProvisioner for FirecrackerProvisioner {
             "worker not ready within {}s",
             timeout.as_secs()
         )))
+    }
+
+    async fn wait_for_registration(
+        &self,
+        worker_id: &str,
+        timeout: Duration,
+    ) -> ControlResult<Vec<String>> {
+        let timeout = if timeout.is_zero() {
+            DEFAULT_READY_TIMEOUT
+        } else {
+            timeout
+        };
+
+        debug!(worker_id = %worker_id, timeout = ?timeout, "waiting for worker registration");
+
+        let vsock_path = {
+            let instances = self
+                .instances
+                .read()
+                .map_err(|_| ControlError::internal("lock poisoned"))?;
+
+            let entry = instances.get(worker_id).ok_or_else(|| {
+                ControlError::provisioning(format!("worker not found: {worker_id}"))
+            })?;
+
+            entry.vsock_uds_path.clone()
+        };
+
+        let registration = fc_wait_for_registration(&vsock_path, timeout)
+            .await
+            .map_err(|e| ControlError::provisioning(format!("registration failed: {e}")))?;
+
+        info!(
+            worker_id = %worker_id,
+            functions = ?registration.functions,
+            "received function registration from worker"
+        );
+
+        Ok(registration.functions)
     }
 }
 

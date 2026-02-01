@@ -22,6 +22,8 @@ tower.workspace = true
 tracing.workspace = true
 sidereal-state = { version = "0.1.0", path = "../sidereal-state", features = ["config"] }
 sidereal-secrets = { version = "0.1.0", path = "../sidereal-secrets", features = ["config", "memory", "env"] }
+sidereal-proto = { version = "0.1.0", path = "../sidereal-proto" }
+tokio-vsock.workspace = true
 
 [lints]
 workspace = true

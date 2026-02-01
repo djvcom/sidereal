@@ -99,6 +99,17 @@ pub trait WorkerProvisioner: Send + Sync {
 
     /// Wait for a worker to become ready.
     async fn wait_ready(&self, worker_id: &str, timeout: Duration) -> ControlResult<()>;
+
+    /// Wait for a worker to send its function registration.
+    ///
+    /// Returns the list of function names that the worker reports it can handle.
+    /// This is used to discover functions at runtime rather than relying on
+    /// static configuration.
+    async fn wait_for_registration(
+        &self,
+        worker_id: &str,
+        timeout: Duration,
+    ) -> ControlResult<Vec<String>>;
 }
 
 /// Create a provisioner from configuration.
@@ -183,6 +194,25 @@ impl WorkerProvisioner for MockProvisioner {
 
         if workers.contains_key(worker_id) {
             Ok(())
+        } else {
+            Err(ControlError::provisioning(format!(
+                "worker not found: {worker_id}"
+            )))
+        }
+    }
+
+    async fn wait_for_registration(
+        &self,
+        worker_id: &str,
+        _timeout: Duration,
+    ) -> ControlResult<Vec<String>> {
+        let workers = self
+            .workers
+            .read()
+            .map_err(|_| ControlError::internal("lock poisoned"))?;
+
+        if let Some(worker) = workers.get(worker_id) {
+            Ok(worker.functions.clone())
         } else {
             Err(ControlError::provisioning(format!(
                 "worker not found: {worker_id}"

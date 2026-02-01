@@ -91,6 +91,7 @@ pub mod config;
 pub mod context;
 pub mod extractors;
 pub mod prelude;
+pub mod registration;
 pub mod registry;
 pub mod server;
 pub mod service_registry;
@@ -136,6 +137,9 @@ pub use config::{ConfigError, ConfigManager};
 pub use extractors::{
     AppState, Config, ConfigRejection, InvocationMeta, InvocationMetaRejection, Kv, KvClient,
     KvError, KvRejection, SecretError, Secrets, SecretsRejection,
+};
+pub use registration::{
+    is_vsock_available, register_with_host, RegistrationError, RegistrationInfo, RegistrationResult,
 };
 pub use registry::{FunctionMetadata, FunctionResult};
 pub use server::{run, ServerConfig, ServerError};

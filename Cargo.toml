@@ -66,7 +66,6 @@ http-body-util = "0.1"
 sidereal-macros = { path = "crates/sidereal-macros" }
 sidereal-firecracker = { path = "crates/sidereal-firecracker" }
 sidereal-proto = { path = "crates/sidereal-proto" }
-sidereal-scheduler = { path = "crates/sidereal-scheduler" }
 
 # HTTP server
 tower-http = { version = "0.6", features = ["trace", "cors", "decompression-gzip"] }

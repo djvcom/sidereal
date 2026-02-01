@@ -24,6 +24,7 @@ hyperlocal.workspace = true
 http-body-util.workspace = true
 sidereal-proto = { version = "0.1.0", path = "../sidereal-proto" }
 sidereal-state = { version = "0.1.0", path = "../sidereal-state", optional = true }
+scopeguard = "1.2.0"
 
 [features]
 default = []
