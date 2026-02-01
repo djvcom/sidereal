@@ -24,7 +24,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tracing::{debug, error, info, warn};
 
-const APP_ENTRYPOINT: &str = "/app/entrypoint";
+const APP_ENTRYPOINT: &str = "/app/binary";
 const APP_HTTP_PORT: u16 = 3000;
 const APP_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const APP_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
