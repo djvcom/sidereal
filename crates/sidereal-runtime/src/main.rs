@@ -79,7 +79,7 @@ async fn main() {
             }
         };
 
-        // Initialise the HTTP client for proxying
+        // Initialise the HTTP client for proxying to localhost
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
