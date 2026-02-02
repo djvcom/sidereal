@@ -487,6 +487,7 @@ in
       path = [
         pkgs.openssh
         pkgs.bubblewrap
+        pkgs.coreutils
         pkgs.e2fsprogs
         pkgs.cargo-zigbuild
         pkgs.zig
@@ -495,7 +496,8 @@ in
         "/run/wrappers"
       ]
       ++ (if builtins.isList cfg.rustToolchain then cfg.rustToolchain else [ cfg.rustToolchain ])
-      ++ lib.optional cfg.build.vm.useFirecracker pkgs.firecracker;
+      ++ lib.optional cfg.build.vm.useFirecracker pkgs.firecracker
+      ++ lib.optional (cfg.storage.backend == "s3") pkgs.awscli2;
 
       environment = {
         RUST_LOG = cfg.logLevel;
@@ -506,6 +508,33 @@ in
         Type = "simple";
         User = cfg.user;
         Group = cfg.group;
+
+        # Upload runtime to S3 before starting (if using S3 storage and Firecracker VMs)
+        ExecStartPre = lib.mkIf (cfg.storage.backend == "s3" && cfg.build.vm.useFirecracker) (
+          let
+            endpointArg =
+              if cfg.storage.endpoint != null then "--endpoint-url ${cfg.storage.endpoint}" else "";
+            uploadScript = pkgs.writeShellScript "upload-sidereal-runtime" ''
+              set -euo pipefail
+
+              RUNTIME="${cfg.runtimePackage}/bin/sidereal-runtime"
+              HASH_FILE="${cfg.dataDir}/.runtime-hash"
+              CURRENT_HASH=$(sha256sum "$RUNTIME" | cut -d' ' -f1)
+
+              if [ -f "$HASH_FILE" ] && [ "$(cat "$HASH_FILE")" = "$CURRENT_HASH" ]; then
+                echo "Runtime unchanged, skipping upload"
+                exit 0
+              fi
+
+              echo "Uploading sidereal-runtime to S3..."
+              aws s3 cp "$RUNTIME" "s3://${cfg.storage.bucket}/runtime/sidereal-runtime" ${endpointArg}
+
+              echo "$CURRENT_HASH" > "$HASH_FILE"
+              echo "Runtime uploaded successfully"
+            '';
+          in
+          "${uploadScript}"
+        );
 
         ExecStart = "${cfg.package}/bin/sidereal-server --config ${configFile}";
 
