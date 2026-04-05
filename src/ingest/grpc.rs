@@ -177,6 +177,13 @@ pub use opentelemetry_proto::tonic::collector::{
 };
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use object_store::memory::InMemory;
@@ -209,7 +216,7 @@ mod tests {
             },
             ParquetConfig {
                 row_group_size: 1000,
-                compression: "zstd".to_string(),
+                compression: "zstd".to_owned(),
             },
         )
     }
@@ -249,9 +256,9 @@ mod tests {
 
     fn service_name_kv(name: &str) -> KeyValue {
         KeyValue {
-            key: "service.name".to_string(),
+            key: "service.name".to_owned(),
             value: Some(AnyValue {
-                value: Some(any_value::Value::StringValue(name.to_string())),
+                value: Some(any_value::Value::StringValue(name.to_owned())),
             }),
         }
     }
@@ -270,7 +277,7 @@ mod tests {
                     spans: vec![Span {
                         trace_id: vec![0xAA; 16],
                         span_id: vec![0xBB; 8],
-                        name: "grpc-test-span".to_string(),
+                        name: "grpc-test-span".to_owned(),
                         start_time_unix_nano: 1_000_000_000,
                         end_time_unix_nano: 2_000_000_000,
                         ..Default::default()
@@ -315,9 +322,9 @@ mod tests {
                 }),
                 scope_metrics: vec![ScopeMetrics {
                     metrics: vec![Metric {
-                        name: "grpc.test.gauge".to_string(),
-                        description: "Test metric".to_string(),
-                        unit: "1".to_string(),
+                        name: "grpc.test.gauge".to_owned(),
+                        description: "Test metric".to_owned(),
+                        unit: "1".to_owned(),
                         metadata: vec![],
                         data: Some(metric::Data::Gauge(Gauge {
                             data_points: vec![NumberDataPoint {
@@ -355,9 +362,9 @@ mod tests {
                         time_unix_nano: 1_000_000_000,
                         observed_time_unix_nano: 1_000_000_000,
                         severity_number: 9, // INFO
-                        severity_text: "INFO".to_string(),
+                        severity_text: "INFO".to_owned(),
                         body: Some(AnyValue {
-                            value: Some(any_value::Value::StringValue("gRPC log test".to_string())),
+                            value: Some(any_value::Value::StringValue("gRPC log test".to_owned())),
                         }),
                         ..Default::default()
                     }],
@@ -389,19 +396,19 @@ mod tests {
                         Span {
                             trace_id: vec![0x01; 16],
                             span_id: vec![0x01; 8],
-                            name: "span-1".to_string(),
+                            name: "span-1".to_owned(),
                             ..Default::default()
                         },
                         Span {
                             trace_id: vec![0x02; 16],
                             span_id: vec![0x02; 8],
-                            name: "span-2".to_string(),
+                            name: "span-2".to_owned(),
                             ..Default::default()
                         },
                         Span {
                             trace_id: vec![0x03; 16],
                             span_id: vec![0x03; 8],
-                            name: "span-3".to_string(),
+                            name: "span-3".to_owned(),
                             ..Default::default()
                         },
                     ],

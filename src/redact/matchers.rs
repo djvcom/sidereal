@@ -94,21 +94,30 @@ impl CompiledMatcher {
 /// Error compiling a matcher.
 #[derive(Debug, thiserror::Error)]
 pub enum MatcherError {
+    /// The glob pattern could not be parsed.
     #[error("invalid glob pattern: {0}")]
     InvalidGlob(#[from] glob::PatternError),
 
+    /// An underlying pattern error occurred.
     #[error("pattern error: {0}")]
     Pattern(#[from] PatternError),
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
     #[test]
     fn attribute_matcher_exact_match() {
         let matcher = CompiledMatcher::compile(&MatcherConfig::Attribute {
-            keys: vec!["user.email".to_string(), "user.id".to_string()],
+            keys: vec!["user.email".to_owned(), "user.id".to_owned()],
         })
         .unwrap();
 
@@ -120,7 +129,7 @@ mod tests {
     #[test]
     fn glob_matcher_wildcard() {
         let matcher = CompiledMatcher::compile(&MatcherConfig::Glob {
-            pattern: "http.request.header.*".to_string(),
+            pattern: "http.request.header.*".to_owned(),
         })
         .unwrap();
 
@@ -132,7 +141,7 @@ mod tests {
     #[test]
     fn glob_matcher_question_mark() {
         let matcher = CompiledMatcher::compile(&MatcherConfig::Glob {
-            pattern: "db.statement.?".to_string(),
+            pattern: "db.statement.?".to_owned(),
         })
         .unwrap();
 
@@ -144,7 +153,7 @@ mod tests {
     #[test]
     fn pattern_matcher_email() {
         let matcher = CompiledMatcher::compile(&MatcherConfig::Pattern {
-            regex: "builtin:email".to_string(),
+            regex: "builtin:email".to_owned(),
         })
         .unwrap();
 
@@ -156,7 +165,7 @@ mod tests {
     #[test]
     fn pattern_matcher_custom_regex() {
         let matcher = CompiledMatcher::compile(&MatcherConfig::Pattern {
-            regex: r"secret-\d+".to_string(),
+            regex: r"secret-\d+".to_owned(),
         })
         .unwrap();
 
@@ -169,10 +178,10 @@ mod tests {
         let matcher = CompiledMatcher::compile(&MatcherConfig::All {
             matchers: vec![
                 MatcherConfig::Glob {
-                    pattern: "http.*".to_string(),
+                    pattern: "http.*".to_owned(),
                 },
                 MatcherConfig::Pattern {
-                    regex: r"Bearer".to_string(),
+                    regex: r"Bearer".to_owned(),
                 },
             ],
         })
@@ -191,10 +200,10 @@ mod tests {
         let matcher = CompiledMatcher::compile(&MatcherConfig::Any {
             matchers: vec![
                 MatcherConfig::Attribute {
-                    keys: vec!["password".to_string()],
+                    keys: vec!["password".to_owned()],
                 },
                 MatcherConfig::Pattern {
-                    regex: "builtin:email".to_string(),
+                    regex: "builtin:email".to_owned(),
                 },
             ],
         })
@@ -211,19 +220,19 @@ mod tests {
     #[test]
     fn is_key_only_detection() {
         let attr_matcher = CompiledMatcher::compile(&MatcherConfig::Attribute {
-            keys: vec!["test".to_string()],
+            keys: vec!["test".to_owned()],
         })
         .unwrap();
         assert!(attr_matcher.is_key_only());
 
         let glob_matcher = CompiledMatcher::compile(&MatcherConfig::Glob {
-            pattern: "test.*".to_string(),
+            pattern: "test.*".to_owned(),
         })
         .unwrap();
         assert!(glob_matcher.is_key_only());
 
         let pattern_matcher = CompiledMatcher::compile(&MatcherConfig::Pattern {
-            regex: "test".to_string(),
+            regex: "test".to_owned(),
         })
         .unwrap();
         assert!(!pattern_matcher.is_key_only());

@@ -1,6 +1,20 @@
 //! Integration tests for the OTLP ingestion pipeline.
 //!
 //! Tests the full flow: OTLP proto -> Arrow -> Parquet -> Object Store
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::redundant_closure_for_method_calls,
+    clippy::redundant_clone
+)]
 
 use std::sync::Arc;
 
@@ -57,7 +71,7 @@ fn buffer_config() -> BufferConfig {
 fn parquet_config() -> ParquetConfig {
     ParquetConfig {
         row_group_size: 1000,
-        compression: "zstd".to_string(),
+        compression: "zstd".to_owned(),
     }
 }
 
@@ -120,7 +134,7 @@ fn logs_ingester(
 
 fn service_name_kv(name: &str) -> KeyValue {
     KeyValue {
-        key: "service.name".to_string(),
+        key: "service.name".to_owned(),
         value: Some(AnyValue {
             value: Some(any_value::Value::StringValue(name.to_string())),
         }),
@@ -164,8 +178,8 @@ fn sample_metrics_request(
             scope_metrics: vec![ScopeMetrics {
                 metrics: vec![Metric {
                     name: metric_name.to_string(),
-                    description: "Test metric".to_string(),
-                    unit: "1".to_string(),
+                    description: "Test metric".to_owned(),
+                    unit: "1".to_owned(),
                     metadata: vec![],
                     data: Some(metric::Data::Gauge(Gauge {
                         data_points: vec![NumberDataPoint {
@@ -194,7 +208,7 @@ fn sample_logs_request(service_name: &str, body: &str) -> ExportLogsServiceReque
                     time_unix_nano: 1_704_067_200_000_000_000,
                     observed_time_unix_nano: 1_704_067_200_000_000_000,
                     severity_number: 9, // INFO
-                    severity_text: "INFO".to_string(),
+                    severity_text: "INFO".to_owned(),
                     body: Some(AnyValue {
                         value: Some(any_value::Value::StringValue(body.to_string())),
                     }),
@@ -632,20 +646,20 @@ fn sample_trace_with_events(service_name: &str, span_name: &str) -> ExportTraceS
                     end_time_unix_nano: 1_704_067_201_000_000_000,
                     events: vec![
                         Event {
-                            name: "event-1".to_string(),
+                            name: "event-1".to_owned(),
                             time_unix_nano: 1_704_067_200_100_000_000,
                             attributes: vec![KeyValue {
-                                key: "event.key".to_string(),
+                                key: "event.key".to_owned(),
                                 value: Some(AnyValue {
                                     value: Some(any_value::Value::StringValue(
-                                        "event-value".to_string(),
+                                        "event-value".to_owned(),
                                     )),
                                 }),
                             }],
                             dropped_attributes_count: 0,
                         },
                         Event {
-                            name: "event-2".to_string(),
+                            name: "event-2".to_owned(),
                             time_unix_nano: 1_704_067_200_200_000_000,
                             attributes: vec![],
                             dropped_attributes_count: 0,
@@ -680,11 +694,11 @@ fn sample_trace_with_links(service_name: &str, span_name: &str) -> ExportTraceSe
                         Link {
                             trace_id: vec![0xCC; 16],
                             span_id: vec![0xDD; 8],
-                            trace_state: "vendor=opaque".to_string(),
+                            trace_state: "vendor=opaque".to_owned(),
                             attributes: vec![KeyValue {
-                                key: "link.reason".to_string(),
+                                key: "link.reason".to_owned(),
                                 value: Some(AnyValue {
-                                    value: Some(any_value::Value::StringValue("retry".to_string())),
+                                    value: Some(any_value::Value::StringValue("retry".to_owned())),
                                 }),
                             }],
                             dropped_attributes_count: 0,
@@ -969,10 +983,10 @@ fn sample_trace_with_pii(service_name: &str, span_name: &str) -> ExportTraceServ
                 attributes: vec![
                     service_name_kv(service_name),
                     KeyValue {
-                        key: "api.secret".to_string(),
+                        key: "api.secret".to_owned(),
                         value: Some(AnyValue {
                             value: Some(any_value::Value::StringValue(
-                                "sk-12345-secret".to_string(),
+                                "sk-12345-secret".to_owned(),
                             )),
                         }),
                     },
@@ -988,17 +1002,17 @@ fn sample_trace_with_pii(service_name: &str, span_name: &str) -> ExportTraceServ
                     end_time_unix_nano: 1_704_067_201_000_000_000,
                     attributes: vec![
                         KeyValue {
-                            key: "user.email".to_string(),
+                            key: "user.email".to_owned(),
                             value: Some(AnyValue {
                                 value: Some(any_value::Value::StringValue(
-                                    "user@example.com".to_string(),
+                                    "user@example.com".to_owned(),
                                 )),
                             }),
                         },
                         KeyValue {
-                            key: "http.method".to_string(),
+                            key: "http.method".to_owned(),
                             value: Some(AnyValue {
-                                value: Some(any_value::Value::StringValue("GET".to_string())),
+                                value: Some(any_value::Value::StringValue("GET".to_owned())),
                             }),
                         },
                     ],
@@ -1018,23 +1032,23 @@ fn test_redaction_engine() -> RedactionEngine {
         key_env: None,
         rules: vec![
             RedactionRule {
-                name: "drop-secrets".to_string(),
+                name: "drop-secrets".to_owned(),
                 signals: vec![],
                 scopes: vec![],
                 matcher: MatcherConfig::Glob {
-                    pattern: "*.secret".to_string(),
+                    pattern: "*.secret".to_owned(),
                 },
                 action: ActionConfig::Drop,
             },
             RedactionRule {
-                name: "redact-emails".to_string(),
+                name: "redact-emails".to_owned(),
                 signals: vec![],
                 scopes: vec![],
                 matcher: MatcherConfig::Pattern {
-                    regex: "builtin:email".to_string(),
+                    regex: "builtin:email".to_owned(),
                 },
                 action: ActionConfig::Redact {
-                    placeholder: "[EMAIL-REDACTED]".to_string(),
+                    placeholder: "[EMAIL-REDACTED]".to_owned(),
                 },
             },
         ],

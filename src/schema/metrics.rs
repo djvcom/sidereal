@@ -58,6 +58,7 @@ pub enum MetricType {
 }
 
 impl MetricType {
+    /// Converts a raw `u8` value to the corresponding metric type.
     pub const fn from_u8(v: u8) -> Option<Self> {
         match v {
             0 => Some(Self::Gauge),
@@ -165,6 +166,13 @@ pub fn number_metrics_storage_schema() -> Arc<Schema> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use crate::schema::PARTITION_COLUMN_COUNT;

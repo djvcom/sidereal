@@ -2,6 +2,18 @@
 //!
 //! These benchmarks measure the throughput of buffering and flushing telemetry
 //! data, including lock contention and Parquet write performance.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::as_conversions,
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::redundant_closure_for_method_calls,
+    missing_docs
+)]
 
 use std::sync::Arc;
 
@@ -35,7 +47,7 @@ fn bench_config() -> (BufferConfig, ParquetConfig) {
         },
         ParquetConfig {
             row_group_size: 100_000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         },
     )
 }
@@ -50,19 +62,19 @@ fn sample_span(id: u8) -> Span {
         end_time_unix_nano: 1_704_067_201_000_000_000,
         attributes: vec![
             KeyValue {
-                key: "http.request.method".to_string(),
+                key: "http.request.method".to_owned(),
                 value: Some(AnyValue {
-                    value: Some(any_value::Value::StringValue("GET".to_string())),
+                    value: Some(any_value::Value::StringValue("GET".to_owned())),
                 }),
             },
             KeyValue {
-                key: "http.route".to_string(),
+                key: "http.route".to_owned(),
                 value: Some(AnyValue {
-                    value: Some(any_value::Value::StringValue("/api/v1/traces".to_string())),
+                    value: Some(any_value::Value::StringValue("/api/v1/traces".to_owned())),
                 }),
             },
             KeyValue {
-                key: "http.response.status_code".to_string(),
+                key: "http.response.status_code".to_owned(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::IntValue(200)),
                 }),
@@ -82,9 +94,9 @@ fn trace_request(span_count: usize) -> ExportTraceServiceRequest {
         resource_spans: vec![ResourceSpans {
             resource: Some(Resource {
                 attributes: vec![KeyValue {
-                    key: "service.name".to_string(),
+                    key: "service.name".to_owned(),
                     value: Some(AnyValue {
-                        value: Some(any_value::Value::StringValue("bench-service".to_string())),
+                        value: Some(any_value::Value::StringValue("bench-service".to_owned())),
                     }),
                 }],
                 ..Default::default()

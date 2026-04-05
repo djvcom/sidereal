@@ -675,6 +675,13 @@ impl IntoResponse for ErrorApiError {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -728,14 +735,14 @@ mod tests {
     #[test]
     fn build_filter_with_values() {
         let params = ListErrorsQuery {
-            start_time: Some("2024-01-15T00:00:00Z".to_string()),
-            service: Some("api-server".to_string()),
+            start_time: Some("2024-01-15T00:00:00Z".to_owned()),
+            service: Some("api-server".to_owned()),
             min_count: Some(5),
             ..Default::default()
         };
         let filter = build_filter(&params).unwrap();
         assert!(filter.start_time.is_some());
-        assert_eq!(filter.service, Some("api-server".to_string()));
+        assert_eq!(filter.service, Some("api-server".to_owned()));
         assert_eq!(filter.min_count, Some(5));
     }
 }

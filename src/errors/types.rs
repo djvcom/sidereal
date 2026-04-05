@@ -278,6 +278,13 @@ pub fn span_id_from_hex(hex_str: &str) -> Result<SpanId, hex::FromHexError> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -328,8 +335,8 @@ mod tests {
             .with_environment("production")
             .with_min_count(10);
 
-        assert_eq!(filter.service, Some("api".to_string()));
-        assert_eq!(filter.environment, Some("production".to_string()));
+        assert_eq!(filter.service, Some("api".to_owned()));
+        assert_eq!(filter.environment, Some("production".to_owned()));
         assert_eq!(filter.min_count, Some(10));
     }
 }

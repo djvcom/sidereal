@@ -2039,6 +2039,13 @@ pub fn convert_logs_to_arrow(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use opentelemetry_proto::tonic::{
@@ -2049,16 +2056,16 @@ mod tests {
 
     fn make_kv(key: &str, value: &str) -> KeyValue {
         KeyValue {
-            key: key.to_string(),
+            key: key.to_owned(),
             value: Some(AnyValue {
-                value: Some(AnyValueKind::StringValue(value.to_string())),
+                value: Some(AnyValueKind::StringValue(value.to_owned())),
             }),
         }
     }
 
     fn make_int_kv(key: &str, value: i64) -> KeyValue {
         KeyValue {
-            key: key.to_string(),
+            key: key.to_owned(),
             value: Some(AnyValue {
                 value: Some(AnyValueKind::IntValue(value)),
             }),
@@ -2080,7 +2087,7 @@ mod tests {
                         trace_id: vec![1u8; 16],
                         span_id: vec![2u8; 8],
                         parent_span_id: vec![],
-                        name: "test-span".to_string(),
+                        name: "test-span".to_owned(),
                         kind: 1,
                         start_time_unix_nano: 1_704_067_200_000_000_000,
                         end_time_unix_nano: 1_704_067_201_000_000_000,
@@ -2177,7 +2184,7 @@ mod tests {
                         Span {
                             trace_id: vec![0x01; 16],
                             span_id: vec![0x01; 8],
-                            name: "span-a".to_string(),
+                            name: "span-a".to_owned(),
                             start_time_unix_nano: 1_000_000_000,
                             end_time_unix_nano: 2_000_000_000,
                             ..Default::default()
@@ -2185,7 +2192,7 @@ mod tests {
                         Span {
                             trace_id: vec![0x02; 16],
                             span_id: vec![0x02; 8],
-                            name: "span-b".to_string(),
+                            name: "span-b".to_owned(),
                             start_time_unix_nano: 3_000_000_000,
                             end_time_unix_nano: 4_000_000_000,
                             ..Default::default()
@@ -2193,7 +2200,7 @@ mod tests {
                         Span {
                             trace_id: vec![0x03; 16],
                             span_id: vec![0x03; 8],
-                            name: "span-c".to_string(),
+                            name: "span-c".to_owned(),
                             start_time_unix_nano: 5_000_000_000,
                             end_time_unix_nano: 6_000_000_000,
                             ..Default::default()
@@ -2256,8 +2263,8 @@ mod tests {
                         spans: vec![Span {
                             trace_id: vec![0xAA; 16],
                             span_id: vec![0xBB; 8],
-                            name: format!("span-kind-{}", kind),
-                            kind: kind as i32,
+                            name: format!("span-kind-{kind}"),
+                            kind,
                             ..Default::default()
                         }],
                         ..Default::default()
@@ -2275,7 +2282,11 @@ mod tests {
                 .as_any()
                 .downcast_ref::<arrow::array::UInt8Array>()
                 .unwrap();
-            assert_eq!(kind_col.value(0), kind as u8, "span kind mismatch");
+            assert_eq!(
+                kind_col.value(0),
+                u8::try_from(kind).unwrap(),
+                "span kind mismatch"
+            );
         }
     }
 
@@ -2296,8 +2307,8 @@ mod tests {
                     spans: vec![Span {
                         trace_id: vec![0xAA; 16],
                         span_id: vec![0xBB; 8],
-                        parent_span_id: parent_span_id.clone(),
-                        name: "child-span".to_string(),
+                        parent_span_id,
+                        name: "child-span".to_owned(),
                         ..Default::default()
                     }],
                     ..Default::default()
@@ -2335,7 +2346,7 @@ mod tests {
                         trace_id: vec![0xAA; 16],
                         span_id: vec![0xBB; 8],
                         parent_span_id: vec![], // Empty = root span
-                        name: "root-span".to_string(),
+                        name: "root-span".to_owned(),
                         ..Default::default()
                     }],
                     ..Default::default()
@@ -2376,7 +2387,7 @@ mod tests {
                 scope_metrics: vec![ScopeMetrics {
                     scope: Some(InstrumentationScope::default()),
                     metrics: vec![Metric {
-                        name: "test.gauge".to_string(),
+                        name: "test.gauge".to_owned(),
                         data: Some(Data::Gauge(Gauge {
                             data_points: vec![NumberDataPoint {
                                 time_unix_nano: 1_704_067_200_000_000_000,

@@ -431,6 +431,12 @@ pub fn start_background_flush(ingester: Arc<Ingester>) -> FlushHandle {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
 mod tests {
     use super::*;
     use arrow::array::{StringArray, UInt64Array};
@@ -447,7 +453,7 @@ mod tests {
 
     fn test_batch(schema: &SchemaRef, rows: usize) -> RecordBatch {
         let ids: Vec<u64> = (0..rows as u64).collect();
-        let names: Vec<String> = (0..rows).map(|i| format!("name-{}", i)).collect();
+        let names: Vec<String> = (0..rows).map(|i| format!("name-{i}")).collect();
 
         RecordBatch::try_new(
             schema.clone(),
@@ -509,7 +515,7 @@ mod tests {
         let config = test_buffer_config(100, 10 * 1024 * 1024);
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Ingester::new(
@@ -543,7 +549,7 @@ mod tests {
         let config = test_buffer_config(20, 10 * 1024 * 1024);
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Ingester::new(
@@ -580,7 +586,7 @@ mod tests {
         let config = test_buffer_config(1000, 250);
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Ingester::new(Signal::Logs, schema.clone(), store, config, parquet_config);
@@ -605,7 +611,7 @@ mod tests {
         config.flush_interval_secs = 1;
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Arc::new(Ingester::new(
@@ -653,7 +659,7 @@ mod tests {
         config.flush_interval_secs = 60;
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Arc::new(Ingester::new(
@@ -696,7 +702,7 @@ mod tests {
         config.flush_interval_secs = 1;
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Arc::new(Ingester::new(
@@ -733,11 +739,11 @@ mod tests {
 
         let schema = test_schema();
         let store = Arc::new(InMemory::new());
-        let mut config = test_buffer_config(10000, 100 * 1024 * 1024);
+        let mut config = test_buffer_config(10_000, 100 * 1024 * 1024);
         config.flush_interval_secs = 3600;
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Arc::new(Ingester::new(
@@ -780,11 +786,11 @@ mod tests {
 
         let schema = test_schema();
         let store = Arc::new(InMemory::new());
-        let mut config = test_buffer_config(10000, 100 * 1024 * 1024);
+        let mut config = test_buffer_config(10_000, 100 * 1024 * 1024);
         config.flush_interval_secs = 3600;
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Arc::new(Ingester::new(
@@ -866,7 +872,7 @@ mod tests {
         config.max_records_per_request = 50;
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Ingester::new(
@@ -889,7 +895,7 @@ mod tests {
                 assert_eq!(records, 60);
                 assert_eq!(limit, 50);
             }
-            other => panic!("expected RequestTooLarge, got {:?}", other),
+            other => panic!("expected RequestTooLarge, got {other:?}"),
         }
     }
 
@@ -898,11 +904,11 @@ mod tests {
     async fn concurrent_ingests_no_race() {
         let schema = test_schema();
         let store = Arc::new(InMemory::new());
-        let mut config = test_buffer_config(100000, 100 * 1024 * 1024);
+        let mut config = test_buffer_config(100_000, 100 * 1024 * 1024);
         config.flush_interval_secs = 3600;
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let ingester = Arc::new(Ingester::new(

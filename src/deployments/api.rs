@@ -541,6 +541,13 @@ impl IntoResponse for DeploymentApiError {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::super::types::DeploymentStatus;
     use super::*;

@@ -38,6 +38,7 @@ pub const MAX_ROW_LIMIT: usize = 100_000;
 /// Query API state.
 #[derive(Clone)]
 pub struct QueryApiState {
+    /// The query engine used to execute queries.
     pub engine: Arc<QueryEngine>,
     /// Default row limit (defaults to `DEFAULT_ROW_LIMIT`).
     pub default_row_limit: usize,
@@ -84,7 +85,9 @@ pub fn query_router(state: QueryApiState) -> Router {
 /// Health check response.
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
+    /// Service health status.
     pub status: &'static str,
+    /// Crate version from Cargo metadata.
     pub version: &'static str,
 }
 
@@ -204,8 +207,10 @@ pub struct LogQueryRequest {
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ResponseFormat {
+    /// JSON-encoded response (default).
     #[default]
     Json,
+    /// Arrow IPC-encoded response.
     Arrow,
 }
 
@@ -640,8 +645,11 @@ fn array_value_to_json(array: &dyn arrow::array::Array, idx: usize) -> serde_jso
 /// Query API error type.
 #[derive(Debug)]
 pub enum QueryError {
+    /// The request was malformed or contained invalid parameters.
     InvalidRequest(String),
+    /// An error occurred within the telemetry query engine.
     Query(TelemetryError),
+    /// An unexpected internal error.
     Internal(String),
 }
 
@@ -691,6 +699,13 @@ impl IntoResponse for QueryError {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request};

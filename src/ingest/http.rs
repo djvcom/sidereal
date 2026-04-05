@@ -42,9 +42,13 @@ use crate::TelemetryError;
 /// Shared state for HTTP handlers.
 #[derive(Clone)]
 pub struct OtlpHttpState {
+    /// Ingester for trace spans.
     pub trace_ingester: Arc<Ingester>,
+    /// Ingester for metric data points.
     pub metrics_ingester: Arc<Ingester>,
+    /// Ingester for log records.
     pub logs_ingester: Arc<Ingester>,
+    /// Engine for redacting sensitive data before storage.
     pub redaction: Arc<RedactionEngine>,
 }
 
@@ -290,6 +294,13 @@ impl IntoResponse for HttpError {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use axum::{
@@ -320,7 +331,7 @@ mod tests {
         };
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         OtlpHttpState {
@@ -357,9 +368,9 @@ mod tests {
             resource_spans: vec![ResourceSpans {
                 resource: Some(Resource {
                     attributes: vec![KeyValue {
-                        key: "service.name".to_string(),
+                        key: "service.name".to_owned(),
                         value: Some(AnyValue {
-                            value: Some(any_value::Value::StringValue("test-service".to_string())),
+                            value: Some(any_value::Value::StringValue("test-service".to_owned())),
                         }),
                     }],
                     ..Default::default()
@@ -368,7 +379,7 @@ mod tests {
                     spans: vec![Span {
                         trace_id: vec![1u8; 16],
                         span_id: vec![2u8; 8],
-                        name: "test-span".to_string(),
+                        name: "test-span".to_owned(),
                         start_time_unix_nano: 1_000_000_000,
                         end_time_unix_nano: 2_000_000_000,
                         ..Default::default()

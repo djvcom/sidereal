@@ -172,25 +172,47 @@ pub fn traces_storage_schema() -> Arc<Schema> {
 
 /// Column indices for fast access during conversion.
 pub mod columns {
+    /// 128-bit trace identifier.
     pub const TRACE_ID: usize = 0;
+    /// 64-bit span identifier.
     pub const SPAN_ID: usize = 1;
+    /// 64-bit parent span identifier, empty for root spans.
     pub const PARENT_SPAN_ID: usize = 2;
+    /// W3C trace flags bitmask.
     pub const FLAGS: usize = 3;
+    /// W3C trace-state header value.
     pub const TRACE_STATE: usize = 4;
+    /// Span start time in nanoseconds since the Unix epoch.
     pub const START_TIME_UNIX_NANO: usize = 5;
+    /// Span end time in nanoseconds since the Unix epoch.
     pub const END_TIME_UNIX_NANO: usize = 6;
+    /// Span duration in nanoseconds.
     pub const DURATION_NS: usize = 7;
+    /// Span name (typically the operation name).
     pub const NAME: usize = 8;
+    /// Span kind (client, server, producer, consumer, or internal).
     pub const KIND: usize = 9;
+    /// Numeric status code indicating span outcome.
     pub const STATUS_CODE: usize = 10;
+    /// Human-readable status message.
     pub const STATUS_MESSAGE: usize = 11;
+    /// Instrumentation scope name.
     pub const SCOPE_NAME: usize = 12;
+    /// Instrumentation scope version.
     pub const SCOPE_VERSION: usize = 13;
+    /// Originating service name from resource attributes.
     pub const SERVICE_NAME: usize = 14;
     // ... remaining indices follow schema order
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use crate::schema::PARTITION_COLUMN_COUNT;

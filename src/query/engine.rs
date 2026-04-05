@@ -357,6 +357,13 @@ impl QueryEngine {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use arrow::array::{FixedSizeBinaryBuilder, StringBuilder, UInt64Builder, UInt8Array};
@@ -413,7 +420,7 @@ mod tests {
             .await
             .unwrap();
 
-        let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
+        let total_rows: usize = results.iter().map(RecordBatch::num_rows).sum();
         assert_eq!(total_rows, 2, "Should find 2 rows from the parquet file");
 
         // Verify data
@@ -490,19 +497,11 @@ mod tests {
                     "kind" => Arc::new(UInt8Array::from(vec![1u8, 2u8])), // SERVER, CLIENT
                     "status_code" => Arc::new(UInt8Array::from(vec![0u8, 0u8])), // UNSET
                     "flags" => Arc::new(arrow::array::UInt32Array::from(vec![0u32, 0u32])), // No flags
-                    "resource_dropped_attributes_count" => {
-                        Arc::new(arrow::array::UInt32Array::from(vec![0u32; num_rows]))
-                    }
-                    "scope_dropped_attributes_count" => {
-                        Arc::new(arrow::array::UInt32Array::from(vec![0u32; num_rows]))
-                    }
-                    "span_dropped_attributes_count" => {
-                        Arc::new(arrow::array::UInt32Array::from(vec![0u32; num_rows]))
-                    }
-                    "span_dropped_events_count" => {
-                        Arc::new(arrow::array::UInt32Array::from(vec![0u32; num_rows]))
-                    }
-                    "span_dropped_links_count" => {
+                    "resource_dropped_attributes_count"
+                    | "scope_dropped_attributes_count"
+                    | "span_dropped_attributes_count"
+                    | "span_dropped_events_count"
+                    | "span_dropped_links_count" => {
                         Arc::new(arrow::array::UInt32Array::from(vec![0u32; num_rows]))
                     }
                     _ if field.is_nullable() => {
@@ -524,7 +523,7 @@ mod tests {
         let tables = ["traces", "metrics", "logs"];
         for table in tables {
             let result = engine.ctx.table_exist(TableReference::bare(table));
-            assert!(result.unwrap_or(false), "Table '{}' should exist", table);
+            assert!(result.unwrap_or(false), "Table '{table}' should exist");
         }
     }
 

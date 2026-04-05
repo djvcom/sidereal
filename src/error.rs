@@ -46,7 +46,10 @@ pub enum TelemetryError {
 
     /// Buffer overflow - backpressure needed.
     #[error("buffer overflow: {message}")]
-    BufferOverflow { message: String },
+    BufferOverflow {
+        /// Description of the overflow condition.
+        message: String,
+    },
 
     /// Request too large - exceeds max_records_per_request.
     #[error("request too large: {records} records exceeds limit of {limit}")]
@@ -63,19 +66,31 @@ pub enum TelemetryError {
 
     /// Invalid content type in HTTP request.
     #[error("unsupported content type: {content_type}")]
-    InvalidContentType { content_type: String },
+    InvalidContentType {
+        /// The unsupported content type that was received.
+        content_type: String,
+    },
 
     /// Protobuf decoding error.
     #[error("protobuf decode error: {source}")]
-    ProtoDecode { source: prost::DecodeError },
+    ProtoDecode {
+        /// The underlying protobuf decoding error.
+        source: prost::DecodeError,
+    },
 
     /// JSON decoding error.
     #[error("JSON decode error: {source}")]
-    JsonDecode { source: serde_json::Error },
+    JsonDecode {
+        /// The underlying JSON deserialisation error.
+        source: serde_json::Error,
+    },
 
     /// JSON encoding error.
     #[error("JSON encode error: {source}")]
-    JsonEncode { source: serde_json::Error },
+    JsonEncode {
+        /// The underlying JSON serialisation error.
+        source: serde_json::Error,
+    },
 
     /// Query timed out.
     #[error("query timed out after {duration:?}")]

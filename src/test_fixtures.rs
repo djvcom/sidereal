@@ -77,7 +77,7 @@ pub fn buffer_config() -> BufferConfig {
 pub fn parquet_config() -> ParquetConfig {
     ParquetConfig {
         row_group_size: 1000,
-        compression: "zstd".to_string(),
+        compression: "zstd".to_owned(),
     }
 }
 
@@ -266,7 +266,7 @@ impl TestEnv {
         };
         let parquet_config = ParquetConfig {
             row_group_size: 1000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         };
 
         let traces_ingester = Arc::new(Ingester::new(
@@ -312,7 +312,7 @@ impl TestEnv {
             },
             parquet: ParquetConfig {
                 row_group_size: 1000,
-                compression: "zstd".to_string(),
+                compression: "zstd".to_owned(),
             },
             storage: StorageConfig::Memory,
             redaction: RedactionConfig::default(),
@@ -336,6 +336,13 @@ pub async fn test_env() -> TestEnv {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use rstest::rstest;

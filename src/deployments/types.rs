@@ -134,6 +134,13 @@ pub struct ServiceVersion {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -187,8 +194,8 @@ mod tests {
             .with_environment("production")
             .with_status(DeploymentStatus::Succeeded);
 
-        assert_eq!(filter.service, Some("api-server".to_string()));
-        assert_eq!(filter.environment, Some("production".to_string()));
+        assert_eq!(filter.service, Some("api-server".to_owned()));
+        assert_eq!(filter.environment, Some("production".to_owned()));
         assert_eq!(filter.status, Some(DeploymentStatus::Succeeded));
     }
 }

@@ -477,18 +477,23 @@ fn load_key_file(path: &Path) -> Result<SecretBox<Vec<u8>>, RedactionError> {
 /// Error during redaction configuration or execution.
 #[derive(Debug, thiserror::Error)]
 pub enum RedactionError {
+    /// A matcher failed to compile.
     #[error("invalid matcher: {0}")]
     Matcher(#[from] MatcherError),
 
+    /// A pattern failed to resolve or compile.
     #[error("pattern error: {0}")]
     Pattern(#[from] PatternError),
 
+    /// No HMAC key was provided for a hash action.
     #[error("missing HMAC key for hash action")]
     MissingKey,
 
+    /// The supplied HMAC key was invalid.
     #[error("invalid HMAC key: {0}")]
     InvalidKey(String),
 
+    /// The key file has overly permissive file permissions.
     #[error("insecure key file: {0}")]
     InsecureKeyFile(String),
 }
@@ -501,6 +506,13 @@ pub fn create_redaction_engine(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -517,9 +529,9 @@ mod tests {
 
     fn make_kv(key: &str, value: &str) -> KeyValue {
         KeyValue {
-            key: key.to_string(),
+            key: key.to_owned(),
             value: Some(AnyValue {
-                value: Some(any_value::Value::StringValue(value.to_string())),
+                value: Some(any_value::Value::StringValue(value.to_owned())),
             }),
         }
     }
@@ -539,11 +551,11 @@ mod tests {
     #[test]
     fn drop_action_removes_attribute() {
         let config = test_config_with_rules(vec![RedactionRule {
-            name: "drop-secret".to_string(),
+            name: "drop-secret".to_owned(),
             signals: vec![],
             scopes: vec![],
             matcher: MatcherConfig::Attribute {
-                keys: vec!["secret".to_string()],
+                keys: vec!["secret".to_owned()],
             },
             action: ActionConfig::Drop,
         }]);
@@ -566,14 +578,14 @@ mod tests {
     #[test]
     fn redact_action_replaces_value() {
         let config = test_config_with_rules(vec![RedactionRule {
-            name: "redact-secret".to_string(),
+            name: "redact-secret".to_owned(),
             signals: vec![],
             scopes: vec![],
             matcher: MatcherConfig::Attribute {
-                keys: vec!["password".to_string()],
+                keys: vec!["password".to_owned()],
             },
             action: ActionConfig::Redact {
-                placeholder: "[HIDDEN]".to_string(),
+                placeholder: "[HIDDEN]".to_owned(),
             },
         }]);
 
@@ -592,11 +604,11 @@ mod tests {
     #[test]
     fn signal_filter_restricts_rules() {
         let config = test_config_with_rules(vec![RedactionRule {
-            name: "traces-only".to_string(),
+            name: "traces-only".to_owned(),
             signals: vec![SignalFilter::Traces],
             scopes: vec![],
             matcher: MatcherConfig::Attribute {
-                keys: vec!["secret".to_string()],
+                keys: vec!["secret".to_owned()],
             },
             action: ActionConfig::Drop,
         }]);
@@ -617,11 +629,11 @@ mod tests {
     #[test]
     fn scope_filter_restricts_rules() {
         let config = test_config_with_rules(vec![RedactionRule {
-            name: "span-only".to_string(),
+            name: "span-only".to_owned(),
             signals: vec![],
             scopes: vec![AttributeScope::Span],
             matcher: MatcherConfig::Attribute {
-                keys: vec!["secret".to_string()],
+                keys: vec!["secret".to_owned()],
             },
             action: ActionConfig::Drop,
         }]);
@@ -646,11 +658,11 @@ mod tests {
     #[test]
     fn glob_pattern_matching() {
         let config = test_config_with_rules(vec![RedactionRule {
-            name: "drop-headers".to_string(),
+            name: "drop-headers".to_owned(),
             signals: vec![],
             scopes: vec![],
             matcher: MatcherConfig::Glob {
-                pattern: "http.request.header.*".to_string(),
+                pattern: "http.request.header.*".to_owned(),
             },
             action: ActionConfig::Drop,
         }]);
@@ -671,14 +683,14 @@ mod tests {
     #[test]
     fn pattern_matching_on_values() {
         let config = test_config_with_rules(vec![RedactionRule {
-            name: "redact-emails".to_string(),
+            name: "redact-emails".to_owned(),
             signals: vec![],
             scopes: vec![],
             matcher: MatcherConfig::Pattern {
-                regex: "builtin:email".to_string(),
+                regex: "builtin:email".to_owned(),
             },
             action: ActionConfig::Redact {
-                placeholder: "[EMAIL]".to_string(),
+                placeholder: "[EMAIL]".to_owned(),
             },
         }]);
 

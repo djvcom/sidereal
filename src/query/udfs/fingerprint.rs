@@ -164,6 +164,13 @@ fn extract_scalar_string(value: &ColumnarValue) -> Result<Option<String>> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use arrow::array::{Array, StringArray};
@@ -173,10 +180,10 @@ mod tests {
     #[test]
     fn test_fingerprint_scalar() {
         let args = vec![
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("TestError".to_string()))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("Something went wrong".to_string()))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("at test.rs:1".to_string()))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("api-service".to_string()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("TestError".to_owned()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("Something went wrong".to_owned()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("at test.rs:1".to_owned()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("api-service".to_owned()))),
         ];
 
         let result = error_fingerprint_impl(&args).unwrap();
@@ -193,9 +200,9 @@ mod tests {
     fn test_fingerprint_with_nulls() {
         let args = vec![
             ColumnarValue::Scalar(ScalarValue::Utf8(None)), // null error_type
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("Error message".to_string()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("Error message".to_owned()))),
             ColumnarValue::Scalar(ScalarValue::Utf8(None)), // null stacktrace
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("api-service".to_string()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("api-service".to_owned()))),
         ];
 
         let result = error_fingerprint_impl(&args).unwrap();
@@ -240,36 +247,34 @@ mod tests {
                 // Different inputs should produce different fingerprints
                 assert_ne!(string_arr.value(0), string_arr.value(1));
             }
-            _ => panic!("Expected array"),
+            ColumnarValue::Scalar(_) => panic!("Expected array"),
         }
     }
 
     #[test]
     fn test_same_error_same_fingerprint() {
         let args1 = vec![
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("TestError".to_string()))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("User id=123 not found".to_string()))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("at test.rs:100".to_string()))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("api".to_string()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("TestError".to_owned()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("User id=123 not found".to_owned()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("at test.rs:100".to_owned()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("api".to_owned()))),
         ];
 
         let args2 = vec![
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("TestError".to_string()))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("User id=456 not found".to_string()))), // Different ID
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("at test.rs:200".to_string()))), // Different line
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("api".to_string()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("TestError".to_owned()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("User id=456 not found".to_owned()))), // Different ID
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("at test.rs:200".to_owned()))), // Different line
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("api".to_owned()))),
         ];
 
         let result1 = error_fingerprint_impl(&args1).unwrap();
         let result2 = error_fingerprint_impl(&args2).unwrap();
 
-        let fp1 = match result1 {
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some(s))) => s,
-            _ => panic!("Expected Utf8"),
+        let ColumnarValue::Scalar(ScalarValue::Utf8(Some(fp1))) = result1 else {
+            panic!("Expected Utf8")
         };
-        let fp2 = match result2 {
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some(s))) => s,
-            _ => panic!("Expected Utf8"),
+        let ColumnarValue::Scalar(ScalarValue::Utf8(Some(fp2))) = result2 else {
+            panic!("Expected Utf8")
         };
 
         assert_eq!(fp1, fp2);

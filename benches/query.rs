@@ -2,6 +2,18 @@
 //!
 //! These benchmarks measure query latency and throughput for common
 //! telemetry query patterns against pre-populated Parquet files.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::as_conversions,
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::redundant_closure_for_method_calls,
+    missing_docs
+)]
 
 use std::sync::Arc;
 
@@ -34,7 +46,7 @@ fn bench_config() -> (BufferConfig, ParquetConfig) {
         },
         ParquetConfig {
             row_group_size: 10_000,
-            compression: "zstd".to_string(),
+            compression: "zstd".to_owned(),
         },
     )
 }
@@ -53,13 +65,13 @@ fn sample_span(id: usize) -> Span {
         end_time_unix_nano: 1_704_067_200_000_000_000 + (id as u64 * 1_000_000) + 50_000_000,
         attributes: vec![
             KeyValue {
-                key: "http.request.method".to_string(),
+                key: "http.request.method".to_owned(),
                 value: Some(AnyValue {
-                    value: Some(any_value::Value::StringValue("GET".to_string())),
+                    value: Some(any_value::Value::StringValue("GET".to_owned())),
                 }),
             },
             KeyValue {
-                key: "http.route".to_string(),
+                key: "http.route".to_owned(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue(format!(
                         "/api/v1/resource/{}",
@@ -82,7 +94,7 @@ fn trace_request(span_count: usize, service: &str) -> ExportTraceServiceRequest 
         resource_spans: vec![ResourceSpans {
             resource: Some(Resource {
                 attributes: vec![KeyValue {
-                    key: "service.name".to_string(),
+                    key: "service.name".to_owned(),
                     value: Some(AnyValue {
                         value: Some(any_value::Value::StringValue(service.to_string())),
                     }),
@@ -130,7 +142,7 @@ fn bench_query_all(c: &mut Criterion) {
         rt.block_on(setup_test_data(store.clone(), row_count));
 
         let engine = rt
-            .block_on(QueryEngineBuilder::new(store.clone(), "memory://").build())
+            .block_on(QueryEngineBuilder::new(store, "memory://").build())
             .unwrap();
 
         group.bench_with_input(BenchmarkId::new("rows", row_count), &engine, |b, engine| {
@@ -154,7 +166,7 @@ fn bench_query_by_service(c: &mut Criterion) {
     rt.block_on(setup_test_data(store.clone(), 10000));
 
     let engine = rt
-        .block_on(QueryEngineBuilder::new(store.clone(), "memory://").build())
+        .block_on(QueryEngineBuilder::new(store, "memory://").build())
         .unwrap();
 
     group.bench_function("filter_service", |b| {
@@ -177,7 +189,7 @@ fn bench_query_aggregation(c: &mut Criterion) {
     rt.block_on(setup_test_data(store.clone(), 10000));
 
     let engine = rt
-        .block_on(QueryEngineBuilder::new(store.clone(), "memory://").build())
+        .block_on(QueryEngineBuilder::new(store, "memory://").build())
         .unwrap();
 
     group.bench_function("count_by_service", |b| {
@@ -209,7 +221,7 @@ fn bench_query_errors(c: &mut Criterion) {
     rt.block_on(setup_test_data(store.clone(), 10000));
 
     let engine = rt
-        .block_on(QueryEngineBuilder::new(store.clone(), "memory://").build())
+        .block_on(QueryEngineBuilder::new(store, "memory://").build())
         .unwrap();
 
     group.bench_function("filter_errors", |b| {

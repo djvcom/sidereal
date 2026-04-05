@@ -193,6 +193,13 @@ fn cbor_value_to_string(value: &CborValue) -> Option<String> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use arrow::array::{Array, BinaryArray, StringArray};
@@ -204,8 +211,8 @@ mod tests {
             .iter()
             .map(|(k, v)| {
                 (
-                    CborValue::Text((*k).to_string()),
-                    CborValue::Text((*v).to_string()),
+                    CborValue::Text((*k).to_owned()),
+                    CborValue::Text((*v).to_owned()),
                 )
             })
             .collect();
@@ -221,7 +228,7 @@ mod tests {
 
         let args = vec![
             ColumnarValue::Scalar(ScalarValue::Binary(Some(cbor_data))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("user.id".to_string()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("user.id".to_owned()))),
         ];
 
         let result = cbor_extract_impl(&args).unwrap();
@@ -240,7 +247,7 @@ mod tests {
 
         let args = vec![
             ColumnarValue::Scalar(ScalarValue::Binary(Some(cbor_data))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("nonexistent".to_string()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("nonexistent".to_owned()))),
         ];
 
         let result = cbor_extract_impl(&args).unwrap();
@@ -255,7 +262,7 @@ mod tests {
     fn test_extract_null_data() {
         let args = vec![
             ColumnarValue::Scalar(ScalarValue::Binary(None)),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("key".to_string()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("key".to_owned()))),
         ];
 
         let result = cbor_extract_impl(&args).unwrap();
@@ -276,7 +283,7 @@ mod tests {
                 Some(cbor1.as_slice()),
                 Some(cbor2.as_slice()),
             ]))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("key".to_string()))),
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("key".to_owned()))),
         ];
 
         let result = cbor_extract_impl(&args).unwrap();
@@ -288,14 +295,14 @@ mod tests {
                 assert_eq!(string_arr.value(0), "value1");
                 assert_eq!(string_arr.value(1), "value2");
             }
-            _ => panic!("Expected array"),
+            ColumnarValue::Scalar(_) => panic!("Expected array"),
         }
     }
 
     #[test]
     fn test_extract_integer_value() {
         let map: Vec<(CborValue, CborValue)> = vec![(
-            CborValue::Text("count".to_string()),
+            CborValue::Text("count".to_owned()),
             CborValue::Integer(42.into()),
         )];
         let value = CborValue::Map(map);
@@ -303,20 +310,18 @@ mod tests {
         ciborium::into_writer(&value, &mut bytes).unwrap();
 
         let result = extract_from_cbor(&bytes, "count");
-        assert_eq!(result, Some("42".to_string()));
+        assert_eq!(result, Some("42".to_owned()));
     }
 
     #[test]
     fn test_extract_bool_value() {
-        let map: Vec<(CborValue, CborValue)> = vec![(
-            CborValue::Text("enabled".to_string()),
-            CborValue::Bool(true),
-        )];
+        let map: Vec<(CborValue, CborValue)> =
+            vec![(CborValue::Text("enabled".to_owned()), CborValue::Bool(true))];
         let value = CborValue::Map(map);
         let mut bytes = Vec::new();
         ciborium::into_writer(&value, &mut bytes).unwrap();
 
         let result = extract_from_cbor(&bytes, "enabled");
-        assert_eq!(result, Some("true".to_string()));
+        assert_eq!(result, Some("true".to_owned()));
     }
 }

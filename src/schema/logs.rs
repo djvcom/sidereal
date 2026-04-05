@@ -51,34 +51,60 @@ mod semconv {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SeverityNumber {
+    /// Severity not specified.
     Unspecified = 0,
+    /// Trace severity (finest granularity).
     Trace = 1,
+    /// Trace severity, level 2.
     Trace2 = 2,
+    /// Trace severity, level 3.
     Trace3 = 3,
+    /// Trace severity, level 4.
     Trace4 = 4,
+    /// Debug severity.
     Debug = 5,
+    /// Debug severity, level 2.
     Debug2 = 6,
+    /// Debug severity, level 3.
     Debug3 = 7,
+    /// Debug severity, level 4.
     Debug4 = 8,
+    /// Informational severity.
     Info = 9,
+    /// Informational severity, level 2.
     Info2 = 10,
+    /// Informational severity, level 3.
     Info3 = 11,
+    /// Informational severity, level 4.
     Info4 = 12,
+    /// Warning severity.
     Warn = 13,
+    /// Warning severity, level 2.
     Warn2 = 14,
+    /// Warning severity, level 3.
     Warn3 = 15,
+    /// Warning severity, level 4.
     Warn4 = 16,
+    /// Error severity.
     Error = 17,
+    /// Error severity, level 2.
     Error2 = 18,
+    /// Error severity, level 3.
     Error3 = 19,
+    /// Error severity, level 4.
     Error4 = 20,
+    /// Fatal severity.
     Fatal = 21,
+    /// Fatal severity, level 2.
     Fatal2 = 22,
+    /// Fatal severity, level 3.
     Fatal3 = 23,
+    /// Fatal severity, level 4.
     Fatal4 = 24,
 }
 
 impl SeverityNumber {
+    /// Converts a raw `u8` value to the corresponding severity number.
     pub const fn from_u8(v: u8) -> Option<Self> {
         match v {
             0 => Some(Self::Unspecified),
@@ -201,6 +227,13 @@ pub fn logs_storage_schema() -> Arc<Schema> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use crate::schema::PARTITION_COLUMN_COUNT;

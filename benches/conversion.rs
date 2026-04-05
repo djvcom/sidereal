@@ -2,6 +2,19 @@
 //!
 //! These benchmarks measure the throughput of converting OTLP protocol buffer
 //! messages to Arrow RecordBatches, which is the critical hot path for ingestion.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::as_conversions,
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::redundant_closure_for_method_calls,
+    clippy::redundant_clone,
+    missing_docs
+)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -25,7 +38,7 @@ use sidereal::redact::{
 fn service_resource(name: &str) -> Resource {
     Resource {
         attributes: vec![KeyValue {
-            key: "service.name".to_string(),
+            key: "service.name".to_owned(),
             value: Some(AnyValue {
                 value: Some(any_value::Value::StringValue(name.to_string())),
             }),
@@ -96,8 +109,8 @@ fn trace_request(spans: Vec<Span>) -> ExportTraceServiceRequest {
 fn simple_metric(id: u8) -> Metric {
     Metric {
         name: format!("bench.metric.{}", id),
-        description: "Benchmark metric".to_string(),
-        unit: "1".to_string(),
+        description: "Benchmark metric".to_owned(),
+        unit: "1".to_owned(),
         metadata: vec![],
         data: Some(metric::Data::Gauge(Gauge {
             data_points: vec![NumberDataPoint {
@@ -128,7 +141,7 @@ fn simple_log(id: u8) -> LogRecord {
         time_unix_nano: 1_704_067_200_000_000_000,
         observed_time_unix_nano: 1_704_067_200_000_000_000,
         severity_number: 9, // INFO
-        severity_text: "INFO".to_string(),
+        severity_text: "INFO".to_owned(),
         body: Some(AnyValue {
             value: Some(any_value::Value::StringValue(format!("Log message {}", id))),
         }),
@@ -251,23 +264,23 @@ fn test_redaction_engine() -> RedactionEngine {
         key_env: None,
         rules: vec![
             RedactionRule {
-                name: "drop-secrets".to_string(),
+                name: "drop-secrets".to_owned(),
                 signals: vec![],
                 scopes: vec![],
                 matcher: MatcherConfig::Glob {
-                    pattern: "*.secret".to_string(),
+                    pattern: "*.secret".to_owned(),
                 },
                 action: ActionConfig::Drop,
             },
             RedactionRule {
-                name: "redact-pii".to_string(),
+                name: "redact-pii".to_owned(),
                 signals: vec![],
                 scopes: vec![],
                 matcher: MatcherConfig::Pattern {
-                    regex: "builtin:email".to_string(),
+                    regex: "builtin:email".to_owned(),
                 },
                 action: ActionConfig::Redact {
-                    placeholder: "[REDACTED]".to_string(),
+                    placeholder: "[REDACTED]".to_owned(),
                 },
             },
         ],
@@ -281,23 +294,21 @@ fn span_with_pii_attributes(id: u8) -> Span {
     let mut span = simple_span(id);
     span.attributes = vec![
         KeyValue {
-            key: "user.email".to_string(),
+            key: "user.email".to_owned(),
             value: Some(AnyValue {
-                value: Some(any_value::Value::StringValue(
-                    "user@example.com".to_string(),
-                )),
+                value: Some(any_value::Value::StringValue("user@example.com".to_owned())),
             }),
         },
         KeyValue {
-            key: "api.secret".to_string(),
+            key: "api.secret".to_owned(),
             value: Some(AnyValue {
-                value: Some(any_value::Value::StringValue("sk-12345".to_string())),
+                value: Some(any_value::Value::StringValue("sk-12345".to_owned())),
             }),
         },
         KeyValue {
-            key: "http.method".to_string(),
+            key: "http.method".to_owned(),
             value: Some(AnyValue {
-                value: Some(any_value::Value::StringValue("GET".to_string())),
+                value: Some(any_value::Value::StringValue("GET".to_owned())),
             }),
         },
     ];

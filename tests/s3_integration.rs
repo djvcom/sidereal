@@ -3,6 +3,21 @@
 //! These tests require an S3-compatible service (AWS S3, MinIO, Garage) and credentials.
 //! They are ignored by default and can be enabled by setting environment variables:
 //!
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::redundant_closure_for_method_calls,
+    clippy::redundant_clone,
+    clippy::missing_const_for_fn,
+    clippy::needless_collect
+)]
 //! ```sh
 //! export TELEMETRY_S3_TEST_BUCKET=telemetry-test
 //! export TELEMETRY_S3_TEST_ENDPOINT=http://localhost:3900
@@ -55,13 +70,17 @@ fn test_buffer_config() -> BufferConfig {
         max_batch_size: 100,
         flush_interval_secs: 30,
         max_buffer_bytes: 10 * 1024 * 1024,
+        max_records_per_request: 100_000,
+        flush_max_retries: 3,
+        flush_initial_delay_ms: 100,
+        flush_max_delay_ms: 10_000,
     }
 }
 
 fn test_parquet_config() -> ParquetConfig {
     ParquetConfig {
         row_group_size: 1000,
-        compression: "zstd".to_string(),
+        compression: "zstd".to_owned(),
     }
 }
 
@@ -70,7 +89,7 @@ fn sample_trace_request(service_name: &str, span_name: &str) -> ExportTraceServi
         resource_spans: vec![ResourceSpans {
             resource: Some(Resource {
                 attributes: vec![KeyValue {
-                    key: "service.name".to_string(),
+                    key: "service.name".to_owned(),
                     value: Some(AnyValue {
                         value: Some(any_value::Value::StringValue(service_name.to_string())),
                     }),
@@ -138,7 +157,7 @@ async fn s3_ingest_flush_query() {
     // Ingest traces
     for i in 0..3 {
         let request = sample_trace_request("s3-test-service", &format!("span-{}", i));
-        let batch = convert_traces_to_arrow(&request)
+        let batch = convert_traces_to_arrow(&request, None)
             .expect("failed to convert")
             .batch;
         ingester.ingest(batch).await.expect("failed to ingest");

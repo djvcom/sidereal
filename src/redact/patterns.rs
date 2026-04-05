@@ -78,14 +78,23 @@ pub fn compile_pattern(pattern: &str) -> Result<Regex, PatternError> {
 /// Error resolving or compiling a pattern.
 #[derive(Debug, thiserror::Error)]
 pub enum PatternError {
+    /// The requested built-in pattern name was not recognised.
     #[error("unknown built-in pattern: {0}")]
     UnknownBuiltin(String),
 
+    /// The provided regular expression failed to compile.
     #[error("invalid regex pattern: {0}")]
     InvalidRegex(#[from] regex::Error),
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 

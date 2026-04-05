@@ -69,12 +69,16 @@ pub struct RedactionRule {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SignalFilter {
+    /// Match trace signals only.
     Traces,
+    /// Match metric signals only.
     Metrics,
+    /// Match log signals only.
     Logs,
 }
 
 impl SignalFilter {
+    /// Returns whether this filter matches the given signal type.
     pub const fn matches(&self, signal: Signal) -> bool {
         matches!(
             (self, signal),
@@ -126,10 +130,16 @@ pub enum MatcherConfig {
     },
 
     /// All matchers must match.
-    All { matchers: Vec<Self> },
+    All {
+        /// Child matchers that must all succeed.
+        matchers: Vec<Self>,
+    },
 
     /// Any matcher can match.
-    Any { matchers: Vec<Self> },
+    Any {
+        /// Child matchers where at least one must succeed.
+        matchers: Vec<Self>,
+    },
 }
 
 /// Action to perform on matched attributes.
@@ -174,6 +184,13 @@ impl RedactionRule {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -238,11 +255,11 @@ mod tests {
     #[test]
     fn signal_filter_matching() {
         let rule = RedactionRule {
-            name: "test".to_string(),
+            name: "test".to_owned(),
             signals: vec![SignalFilter::Traces],
             scopes: vec![],
             matcher: MatcherConfig::Attribute {
-                keys: vec!["test".to_string()],
+                keys: vec!["test".to_owned()],
             },
             action: ActionConfig::Drop,
         };
@@ -255,11 +272,11 @@ mod tests {
     #[test]
     fn empty_signals_matches_all() {
         let rule = RedactionRule {
-            name: "test".to_string(),
+            name: "test".to_owned(),
             signals: vec![],
             scopes: vec![],
             matcher: MatcherConfig::Attribute {
-                keys: vec!["test".to_string()],
+                keys: vec!["test".to_owned()],
             },
             action: ActionConfig::Drop,
         };

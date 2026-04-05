@@ -631,25 +631,32 @@ fn decode_cbor_attributes(bytes: &[u8]) -> Option<HashMap<String, String>> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
     #[test]
     fn nanos_to_datetime_converts_correctly() {
-        let nanos = 1704067200_000_000_000u64;
+        let nanos = 1_704_067_200_000_000_000_u64;
         let dt = nanos_to_datetime(nanos);
-        assert_eq!(dt.timestamp(), 1704067200);
+        assert_eq!(dt.timestamp(), 1_704_067_200);
     }
 
     #[test]
     fn decode_cbor_simple_map() {
         let map: Vec<(ciborium::Value, ciborium::Value)> = vec![
             (
-                ciborium::Value::Text("key1".to_string()),
-                ciborium::Value::Text("value1".to_string()),
+                ciborium::Value::Text("key1".to_owned()),
+                ciborium::Value::Text("value1".to_owned()),
             ),
             (
-                ciborium::Value::Text("key2".to_string()),
+                ciborium::Value::Text("key2".to_owned()),
                 ciborium::Value::Integer(42.into()),
             ),
         ];
@@ -658,8 +665,8 @@ mod tests {
         ciborium::into_writer(&value, &mut bytes).unwrap();
 
         let result = decode_cbor_attributes(&bytes).unwrap();
-        assert_eq!(result.get("key1"), Some(&"value1".to_string()));
-        assert_eq!(result.get("key2"), Some(&"42".to_string()));
+        assert_eq!(result.get("key1"), Some(&"value1".to_owned()));
+        assert_eq!(result.get("key2"), Some(&"42".to_owned()));
     }
 
     #[test]

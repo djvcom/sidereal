@@ -381,6 +381,13 @@ pub fn base_url(config: &StorageConfig) -> String {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
@@ -429,7 +436,7 @@ mod tests {
     #[test]
     fn base_url_s3_no_prefix() {
         let config = StorageConfig::S3 {
-            bucket: "my-bucket".to_string(),
+            bucket: "my-bucket".to_owned(),
             prefix: String::new(),
             region: None,
             endpoint: None,
@@ -444,9 +451,9 @@ mod tests {
     #[test]
     fn base_url_s3_with_prefix() {
         let config = StorageConfig::S3 {
-            bucket: "my-bucket".to_string(),
-            prefix: "telemetry".to_string(),
-            region: Some("eu-west-1".to_string()),
+            bucket: "my-bucket".to_owned(),
+            prefix: "telemetry".to_owned(),
+            region: Some("eu-west-1".to_owned()),
             endpoint: None,
             access_key_id: None,
             secret_access_key: None,
@@ -459,12 +466,12 @@ mod tests {
     #[test]
     fn base_url_s3_custom_endpoint() {
         let config = StorageConfig::S3 {
-            bucket: "telemetry".to_string(),
+            bucket: "telemetry".to_owned(),
             prefix: String::new(),
-            region: Some("garage".to_string()),
-            endpoint: Some("http://localhost:3900".to_string()),
-            access_key_id: Some("test-key".to_string()),
-            secret_access_key: Some("test-secret".to_string()),
+            region: Some("garage".to_owned()),
+            endpoint: Some("http://localhost:3900".to_owned()),
+            access_key_id: Some("test-key".to_owned()),
+            secret_access_key: Some("test-secret".to_owned()),
             force_path_style: true,
             allow_http: true,
         };
@@ -474,8 +481,8 @@ mod tests {
     #[test]
     fn base_url_gcs() {
         let config = StorageConfig::Gcs {
-            bucket: "my-bucket".to_string(),
-            prefix: "telemetry".to_string(),
+            bucket: "my-bucket".to_owned(),
+            prefix: "telemetry".to_owned(),
             service_account_path: None,
         };
         assert_eq!(base_url(&config), "gs://my-bucket/telemetry");
@@ -484,8 +491,8 @@ mod tests {
     #[test]
     fn base_url_azure() {
         let config = StorageConfig::Azure {
-            account: "myaccount".to_string(),
-            container: "telemetry".to_string(),
+            account: "myaccount".to_owned(),
+            container: "telemetry".to_owned(),
             prefix: String::new(),
             access_key: None,
         };
@@ -495,9 +502,9 @@ mod tests {
     #[test]
     fn base_url_azure_with_prefix() {
         let config = StorageConfig::Azure {
-            account: "myaccount".to_string(),
-            container: "telemetry".to_string(),
-            prefix: "data".to_string(),
+            account: "myaccount".to_owned(),
+            container: "telemetry".to_owned(),
+            prefix: "data".to_owned(),
             access_key: None,
         };
         assert_eq!(base_url(&config), "az://myaccount/telemetry/data");

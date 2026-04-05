@@ -22,7 +22,10 @@ pub enum CompiledAction {
     Hash,
 
     /// Replace value with a placeholder string.
-    Redact { placeholder: String },
+    Redact {
+        /// The replacement text to insert in place of the original value.
+        placeholder: String,
+    },
 }
 
 impl CompiledAction {
@@ -96,6 +99,13 @@ pub fn hash_value(value: &str, key: &SecretBox<Vec<u8>>) -> Option<String> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -112,11 +122,11 @@ mod tests {
     #[test]
     fn redact_action() {
         let action = CompiledAction::Redact {
-            placeholder: "[HIDDEN]".to_string(),
+            placeholder: "[HIDDEN]".to_owned(),
         };
         assert_eq!(
             action.apply("secret value", None),
-            ActionResult::Replace("[HIDDEN]".to_string())
+            ActionResult::Replace("[HIDDEN]".to_owned())
         );
     }
 
@@ -178,7 +188,7 @@ mod tests {
         assert!(!CompiledAction::Drop.requires_key());
         assert!(CompiledAction::Hash.requires_key());
         assert!(!CompiledAction::Redact {
-            placeholder: "x".to_string()
+            placeholder: "x".to_owned()
         }
         .requires_key());
     }
@@ -192,7 +202,7 @@ mod tests {
         assert!(matches!(hash, CompiledAction::Hash));
 
         let redact = CompiledAction::compile(&ActionConfig::Redact {
-            placeholder: "[X]".to_string(),
+            placeholder: "[X]".to_owned(),
         });
         assert!(matches!(
             redact,

@@ -28,6 +28,14 @@ pub mod schema;
 pub mod storage;
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing,
+    missing_docs
+)]
 pub mod test_fixtures;
 
 pub use config::TelemetryConfig;

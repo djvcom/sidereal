@@ -82,6 +82,13 @@ fn normalise_stacktrace_impl(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use arrow::array::{Array, StringArray};
@@ -91,7 +98,7 @@ mod tests {
     #[test]
     fn test_normalise_scalar() {
         let input =
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("at foo (file.rs:123)".to_string())));
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("at foo (file.rs:123)".to_owned())));
 
         let result = normalise_stacktrace_impl(&[input]).unwrap();
 
@@ -123,7 +130,7 @@ mod tests {
                 assert!(!string_arr.value(1).contains(":456"));
                 assert!(string_arr.is_null(2));
             }
-            _ => panic!("Expected array"),
+            ColumnarValue::Scalar(_) => panic!("Expected array"),
         }
     }
 
