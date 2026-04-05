@@ -1,103 +1,104 @@
-[workspace]
-resolver = "2"
-members = ["crates/*", "examples/*"]
-
-[workspace.package]
+[package]
+name = "sidereal"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/example/sidereal"
+repository = "https://github.com/djvcom/sidereal"
 rust-version = "1.75"
+description = "Self-hosted observability backend with OTLP ingestion and DataFusion queries"
 
-[workspace.dependencies]
+[[bin]]
+name = "sidereal"
+path = "src/main.rs"
+
+[dependencies]
+# Arrow ecosystem (DataFusion 51 requires arrow/parquet 57, object_store 0.12)
+arrow = { version = "57.1", features = ["prettyprint"] }
+parquet = { version = "57.1", features = ["async", "object_store", "zstd"] }
+datafusion = "51"
+object_store = { version = "0.12", features = [] }
+
+# OTLP (official OpenTelemetry proto types + semantic conventions)
+# opentelemetry-proto 0.31 requires tonic 0.14
+opentelemetry-proto = { version = "0.31", features = ["gen-tonic", "trace", "metrics", "logs"] }
+opentelemetry-semantic-conventions = "0.31"
+tonic = { version = "0.14", features = ["gzip"] }
+prost = "0.14"
+
+# HTTP
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "decompression-gzip"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+
 # Serialisation
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rkyv = { version = "0.8", features = ["bytecheck"] }
-tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-
-# Proc macros
-syn = { version = "2", features = ["full", "parsing", "extra-traits"] }
-quote = "1"
-proc-macro2 = "1"
-
-# CLI
-clap = { version = "4", features = ["derive"] }
-axum = "0.8"
-tower = "0.5"
-
-# Function registration
-inventory = "0.3"
-
-# HTTP types
-http = "1"
+ciborium = "0.2"
+base64 = "0.22"
 
 # Configuration
 figment = { version = "0.10", features = ["toml", "env"] }
 
-# Firecracker and vsock
-tokio-vsock = "0.5"
-nix = { version = "0.29", features = ["mount", "fs", "signal"] }
-libc = "0.2"
-
-# Async traits
-async-trait = "0.1"
-
 # Utilities
+chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
-anyhow = "1"
-toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["v4"] }
+bytes = "1"
+ulid = "1.1"
+url = "2"
+hex = "0.4.3"
+hmac = "0.12.1"
+sha2 = "0.10.9"
+secrecy = "0.10.3"
+unicode-normalization = "0.1.25"
+glob = "0.3.3"
+regex = "1.12.2"
+
+[dev-dependencies]
 tempfile = "3"
-which = "7"
-shellexpand = "3"
+tokio-test = "0.4"
+futures = "0.3"
+rstest = "0.26.1"
+proptest = "1.8.0"
+criterion = { version = "0.5.1", features = ["html_reports", "async_tokio"] }
+toml = "0.8"
+flate2 = "1.1.5"
 
-# Telemetry
-opentelemetry-configuration = "0.3"
+[features]
+default = []
+s3 = ["object_store/aws"]
+gcs = ["object_store/gcp"]
+azure = ["object_store/azure"]
 
-# HTTP client (for Unix sockets)
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-util = { version = "0.1", features = ["client", "client-legacy", "tokio"] }
-hyperlocal = "0.9"
-http-body-util = "0.1"
-sidereal-macros = { path = "crates/sidereal-macros" }
-sidereal-firecracker = { path = "crates/sidereal-firecracker" }
-sidereal-proto = { path = "crates/sidereal-proto" }
+[[bench]]
+name = "conversion"
+harness = false
 
-# HTTP server
-tower-http = { version = "0.6", features = ["trace", "cors", "decompression-gzip"] }
+[[bench]]
+name = "ingestion"
+harness = false
 
-# Connection pooling for Valkey
-deadpool-redis = "0.18"
-
-# Concurrent data structures
-dashmap = "6"
-parking_lot = "0.12"
-
-# Random number generation
-rand = "0.8"
+[[bench]]
+name = "query"
+harness = false
 
 # =============================================================================
-# Workspace-wide lint configuration
+# Lint configuration
 # =============================================================================
-# Inherit in member crates with: [lints] workspace = true
 
-[workspace.lints.rust]
-# Deny unsafe code by default (crates can opt-in with #![allow(unsafe_code)])
+[lints.rust]
 unsafe_code = "deny"
-# Enforce documentation
 missing_docs = "warn"
-# Catch common mistakes
 unused_must_use = "deny"
 
-[workspace.lints.clippy]
-# =============================================================================
-# Panic-prevention: Library code should never panic
-# =============================================================================
-# Use #[allow(...)] in test modules where these are acceptable
+[lints.clippy]
+# Panic-prevention: library code should never panic
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
@@ -107,9 +108,7 @@ unimplemented = "deny"
 unreachable = "warn"
 indexing_slicing = "warn"
 
-# =============================================================================
-# Pedantic: High code quality standards
-# =============================================================================
+# Pedantic: high code quality standards
 pedantic = { level = "warn", priority = -1 }
 
 # Selectively allow some pedantic lints that are too noisy
@@ -124,18 +123,12 @@ struct_excessive_bools = "allow"
 fn_params_excessive_bools = "allow"
 if_not_else = "allow"
 
-# =============================================================================
-# Nursery: Useful experimental lints
-# =============================================================================
+# Nursery: useful experimental lints
 nursery = { level = "warn", priority = -1 }
-# Some nursery lints are too unstable
 option_if_let_else = "allow"
 significant_drop_tightening = "allow"
 redundant_pub_crate = "allow"
 
-# =============================================================================
-# Additional strictness
-# =============================================================================
 # Error handling
 result_large_err = "warn"
 large_futures = "warn"
@@ -167,6 +160,3 @@ str_to_string = "warn"
 unnecessary_wraps = "warn"
 unused_self = "warn"
 use_self = "warn"
-
-# Security
-# (Note: Additional security lints handled by deny(unsafe_code) above)

@@ -1,14 +1,10 @@
 {
-  description = "Sidereal - A platform for building and running applications in Rust";
+  description = "Sidereal - Self-hosted observability backend";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    fenix = {
-      url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     crane.url = "github:ipetkov/crane";
@@ -19,7 +15,6 @@
       self,
       nixpkgs,
       rust-overlay,
-      fenix,
       crane,
     }:
     let
@@ -47,28 +42,20 @@
             "rust-src"
             "rust-analyzer"
           ];
-          targets = [
-            "x86_64-unknown-linux-musl"
-          ];
         };
 
-      # Source filter that includes Cargo files and READMEs (for include_str!)
-      srcFilter =
-        craneLib: path: type:
-        (craneLib.filterCargoSources path type) || (builtins.match ".*README\\.md$" path != null);
-
-      # Build the sidereal-server package using crane
       buildSidereal =
         pkgs:
         let
           craneLib = (crane.mkLib pkgs).overrideToolchain (rustToolchain pkgs);
 
-          # Common arguments for crane builds
           commonArgs = {
-            pname = "sidereal-server";
+            pname = "sidereal";
             src = pkgs.lib.cleanSourceWith {
               src = ./.;
-              filter = srcFilter craneLib;
+              filter =
+                path: type:
+                (craneLib.filterCargoSources path type) || (builtins.match ".*README\\.md$" path != null);
             };
             strictDeps = true;
 
@@ -81,7 +68,6 @@
             ];
           };
 
-          # Build workspace dependencies first (for caching)
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         in
         craneLib.buildPackage (
@@ -89,184 +75,28 @@
           // {
             inherit cargoArtifacts;
 
-            # Only build the sidereal-server binary
-            cargoExtraArgs = "-p sidereal-server";
-
             meta = {
-              description = "Sidereal unified server for single-node deployments";
+              description = "Self-hosted observability backend with OTLP ingestion and DataFusion queries";
               homepage = "https://github.com/djvcom/sidereal";
               license = pkgs.lib.licenses.mit;
-              mainProgram = "sidereal-server";
+              mainProgram = "sidereal";
             };
           }
         );
-
-      # Build the sidereal-runtime package (statically linked for Firecracker VMs)
-      # Uses cargo-zigbuild for cross-compilation (Zig bundles musl)
-      buildSiderealRuntime =
-        pkgs:
-        let
-          rustPlatform = pkgs.makeRustPlatform {
-            cargo = rustToolchain pkgs;
-            rustc = rustToolchain pkgs;
-          };
-        in
-        rustPlatform.buildRustPackage {
-          pname = "sidereal-runtime";
-          version = "0.1.0";
-
-          src = pkgs.lib.cleanSource ./.;
-
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-          };
-
-          nativeBuildInputs = [
-            pkgs.cargo-zigbuild
-            pkgs.zig
-          ];
-
-          # Disable cargo-auditable (Zig linker doesn't support --undefined flag)
-          auditable = false;
-
-          # Use cargo-zigbuild for cross-compilation (Zig handles linking)
-          buildPhase = ''
-            runHook preBuild
-
-            # cargo-zigbuild needs a writable cache directory
-            export HOME=$(mktemp -d)
-
-            cargo zigbuild \
-              --release \
-              --target x86_64-unknown-linux-musl \
-              --offline \
-              --locked \
-              -p sidereal-runtime
-
-            runHook postBuild
-          '';
-
-          # Skip tests - they can't run cross-compiled
-          doCheck = false;
-
-          # Override install phase to copy from musl target directory
-          installPhase = ''
-            runHook preInstall
-            mkdir -p $out/bin
-            cp target/x86_64-unknown-linux-musl/release/sidereal-runtime $out/bin/
-            runHook postInstall
-          '';
-
-          meta = {
-            description = "Sidereal runtime for Firecracker VMs";
-            homepage = "https://github.com/djvcom/sidereal";
-            license = pkgs.lib.licenses.mit;
-            mainProgram = "sidereal-runtime";
-          };
-        };
-
-      # Build the sidereal-builder-runtime package (statically linked for builder VMs)
-      # This runs as /sbin/init in builder VMs and executes cargo builds
-      buildSiderealBuilderRuntime =
-        pkgs:
-        let
-          rustPlatform = pkgs.makeRustPlatform {
-            cargo = rustToolchain pkgs;
-            rustc = rustToolchain pkgs;
-          };
-        in
-        rustPlatform.buildRustPackage {
-          pname = "sidereal-builder-runtime";
-          version = "0.1.0";
-
-          src = pkgs.lib.cleanSource ./.;
-
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-          };
-
-          nativeBuildInputs = [
-            pkgs.cargo-zigbuild
-            pkgs.zig
-          ];
-
-          # Disable cargo-auditable (Zig linker doesn't support --undefined flag)
-          auditable = false;
-
-          # Use cargo-zigbuild for cross-compilation (Zig handles linking)
-          buildPhase = ''
-            runHook preBuild
-
-            # cargo-zigbuild needs a writable cache directory
-            export HOME=$(mktemp -d)
-
-            cargo zigbuild \
-              --release \
-              --target x86_64-unknown-linux-musl \
-              --offline \
-              --locked \
-              -p sidereal-builder-runtime
-
-            runHook postBuild
-          '';
-
-          # Skip tests - they can't run cross-compiled
-          doCheck = false;
-
-          # Override install phase to copy from musl target directory
-          installPhase = ''
-            runHook preInstall
-            mkdir -p $out/bin
-            cp target/x86_64-unknown-linux-musl/release/sidereal-builder-runtime $out/bin/
-            runHook postInstall
-          '';
-
-          meta = {
-            description = "Sidereal builder runtime for compilation VMs";
-            homepage = "https://github.com/djvcom/sidereal";
-            license = pkgs.lib.licenses.mit;
-            mainProgram = "sidereal-builder-runtime";
-          };
-        };
-
-      # Pre-built Firecracker kernel from AWS CI (all required drivers built-in)
-      fetchFirecrackerKernel =
-        pkgs:
-        pkgs.fetchurl {
-          url = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.14/x86_64/vmlinux-6.1.155";
-          hash = "sha256-5BxwSL0kdefniBU4I/y5Fmp+C3jExEO9ZEbQFfpzX1M=";
-        };
     in
     {
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
 
-      # NixOS module
-      nixosModules = {
-        default = self.nixosModules.sidereal;
-        sidereal = import ./nix/module.nix;
-      };
-
-      # Overlay for adding sidereal packages to nixpkgs (includes rust-overlay)
       overlays.default = nixpkgs.lib.composeManyExtensions [
         rust-overlay.overlays.default
         (final: _prev: {
-          sidereal-server = buildSidereal final;
-          sidereal-runtime = buildSiderealRuntime final;
-          sidereal-builder-runtime = buildSiderealBuilderRuntime final;
-          sidereal-firecracker-kernel = fetchFirecrackerKernel final;
+          sidereal = buildSidereal final;
         })
       ];
 
-      # Expose fenix for consuming flakes to use for rustToolchain
-      fenixPackages = fenix.packages;
-
-      # Packages
       packages = forAllSystems (pkgs: {
-        default = self.packages.${pkgs.system}.sidereal-server;
-        sidereal-server = buildSidereal pkgs;
-        sidereal-runtime = buildSiderealRuntime pkgs;
-        sidereal-builder-runtime = buildSiderealBuilderRuntime pkgs;
-        sidereal-firecracker-kernel = fetchFirecrackerKernel pkgs;
+        default = self.packages.${pkgs.system}.sidereal;
+        sidereal = buildSidereal pkgs;
       });
 
       devShells = forAllSystems (pkgs: {
@@ -274,31 +104,14 @@
           packages = [
             (rustToolchain pkgs)
             pkgs.just
-
-            # Firecracker for local VM deployment
-            pkgs.firecracker
-
-            # Cross-compilation via cargo-zigbuild (Zig bundles musl)
-            pkgs.cargo-zigbuild
-            pkgs.zig
-
-            # Build dependencies for native crates
             pkgs.pkg-config
             pkgs.openssl
-
-            # Sandbox runtime (bubblewrap)
-            pkgs.bubblewrap
-
-            # Nix tooling
             pkgs.nixfmt-rfc-style
             pkgs.statix
             pkgs.deadnix
           ];
 
-          # Rust 1.90+ uses rust-lld by default, which lacks NixOS rpath handling.
-          # Disable lld for native builds only.
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-Clinker-features=-lld -Clink-arg=-Wl,--copy-dt-needed-entries";
-
           RUST_BACKTRACE = "1";
         };
       });
