@@ -1,12 +1,14 @@
 //! Configuration types for the telemetry service.
 
+use std::fmt;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
 };
 use serde::Deserialize;
-use std::net::SocketAddr;
-use std::path::PathBuf;
 
 use crate::redact::RedactionConfig;
 use crate::TelemetryError;
@@ -164,7 +166,7 @@ impl Default for BufferConfig {
 }
 
 /// Storage backend configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum StorageConfig {
     /// Local filesystem storage.
@@ -224,6 +226,80 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self::Local {
             path: PathBuf::from(DEFAULT_STORAGE_PATH),
+        }
+    }
+}
+
+const REDACTED: &str = "[REDACTED]";
+
+impl fmt::Debug for StorageConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Local { path } => f.debug_struct("Local").field("path", path).finish(),
+            Self::S3 {
+                bucket,
+                prefix,
+                region,
+                endpoint,
+                access_key_id,
+                secret_access_key,
+                force_path_style,
+                allow_http,
+            } => f
+                .debug_struct("S3")
+                .field("bucket", bucket)
+                .field("prefix", prefix)
+                .field("region", region)
+                .field("endpoint", endpoint)
+                .field(
+                    "access_key_id",
+                    if access_key_id.is_some() {
+                        &REDACTED
+                    } else {
+                        &"None"
+                    },
+                )
+                .field(
+                    "secret_access_key",
+                    if secret_access_key.is_some() {
+                        &REDACTED
+                    } else {
+                        &"None"
+                    },
+                )
+                .field("force_path_style", force_path_style)
+                .field("allow_http", allow_http)
+                .finish(),
+            Self::Gcs {
+                bucket,
+                prefix,
+                service_account_path,
+            } => f
+                .debug_struct("Gcs")
+                .field("bucket", bucket)
+                .field("prefix", prefix)
+                .field("service_account_path", service_account_path)
+                .finish(),
+            Self::Azure {
+                account,
+                container,
+                prefix,
+                access_key,
+            } => f
+                .debug_struct("Azure")
+                .field("account", account)
+                .field("container", container)
+                .field("prefix", prefix)
+                .field(
+                    "access_key",
+                    if access_key.is_some() {
+                        &REDACTED
+                    } else {
+                        &"None"
+                    },
+                )
+                .finish(),
+            Self::Memory => f.debug_struct("Memory").finish(),
         }
     }
 }
@@ -290,5 +366,53 @@ mod tests {
         let config = ParquetConfig::default();
         assert_eq!(config.row_group_size, DEFAULT_ROW_GROUP_SIZE);
         assert_eq!(config.compression, DEFAULT_COMPRESSION);
+    }
+
+    #[test]
+    fn s3_debug_redacts_credentials() {
+        let config = StorageConfig::S3 {
+            bucket: "my-bucket".to_owned(),
+            prefix: String::new(),
+            region: Some("eu-west-1".to_owned()),
+            endpoint: None,
+            access_key_id: Some("AKIAIOSFODNN7EXAMPLE".to_owned()),
+            secret_access_key: Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_owned()),
+            force_path_style: false,
+            allow_http: false,
+        };
+        let debug_output = format!("{config:?}");
+        assert!(debug_output.contains("REDACTED"));
+        assert!(!debug_output.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(!debug_output.contains("wJalrXUtnFEMI"));
+    }
+
+    #[test]
+    fn azure_debug_redacts_credentials() {
+        let config = StorageConfig::Azure {
+            account: "myaccount".to_owned(),
+            container: "telemetry".to_owned(),
+            prefix: String::new(),
+            access_key: Some("super-secret-key".to_owned()),
+        };
+        let debug_output = format!("{config:?}");
+        assert!(debug_output.contains("REDACTED"));
+        assert!(!debug_output.contains("super-secret-key"));
+        assert!(debug_output.contains("myaccount"));
+    }
+
+    #[test]
+    fn s3_debug_shows_none_when_no_credentials() {
+        let config = StorageConfig::S3 {
+            bucket: "my-bucket".to_owned(),
+            prefix: String::new(),
+            region: None,
+            endpoint: None,
+            access_key_id: None,
+            secret_access_key: None,
+            force_path_style: false,
+            allow_http: false,
+        };
+        let debug_output = format!("{config:?}");
+        assert!(!debug_output.contains("REDACTED"));
     }
 }
