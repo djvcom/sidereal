@@ -1,0 +1,12 @@
+# Docker Compose configuration — uses MinIO as S3-compatible storage.
+# Override any setting via TELEMETRY_* environment variables.
+
+[storage]
+type = "s3"
+bucket = "telemetry"
+region = "us-east-1"
+endpoint = "http://minio:9000"
+access_key_id = "minioadmin"
+secret_access_key = "minioadmin"
+force_path_style = true
+allow_http = true

@@ -35,6 +35,10 @@ build:
 run *ARGS:
     cargo run -- {{ARGS}}
 
+# Run via Docker Compose (builds image, starts MinIO + OTel Collector + tracegen)
+docker:
+    docker compose up --build
+
 # Clean build artifacts
 clean:
     cargo clean

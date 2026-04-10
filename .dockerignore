@@ -1,0 +1,8 @@
+target/
+.git/
+result
+*.nix
+flake.lock
+docs/
+.claude/
+CLAUDE.md
