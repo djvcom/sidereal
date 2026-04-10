@@ -60,6 +60,12 @@ pub const DEFAULT_COMPRESSION: &str = "zstd";
 /// Default local storage path.
 pub const DEFAULT_STORAGE_PATH: &str = "./telemetry-data";
 
+/// Default query memory limit (256 MiB).
+pub const DEFAULT_QUERY_MEMORY_LIMIT: usize = 256 * 1024 * 1024;
+
+/// Default query timeout in seconds.
+pub const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 30;
+
 /// Telemetry service configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -76,6 +82,8 @@ pub struct TelemetryConfig {
     pub redaction: RedactionConfig,
     /// Authentication configuration.
     pub auth: AuthConfig,
+    /// Query engine configuration.
+    pub query: QueryConfig,
 }
 
 impl TelemetryConfig {
@@ -303,6 +311,28 @@ impl fmt::Debug for StorageConfig {
                 )
                 .finish(),
             Self::Memory => f.debug_struct("Memory").finish(),
+        }
+    }
+}
+
+/// Query engine configuration.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct QueryConfig {
+    /// Memory limit in bytes for query execution.
+    ///
+    /// When set, queries that exceed this limit fail rather than
+    /// exhausting system memory. Defaults to 256 MiB.
+    pub memory_limit_bytes: usize,
+    /// Query timeout in seconds. Defaults to 30.
+    pub timeout_secs: u64,
+}
+
+impl Default for QueryConfig {
+    fn default() -> Self {
+        Self {
+            memory_limit_bytes: DEFAULT_QUERY_MEMORY_LIMIT,
+            timeout_secs: DEFAULT_QUERY_TIMEOUT_SECS,
         }
     }
 }

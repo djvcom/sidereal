@@ -67,6 +67,13 @@ path = "./telemetry-data"
 # [storage]
 # type = "memory"
 
+[query]
+# Memory limit for query execution (default: 256 MiB).
+# Prevents a single query from exhausting system memory.
+# memory_limit_bytes = 268435456
+# Query timeout in seconds (default: 30).
+# timeout_secs = 30
+
 # Authentication (optional)
 # When set, all data endpoints require this key as a Bearer token
 # or X-API-Key header. Health and readiness endpoints remain open.

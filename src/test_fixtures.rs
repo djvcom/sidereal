@@ -36,7 +36,9 @@ use tempfile::TempDir;
 
 use crate::auth::AuthConfig;
 use crate::buffer::ingester::Ingester;
-use crate::config::{BufferConfig, ParquetConfig, ServerConfig, StorageConfig, TelemetryConfig};
+use crate::config::{
+    BufferConfig, ParquetConfig, QueryConfig, ServerConfig, StorageConfig, TelemetryConfig,
+};
 use crate::query::engine::QueryEngine;
 use crate::redact::RedactionConfig;
 use crate::schema::{logs::logs_schema, metrics::number_metrics_schema, traces::traces_schema};
@@ -113,6 +115,7 @@ pub fn test_config(
         storage,
         redaction: RedactionConfig::default(),
         auth: AuthConfig::default(),
+        query: QueryConfig::default(),
     };
     (config, temp_dir)
 }
@@ -132,6 +135,7 @@ pub fn memory_test_config(
         storage: memory_storage_config,
         redaction: RedactionConfig::default(),
         auth: AuthConfig::default(),
+        query: QueryConfig::default(),
     }
 }
 
@@ -320,6 +324,7 @@ impl TestEnv {
             storage: StorageConfig::Memory,
             redaction: RedactionConfig::default(),
             auth: AuthConfig::default(),
+            query: QueryConfig::default(),
         };
 
         Self {

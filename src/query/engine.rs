@@ -312,6 +312,32 @@ impl QueryEngine {
         }
     }
 
+    /// Execute a SQL query with an enforced maximum row limit.
+    ///
+    /// The limit is applied at the DataFusion level via `DataFrame::limit`,
+    /// ensuring the query planner can optimise accordingly. This is preferred
+    /// over string-based LIMIT clause detection.
+    #[tracing::instrument(skip(self), fields(sql_len = sql.len(), max_rows))]
+    pub async fn query_limited(
+        &self,
+        sql: &str,
+        max_rows: usize,
+    ) -> Result<Vec<arrow::record_batch::RecordBatch>, TelemetryError> {
+        let df = self.ctx.sql(sql).await?;
+        let df = df.limit(0, Some(max_rows))?;
+
+        let collect_future = df.collect();
+
+        if let Some(timeout) = self.query_timeout {
+            match tokio::time::timeout(timeout, collect_future).await {
+                Ok(result) => result.map_err(Into::into),
+                Err(_) => Err(TelemetryError::QueryTimeout { duration: timeout }),
+            }
+        } else {
+            collect_future.await.map_err(Into::into)
+        }
+    }
+
     /// Execute a SQL query and return a streaming result.
     ///
     /// Use this for large result sets to avoid loading everything into memory.

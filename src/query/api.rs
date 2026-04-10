@@ -248,38 +248,24 @@ pub struct QueryResponse {
 
 /// Handle POST /query/sql
 ///
-/// Note: For safety, queries without a LIMIT clause will have a default limit
-/// applied. Use explicit LIMIT to control result size.
+/// A row limit is enforced at the DataFusion level via `DataFrame::limit`
+/// to prevent unbounded memory usage. The maximum row limit is applied as
+/// a secondary safeguard via result truncation.
 #[tracing::instrument(skip(state, request), fields(sql_len = request.sql.len()))]
 async fn handle_sql_query(
     State(state): State<QueryApiState>,
     Json(request): Json<SqlQueryRequest>,
 ) -> Result<Response, QueryError> {
-    // Check if query already has a LIMIT clause
-    let sql = if has_limit_clause(&request.sql) {
-        request.sql
-    } else {
-        // Add default limit to prevent unbounded results
-        format!(
-            "{} LIMIT {}",
-            request.sql.trim_end_matches(';'),
-            state.default_row_limit
-        )
-    };
+    let sql = request.sql.trim_end_matches(';');
 
-    let results = state.engine.query(&sql).await?;
+    let results = state
+        .engine
+        .query_limited(sql, state.default_row_limit)
+        .await?;
 
-    // Enforce maximum row limit even if query specified a higher one
     let results = truncate_results(results, state.max_row_limit);
 
     format_response(results, request.format)
-}
-
-/// Check if a SQL query already contains a LIMIT clause.
-fn has_limit_clause(sql: &str) -> bool {
-    // Simple check - look for LIMIT keyword (case-insensitive)
-    // This is a heuristic; a full SQL parser would be more accurate
-    sql.to_uppercase().contains(" LIMIT ")
 }
 
 /// Truncate results to a maximum number of rows.

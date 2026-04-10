@@ -6,6 +6,7 @@
 //! - Query API (port 3100)
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use sidereal::{
     auth::grpc_auth_interceptor,
@@ -17,7 +18,7 @@ use sidereal::{
         otlp_http_router_with_auth, LogsServiceServer, MetricsServiceServer, OtlpGrpcReceiver,
         OtlpHttpState, TraceServiceServer,
     },
-    query::{query_router_with_auth, QueryApiState, QueryEngine},
+    query::{query_router_with_auth, QueryApiState, QueryEngineBuilder},
     redact::RedactionEngine,
     schema::{logs::logs_schema, metrics::number_metrics_schema, traces::traces_schema},
     storage::{base_url, create_object_store, Signal},
@@ -55,8 +56,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         create_ingesters(store.clone(), &config.buffer, &config.parquet);
     let flush_handles = start_flush_tasks(&trace_ingester, &metrics_ingester, &logs_ingester);
 
-    let query_engine = Arc::new(QueryEngine::new(store.clone(), &base_url_str).await?);
-    tracing::info!("Query engine initialised");
+    let query_engine = Arc::new(
+        QueryEngineBuilder::new(store.clone(), &base_url_str)
+            .with_timeout(Some(Duration::from_secs(config.query.timeout_secs)))
+            .with_memory_limit(config.query.memory_limit_bytes)
+            .build()
+            .await?,
+    );
+    tracing::info!(
+        memory_limit_bytes = config.query.memory_limit_bytes,
+        timeout_secs = config.query.timeout_secs,
+        "Query engine initialised"
+    );
 
     let redaction = Arc::new(RedactionEngine::new(&config.redaction)?);
     if redaction.is_enabled() {
