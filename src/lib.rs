@@ -16,6 +16,7 @@
 //!                                    HTTP Query API
 //! ```
 
+pub mod auth;
 pub mod buffer;
 pub mod config;
 pub mod deployments;

@@ -12,11 +12,14 @@ use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, State},
     http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
+    middleware,
     response::IntoResponse,
     routing::post,
     Router,
 };
 use tower_http::decompression::RequestDecompressionLayer;
+
+use crate::auth::{auth_middleware, AuthState};
 
 /// Default maximum request body size (16 MiB).
 ///
@@ -80,19 +83,37 @@ impl ContentType {
 
 /// Create the OTLP HTTP router with default body size limit.
 pub fn otlp_http_router(state: OtlpHttpState) -> Router {
-    otlp_http_router_with_limit(state, DEFAULT_MAX_BODY_SIZE)
+    otlp_http_router_with_auth(state, DEFAULT_MAX_BODY_SIZE, None)
 }
 
-/// Create the OTLP HTTP router with a custom body size limit.
+/// Create the OTLP HTTP router with optional authentication.
 ///
-/// The router includes automatic gzip decompression via tower-http middleware,
-/// which also protects against decompression bombs by limiting the decompressed size.
-pub fn otlp_http_router_with_limit(state: OtlpHttpState, max_body_size: usize) -> Router {
-    Router::new()
-        .route("/health", axum::routing::get(handle_health))
+/// The router includes automatic gzip decompression via tower-http middleware.
+/// When `auth_key` is provided, the `/v1/*` data endpoints require a valid
+/// `Authorization: Bearer <key>` or `X-API-Key: <key>` header. The `/health`
+/// endpoint remains unauthenticated.
+pub fn otlp_http_router_with_auth(
+    state: OtlpHttpState,
+    max_body_size: usize,
+    auth_key: Option<&str>,
+) -> Router {
+    let open_routes = Router::new().route("/health", axum::routing::get(handle_health));
+
+    let data_routes = Router::new()
         .route("/v1/traces", post(handle_traces))
         .route("/v1/metrics", post(handle_metrics))
-        .route("/v1/logs", post(handle_logs))
+        .route("/v1/logs", post(handle_logs));
+
+    let data_routes = match auth_key {
+        Some(key) => {
+            let auth_state = AuthState::new(key);
+            data_routes.layer(middleware::from_fn_with_state(auth_state, auth_middleware))
+        }
+        None => data_routes,
+    };
+
+    open_routes
+        .merge(data_routes)
         .layer(RequestDecompressionLayer::new())
         .layer(DefaultBodyLimit::max(max_body_size))
         .with_state(state)

@@ -10,6 +10,7 @@ use figment::{
 };
 use serde::Deserialize;
 
+use crate::auth::AuthConfig;
 use crate::redact::RedactionConfig;
 use crate::TelemetryError;
 
@@ -73,6 +74,8 @@ pub struct TelemetryConfig {
     pub parquet: ParquetConfig,
     /// Redaction configuration.
     pub redaction: RedactionConfig,
+    /// Authentication configuration.
+    pub auth: AuthConfig,
 }
 
 impl TelemetryConfig {

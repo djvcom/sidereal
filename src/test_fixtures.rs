@@ -34,6 +34,7 @@ use object_store::ObjectStore;
 use rstest::fixture;
 use tempfile::TempDir;
 
+use crate::auth::AuthConfig;
 use crate::buffer::ingester::Ingester;
 use crate::config::{BufferConfig, ParquetConfig, ServerConfig, StorageConfig, TelemetryConfig};
 use crate::query::engine::QueryEngine;
@@ -111,6 +112,7 @@ pub fn test_config(
         parquet: parquet_config,
         storage,
         redaction: RedactionConfig::default(),
+        auth: AuthConfig::default(),
     };
     (config, temp_dir)
 }
@@ -129,6 +131,7 @@ pub fn memory_test_config(
         parquet: parquet_config,
         storage: memory_storage_config,
         redaction: RedactionConfig::default(),
+        auth: AuthConfig::default(),
     }
 }
 
@@ -316,6 +319,7 @@ impl TestEnv {
             },
             storage: StorageConfig::Memory,
             redaction: RedactionConfig::default(),
+            auth: AuthConfig::default(),
         };
 
         Self {

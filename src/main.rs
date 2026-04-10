@@ -8,15 +8,16 @@
 use std::sync::Arc;
 
 use sidereal::{
+    auth::grpc_auth_interceptor,
     buffer::{start_background_flush, FlushHandle, Ingester},
     config::{BufferConfig, ParquetConfig},
     deployments::{deployment_router, DeploymentApiState},
     errors::{error_router, ErrorApiState},
     ingest::{
-        otlp_http_router, LogsServiceServer, MetricsServiceServer, OtlpGrpcReceiver, OtlpHttpState,
-        TraceServiceServer,
+        otlp_http_router_with_auth, LogsServiceServer, MetricsServiceServer, OtlpGrpcReceiver,
+        OtlpHttpState, TraceServiceServer,
     },
-    query::{query_router, QueryApiState, QueryEngine},
+    query::{query_router_with_auth, QueryApiState, QueryEngine},
     redact::RedactionEngine,
     schema::{logs::logs_schema, metrics::number_metrics_schema, traces::traces_schema},
     storage::{base_url, create_object_store, Signal},
@@ -92,19 +93,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_addr = config.server.grpc_addr;
     let http_addr = config.server.http_addr;
     let query_addr = config.server.query_addr;
+    let auth_key = config.auth.api_key().map(str::to_owned);
 
-    let grpc_server = TonicServer::builder()
-        .add_service(TraceServiceServer::new(grpc_receiver.clone()))
-        .add_service(MetricsServiceServer::new(grpc_receiver.clone()))
-        .add_service(LogsServiceServer::new(grpc_receiver))
-        .serve_with_shutdown(grpc_addr, shutdown_signal("gRPC"));
+    if config.auth.is_enabled() {
+        tracing::info!("Authentication enabled");
+    } else {
+        tracing::warn!("Authentication disabled — all endpoints are open");
+    }
 
-    let http_router = otlp_http_router(http_state);
+    let grpc_server = match auth_key.as_deref() {
+        Some(key) => {
+            let interceptor = grpc_auth_interceptor(key);
+            TonicServer::builder()
+                .add_service(TraceServiceServer::with_interceptor(
+                    grpc_receiver.clone(),
+                    interceptor.clone(),
+                ))
+                .add_service(MetricsServiceServer::with_interceptor(
+                    grpc_receiver.clone(),
+                    interceptor.clone(),
+                ))
+                .add_service(LogsServiceServer::with_interceptor(
+                    grpc_receiver,
+                    interceptor,
+                ))
+                .serve_with_shutdown(grpc_addr, shutdown_signal("gRPC"))
+        }
+        None => TonicServer::builder()
+            .add_service(TraceServiceServer::new(grpc_receiver.clone()))
+            .add_service(MetricsServiceServer::new(grpc_receiver.clone()))
+            .add_service(LogsServiceServer::new(grpc_receiver))
+            .serve_with_shutdown(grpc_addr, shutdown_signal("gRPC")),
+    };
+
+    let http_router = otlp_http_router_with_auth(
+        http_state,
+        sidereal::ingest::DEFAULT_MAX_BODY_SIZE,
+        auth_key.as_deref(),
+    );
     let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal("HTTP OTLP"));
 
-    let api_router = query_router(query_state)
+    let api_router = query_router_with_auth(query_state, auth_key.as_deref())
         .nest("/errors", error_router(error_state))
         .nest("/deployments", deployment_router(deployment_state));
     let query_listener = tokio::net::TcpListener::bind(query_addr).await?;

@@ -66,3 +66,10 @@ path = "./telemetry-data"
 # In-memory storage (for testing only)
 # [storage]
 # type = "memory"
+
+# Authentication (optional)
+# When set, all data endpoints require this key as a Bearer token
+# or X-API-Key header. Health and readiness endpoints remain open.
+# Can also be set via TELEMETRY_AUTH_API_KEY environment variable.
+# [auth]
+# api_key = "your-secret-api-key"

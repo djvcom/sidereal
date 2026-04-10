@@ -13,6 +13,7 @@ use axum::{
     body::Body,
     extract::State,
     http::{header, StatusCode},
+    middleware,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -21,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use super::builders::{LogQueryBuilder, MetricQueryBuilder, TraceQueryBuilder};
 use super::QueryEngine;
+use crate::auth::{auth_middleware, AuthState};
 use crate::TelemetryError;
 
 /// Default row limit for queries without explicit LIMIT clause.
@@ -70,16 +72,35 @@ impl QueryApiState {
     }
 }
 
-/// Create the query API router.
+/// Create the query API router with optional authentication.
+///
+/// When `auth_key` is provided, all data endpoints require a valid API key.
+/// The `/health` and `/ready` endpoints remain unauthenticated.
 pub fn query_router(state: QueryApiState) -> Router {
-    Router::new()
+    query_router_with_auth(state, None)
+}
+
+/// Create the query API router with optional authentication.
+pub fn query_router_with_auth(state: QueryApiState, auth_key: Option<&str>) -> Router {
+    let open_routes = Router::new()
         .route("/health", axum::routing::get(handle_health))
-        .route("/ready", axum::routing::get(handle_ready))
+        .route("/ready", axum::routing::get(handle_ready));
+
+    let data_routes = Router::new()
         .route("/sql", post(handle_sql_query))
         .route("/traces", post(handle_traces_query))
         .route("/metrics", post(handle_metrics_query))
-        .route("/logs", post(handle_logs_query))
-        .with_state(state)
+        .route("/logs", post(handle_logs_query));
+
+    let data_routes = match auth_key {
+        Some(key) => {
+            let auth_state = AuthState::new(key);
+            data_routes.layer(middleware::from_fn_with_state(auth_state, auth_middleware))
+        }
+        None => data_routes,
+    };
+
+    open_routes.merge(data_routes).with_state(state)
 }
 
 /// Health check response.

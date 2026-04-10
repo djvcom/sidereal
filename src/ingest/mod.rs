@@ -11,5 +11,5 @@ pub use convert::{
 };
 pub use grpc::{LogsServiceServer, MetricsServiceServer, OtlpGrpcReceiver, TraceServiceServer};
 pub use http::{
-    otlp_http_router, otlp_http_router_with_limit, OtlpHttpState, DEFAULT_MAX_BODY_SIZE,
+    otlp_http_router, otlp_http_router_with_auth, OtlpHttpState, DEFAULT_MAX_BODY_SIZE,
 };
