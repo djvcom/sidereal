@@ -41,17 +41,17 @@ impl ErrorApiState {
 /// - `GET /errors` - List error groups
 /// - `GET /errors/stats` - Get error statistics
 /// - `GET /errors/compare` - Compare errors between time periods or versions
-/// - `GET /errors/:fingerprint` - Get error group details
-/// - `GET /errors/:fingerprint/samples` - Get error samples
-/// - `GET /errors/:fingerprint/timeline` - Get error timeline
+/// - `GET /errors/{fingerprint}` - Get error group details
+/// - `GET /errors/{fingerprint}/samples` - Get error samples
+/// - `GET /errors/{fingerprint}/timeline` - Get error timeline
 pub fn error_router(state: ErrorApiState) -> Router {
     Router::new()
         .route("/", get(list_errors))
         .route("/stats", get(get_stats))
         .route("/compare", get(compare_errors))
-        .route("/:fingerprint", get(get_error_detail))
-        .route("/:fingerprint/samples", get(get_error_samples))
-        .route("/:fingerprint/timeline", get(get_error_timeline))
+        .route("/{fingerprint}", get(get_error_detail))
+        .route("/{fingerprint}/samples", get(get_error_samples))
+        .route("/{fingerprint}/timeline", get(get_error_timeline))
         .with_state(state)
 }
 

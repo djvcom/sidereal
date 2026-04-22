@@ -31,8 +31,6 @@ services:
   sidereal:
     build: .
     ports:
-      - "4317:4317"
-      - "4318:4318"
       - "3100:3100"
     volumes:
       - ./telemetry.docker.toml:/etc/sidereal/telemetry.toml:ro

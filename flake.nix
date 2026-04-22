@@ -35,14 +35,7 @@
           )
         );
 
-      rustToolchain =
-        pkgs:
-        pkgs.rust-bin.stable.latest.default.override {
-          extensions = [
-            "rust-src"
-            "rust-analyzer"
-          ];
-        };
+      rustToolchain = pkgs: pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
       buildSidereal =
         pkgs:
@@ -85,7 +78,7 @@
         );
     in
     {
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
+      formatter = forAllSystems (pkgs: pkgs.nixfmt);
 
       overlays.default = nixpkgs.lib.composeManyExtensions [
         rust-overlay.overlays.default
@@ -95,7 +88,7 @@
       ];
 
       packages = forAllSystems (pkgs: {
-        default = self.packages.${pkgs.system}.sidereal;
+        default = self.packages.${pkgs.stdenv.hostPlatform.system}.sidereal;
         sidereal = buildSidereal pkgs;
       });
 
@@ -106,7 +99,7 @@
             pkgs.just
             pkgs.pkg-config
             pkgs.openssl
-            pkgs.nixfmt-rfc-style
+            pkgs.nixfmt
             pkgs.statix
             pkgs.deadnix
           ];
