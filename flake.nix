@@ -358,6 +358,22 @@
               default = "127.0.0.1:3200";
               description = "Address on which the sidereal-ai service listens.";
             };
+
+            auth.oidc = {
+              enable = lib.mkEnableOption "OIDC authentication via device authorization grant";
+
+              issuer = lib.mkOption {
+                type = lib.types.str;
+                description = "OIDC issuer URL.";
+                example = "https://auth.example.com/oauth2/openid/sidereal";
+              };
+
+              clientId = lib.mkOption {
+                type = lib.types.str;
+                description = "OAuth2 client ID.";
+                example = "sidereal";
+              };
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -371,6 +387,9 @@
                 EnvironmentVariables = {
                   SIDEREAL_URL = cfg.sidereal.url;
                   SIDEREAL_LISTEN_ADDRESS = cfg.listenAddress;
+                } // lib.optionalAttrs cfg.auth.oidc.enable {
+                  SIDEREAL_AI_OIDC_ISSUER = cfg.auth.oidc.issuer;
+                  SIDEREAL_AI_OIDC_CLIENT_ID = cfg.auth.oidc.clientId;
                 };
                 RunAtLoad = true;
                 KeepAlive = true;
@@ -390,6 +409,9 @@
                 Environment = [
                   "SIDEREAL_URL=${cfg.sidereal.url}"
                   "SIDEREAL_LISTEN_ADDRESS=${cfg.listenAddress}"
+                ] ++ lib.optionals cfg.auth.oidc.enable [
+                  "SIDEREAL_AI_OIDC_ISSUER=${cfg.auth.oidc.issuer}"
+                  "SIDEREAL_AI_OIDC_CLIENT_ID=${cfg.auth.oidc.clientId}"
                 ];
                 Restart = "on-failure";
               };
