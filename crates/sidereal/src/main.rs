@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sidereal::{
-    auth::grpc_auth_interceptor,
+    auth::{grpc_auth_interceptor, OidcValidator},
     buffer::{start_background_flush, FlushHandle, Ingester},
     config::{BufferConfig, ParquetConfig},
     deployments::{deployment_router, DeploymentApiState},
@@ -18,7 +18,7 @@ use sidereal::{
         otlp_http_router_with_auth, LogsServiceServer, MetricsServiceServer, OtlpGrpcReceiver,
         OtlpHttpState, TraceServiceServer,
     },
-    query::{query_router_with_auth, QueryApiState, QueryEngineBuilder},
+    query::{query_router, query_router_with_oidc, QueryApiState, QueryEngineBuilder},
     redact::RedactionEngine,
     schema::{logs::logs_schema, metrics::number_metrics_schema, traces::traces_schema},
     storage::{base_url, create_object_store, Signal},
@@ -107,10 +107,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auth_key = config.auth.api_key().map(str::to_owned);
 
     if config.auth.is_enabled() {
-        tracing::info!("Authentication enabled");
+        tracing::info!("API key authentication enabled for OTLP endpoints");
     } else {
-        tracing::warn!("Authentication disabled — all endpoints are open");
+        tracing::warn!("API key authentication disabled — OTLP endpoints are open");
     }
+
+    let oidc_validator = if let Some(oidc_config) = &config.auth.oidc {
+        tracing::info!(issuer = %oidc_config.issuer, "Initialising OIDC validator");
+        Some(OidcValidator::new(oidc_config).await?)
+    } else {
+        tracing::warn!("OIDC disabled — query API is unauthenticated");
+        None
+    };
 
     let grpc_server = match auth_key.as_deref() {
         Some(key) => {
@@ -146,9 +154,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal("HTTP OTLP"));
 
-    let api_router = query_router_with_auth(query_state, auth_key.as_deref())
-        .nest("/errors", error_router(error_state))
-        .nest("/deployments", deployment_router(deployment_state));
+    let api_router = match oidc_validator {
+        Some(validator) => query_router_with_oidc(query_state, validator),
+        None => query_router(query_state),
+    }
+    .nest("/errors", error_router(error_state))
+    .nest("/deployments", deployment_router(deployment_state));
     let query_listener = tokio::net::TcpListener::bind(query_addr).await?;
     let query_server = axum::serve(query_listener, api_router)
         .with_graceful_shutdown(shutdown_signal("Query API"));

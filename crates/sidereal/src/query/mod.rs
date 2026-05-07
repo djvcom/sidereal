@@ -5,7 +5,7 @@ pub mod builders;
 pub mod engine;
 pub mod udfs;
 
-pub use api::{query_router, query_router_with_auth, QueryApiState};
+pub use api::{query_router, query_router_with_auth, query_router_with_oidc, QueryApiState};
 pub use builders::{LogQueryBuilder, MetricQueryBuilder, TraceQueryBuilder};
 pub use engine::{MemoryPoolStrategy, QueryEngine, QueryEngineBuilder};
 pub use udfs::all_udfs;

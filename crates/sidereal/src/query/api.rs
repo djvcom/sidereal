@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use super::builders::{LogQueryBuilder, MetricQueryBuilder, TraceQueryBuilder};
 use super::QueryEngine;
-use crate::auth::{auth_middleware, AuthState};
+use crate::auth::{auth_middleware, oidc_auth_middleware, AuthState, OidcValidator};
 use crate::TelemetryError;
 
 /// Default row limit for queries without explicit LIMIT clause.
@@ -78,6 +78,28 @@ impl QueryApiState {
 /// The `/health` and `/ready` endpoints remain unauthenticated.
 pub fn query_router(state: QueryApiState) -> Router {
     query_router_with_auth(state, None)
+}
+
+/// Create the query API router protected by OIDC JWT validation.
+///
+/// All data endpoints require a valid JWT issued by the configured OIDC
+/// provider. Health and readiness endpoints remain unauthenticated.
+pub fn query_router_with_oidc(state: QueryApiState, validator: Arc<OidcValidator>) -> Router {
+    let open_routes = Router::new()
+        .route("/health", axum::routing::get(handle_health))
+        .route("/ready", axum::routing::get(handle_ready));
+
+    let data_routes = Router::new()
+        .route("/sql", post(handle_sql_query))
+        .route("/traces", post(handle_traces_query))
+        .route("/metrics", post(handle_metrics_query))
+        .route("/logs", post(handle_logs_query))
+        .layer(middleware::from_fn_with_state(
+            validator,
+            oidc_auth_middleware,
+        ));
+
+    open_routes.merge(data_routes).with_state(state)
 }
 
 /// Create the query API router with optional authentication.
