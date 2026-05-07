@@ -295,10 +295,13 @@
             systemd.services.sidereal = {
               description = "Sidereal observability backend";
               wantedBy = [ "multi-user.target" ];
-              after = [ "network.target" ];
+              after = [ "network-online.target" ];
+              wants = [ "network-online.target" ];
 
               serviceConfig = {
                 ExecStart = "${cfg.package}/bin/sidereal";
+                Restart = "on-failure";
+                RestartSec = "5s";
                 User = "sidereal";
                 Group = "sidereal";
                 WorkingDirectory = "/etc/sidereal";
