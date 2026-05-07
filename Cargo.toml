@@ -1,95 +1,27 @@
-[package]
-name = "sidereal"
+[workspace]
+members = [
+    "crates/sidereal",
+    "crates/sidereal-ai",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/djvcom/sidereal"
 rust-version = "1.95"
-description = "Self-hosted observability backend with OTLP ingestion and DataFusion queries"
-
-[[bin]]
-name = "sidereal"
-path = "src/main.rs"
-
-[dependencies]
-arrow = { version = "57.1", features = ["prettyprint"] }
-parquet = { version = "57.1", features = ["async", "object_store", "zstd"] }
-datafusion = "51"
-object_store = { version = "0.12", features = [] }
-
-opentelemetry-proto = { version = "0.31", features = ["gen-tonic", "trace", "metrics", "logs"] }
-opentelemetry-semantic-conventions = "0.31"
-tonic = { version = "0.14", features = ["gzip"] }
-prost = "0.14"
-
-axum = "0.8"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors", "decompression-gzip"] }
-
-tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-async-trait = "0.1"
-
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-ciborium = "0.2"
-base64 = "0.22"
-
-figment = { version = "0.10", features = ["toml", "env"] }
-
-chrono = { version = "0.4", features = ["serde"] }
-thiserror = "2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-bytes = "1"
-ulid = "1.1"
-url = "2"
-hex = "0.4.3"
-hmac = "0.12.1"
-sha2 = "0.10.9"
-secrecy = "0.10.3"
-unicode-normalization = "0.1.25"
-glob = "0.3.3"
-regex = "1.12.2"
-
-[dev-dependencies]
-tempfile = "3"
-tokio-test = "0.4"
-futures = "0.3"
-rstest = "0.26.1"
-proptest = "1.8.0"
-criterion = { version = "0.5.1", features = ["html_reports", "async_tokio"] }
-toml = "0.8"
-flate2 = "1.1.5"
-
-[features]
-default = []
-s3 = ["object_store/aws"]
-gcs = ["object_store/gcp"]
-azure = ["object_store/azure"]
-
-[[bench]]
-name = "conversion"
-harness = false
-
-[[bench]]
-name = "ingestion"
-harness = false
-
-[[bench]]
-name = "query"
-harness = false
 
 # =============================================================================
-# Lint configuration
+# Lint configuration (inherited by all crates via [lints] workspace = true)
 # =============================================================================
 
-[lints.rust]
+[workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"
 unused_must_use = "deny"
 
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = "deny"
 
 unwrap_used = "deny"

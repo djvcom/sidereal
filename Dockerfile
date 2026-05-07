@@ -10,12 +10,12 @@ COPY rust-toolchain.toml ./
 RUN rustup show
 
 COPY Cargo.toml Cargo.lock ./
-COPY src/ src/
-COPY tests/ tests/
-COPY benches/ benches/
+COPY crates/sidereal/ crates/sidereal/
+COPY crates/sidereal-ai/Cargo.toml crates/sidereal-ai/Cargo.toml
+COPY crates/sidereal-ai/src/ crates/sidereal-ai/src/
 
 ARG FEATURES="s3"
-RUN cargo build --release --features "${FEATURES}"
+RUN cargo build --release --features "sidereal/${FEATURES}" -p sidereal
 
 FROM debian:bookworm-slim
 

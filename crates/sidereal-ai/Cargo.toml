@@ -1,0 +1,20 @@
+[package]
+name = "sidereal-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "AI query companion for Sidereal — natural language interface over observability data"
+
+[[bin]]
+name = "sidereal-ai"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true
