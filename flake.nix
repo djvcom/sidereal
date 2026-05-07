@@ -130,35 +130,27 @@
         let
           cfg = config.services.sidereal;
 
-          configFile = pkgs.writeText "telemetry.toml" (
-            lib.generators.toTOML { } (
-              {
-                server = {
-                  grpc_addr = cfg.grpcListenAddress;
-                  http_addr = cfg.httpListenAddress;
-                  query_addr = cfg.queryListenAddress;
-                };
-              }
-              // lib.optionalAttrs (cfg.storage.type == "local") {
-                storage = {
-                  type = "local";
-                  path = cfg.storage.path;
-                };
-              }
-              // lib.optionalAttrs (cfg.storage.type == "s3") {
-                storage = {
-                  type = "s3";
-                  bucket = cfg.storage.bucket;
-                  region = cfg.storage.region;
-                  force_path_style = cfg.storage.forcePathStyle;
-                  allow_http = cfg.storage.allowHttp;
-                }
-                // lib.optionalAttrs (cfg.storage.endpoint != "") {
-                  endpoint = cfg.storage.endpoint;
-                };
-              }
-            )
-          );
+          configFile = pkgs.writeText "telemetry.toml" ''
+            [server]
+            grpc_addr = "${cfg.grpcListenAddress}"
+            http_addr = "${cfg.httpListenAddress}"
+            query_addr = "${cfg.queryListenAddress}"
+
+            ${lib.optionalString (cfg.storage.type == "local") ''
+              [storage]
+              type = "local"
+              path = "${cfg.storage.path}"
+            ''}
+            ${lib.optionalString (cfg.storage.type == "s3") ''
+              [storage]
+              type = "s3"
+              bucket = "${cfg.storage.bucket}"
+              region = "${cfg.storage.region}"
+              ${lib.optionalString (cfg.storage.endpoint != "") ''endpoint = "${cfg.storage.endpoint}"''}
+              force_path_style = ${lib.boolToString cfg.storage.forcePathStyle}
+              allow_http = ${lib.boolToString cfg.storage.allowHttp}
+            ''}
+          '';
 
           environmentFiles =
             lib.optional (cfg.storage.credentialsFile != null) cfg.storage.credentialsFile
