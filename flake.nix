@@ -150,6 +150,12 @@
               force_path_style = ${lib.boolToString cfg.storage.forcePathStyle}
               allow_http = ${lib.boolToString cfg.storage.allowHttp}
             ''}
+            ${lib.optionalString cfg.auth.oidc.enable ''
+              [auth.oidc]
+              issuer = "${cfg.auth.oidc.issuer}"
+              audience = "${cfg.auth.oidc.audience}"
+              jwks_refresh_secs = ${toString cfg.auth.oidc.jwksRefreshSecs}
+            ''}
           '';
 
           environmentFiles =
@@ -248,6 +254,30 @@
                 When set, all data endpoints require this key as a Bearer token
                 or X-API-Key header.
               '';
+            };
+
+            auth.oidc = {
+              enable = lib.mkEnableOption "OIDC JWT authentication for the query API";
+
+              issuer = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "OIDC issuer URL. Used to discover the JWKS endpoint via standard OIDC discovery.";
+                example = "https://auth.example.com/oauth2/openid/sidereal";
+              };
+
+              audience = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "Expected audience claim in validated JWTs; typically the OAuth2 client ID.";
+                example = "sidereal";
+              };
+
+              jwksRefreshSecs = lib.mkOption {
+                type = lib.types.int;
+                default = 3600;
+                description = "Interval in seconds at which the JWKS key cache is refreshed.";
+              };
             };
           };
 
