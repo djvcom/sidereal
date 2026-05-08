@@ -86,16 +86,19 @@ pub fn load() -> Result<Config, ConfigError> {
 
 /// Path to the configuration file.
 pub fn config_file_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from(".config"))
-        .join("sidereal-ai")
-        .join("config.toml")
+    xdg_config_dir().join("sidereal-ai").join("config.toml")
 }
 
 /// Path to the token cache file.
 pub fn token_cache_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from(".config"))
-        .join("sidereal-ai")
-        .join("tokens.json")
+    xdg_config_dir().join("sidereal-ai").join("tokens.json")
+}
+
+fn xdg_config_dir() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        return PathBuf::from(xdg);
+    }
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
 }
