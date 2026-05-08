@@ -33,11 +33,6 @@ pub struct OidcConfig {
     pub issuer: String,
     /// `OAuth2` client identifier.
     pub client_id: String,
-    /// Explicit device authorisation endpoint URL.
-    ///
-    /// Set this when the provider does not advertise `device_authorization_endpoint`
-    /// in its OIDC discovery document.
-    pub device_endpoint: Option<String>,
 }
 
 /// Sidereal service connection configuration.
