@@ -432,6 +432,7 @@
               pkgs.nixfmt
               pkgs.statix
               pkgs.deadnix
+              pkgs.ollama
             ];
             RUST_BACKTRACE = "1";
           }
