@@ -44,34 +44,41 @@ pub fn create_error_fingerprint_udf() -> ScalarUDF {
 }
 
 fn error_fingerprint_impl(args: &[ColumnarValue]) -> Result<ColumnarValue> {
-    let (Some(arg0), Some(arg1), Some(arg2), Some(arg3)) =
-        (args.first(), args.get(1), args.get(2), args.get(3))
-    else {
+    let [error_type, message, stacktrace, service] = args else {
         return Err(DataFusionError::Internal(
             "error_fingerprint expects 4 arguments".to_owned(),
         ));
     };
 
-    // Check if all arguments are scalars or all are arrays
-    let is_scalar = matches!(arg0, ColumnarValue::Scalar(_));
-
-    if is_scalar {
-        compute_scalar_fingerprint(arg0, arg1, arg2, arg3)
+    // All-scalar invocations (constant folding) keep a scalar result; any mix
+    // of scalars and arrays is broadcast so literals can be passed alongside
+    // columns.
+    if args
+        .iter()
+        .all(|arg| matches!(arg, ColumnarValue::Scalar(_)))
+    {
+        compute_scalar_fingerprint(error_type, message, stacktrace, service)
     } else {
-        compute_array_fingerprint(arg0, arg1, arg2, arg3)
+        let arrays = ColumnarValue::values_to_arrays(args)?;
+        let [error_types, messages, stacktraces, services] = arrays.as_slice() else {
+            return Err(DataFusionError::Internal(
+                "error_fingerprint expects 4 arguments".to_owned(),
+            ));
+        };
+        compute_array_fingerprint(error_types, messages, stacktraces, services)
     }
 }
 
 fn compute_scalar_fingerprint(
-    arg0: &ColumnarValue,
-    arg1: &ColumnarValue,
-    arg2: &ColumnarValue,
-    arg3: &ColumnarValue,
+    error_type_arg: &ColumnarValue,
+    message_arg: &ColumnarValue,
+    stacktrace_arg: &ColumnarValue,
+    service_arg: &ColumnarValue,
 ) -> Result<ColumnarValue> {
-    let error_type = extract_scalar_string(arg0)?;
-    let message = extract_scalar_string(arg1)?;
-    let stacktrace = extract_scalar_string(arg2)?;
-    let service_name = extract_scalar_string(arg3)?.unwrap_or_default();
+    let error_type = extract_scalar_string(error_type_arg)?;
+    let message = extract_scalar_string(message_arg)?;
+    let stacktrace = extract_scalar_string(stacktrace_arg)?;
+    let service_name = extract_scalar_string(service_arg)?.unwrap_or_default();
 
     let fingerprint = compute_fingerprint(
         error_type.as_deref(),
@@ -86,59 +93,51 @@ fn compute_scalar_fingerprint(
 }
 
 fn compute_array_fingerprint(
-    arg0: &ColumnarValue,
-    arg1: &ColumnarValue,
-    arg2: &ColumnarValue,
-    arg3: &ColumnarValue,
+    error_types_array: &ArrayRef,
+    messages_array: &ArrayRef,
+    stacktraces_array: &ArrayRef,
+    services_array: &ArrayRef,
 ) -> Result<ColumnarValue> {
-    let (arr0, arr1, arr2, arr3) = match (arg0, arg1, arg2, arg3) {
-        (
-            ColumnarValue::Array(a0),
-            ColumnarValue::Array(a1),
-            ColumnarValue::Array(a2),
-            ColumnarValue::Array(a3),
-        ) => {
-            let arr0 = a0.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
+    let downcast = |array: &ArrayRef| -> Result<StringArray> {
+        array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .cloned()
+            .ok_or_else(|| {
                 DataFusionError::Internal("error_fingerprint expects Utf8 arrays".to_owned())
-            })?;
-            let arr1 = a1.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                DataFusionError::Internal("error_fingerprint expects Utf8 arrays".to_owned())
-            })?;
-            let arr2 = a2.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                DataFusionError::Internal("error_fingerprint expects Utf8 arrays".to_owned())
-            })?;
-            let arr3 = a3.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                DataFusionError::Internal("error_fingerprint expects Utf8 arrays".to_owned())
-            })?;
-            (arr0, arr1, arr2, arr3)
-        }
-        _ => {
-            return Err(DataFusionError::Internal(
-                "Mixed scalar/array arguments not supported".to_owned(),
-            ))
-        }
+            })
     };
+    let (error_types, messages, stacktraces, services) = (
+        downcast(error_types_array)?,
+        downcast(messages_array)?,
+        downcast(stacktraces_array)?,
+        downcast(services_array)?,
+    );
 
-    let len = arr0.len();
+    let len = error_types.len();
 
     let result: StringArray = (0..len)
         .map(|i| {
-            let error_type = if arr0.is_null(i) {
+            let error_type = if error_types.is_null(i) {
                 None
             } else {
-                Some(arr0.value(i))
+                Some(error_types.value(i))
             };
-            let message = if arr1.is_null(i) {
+            let message = if messages.is_null(i) {
                 None
             } else {
-                Some(arr1.value(i))
+                Some(messages.value(i))
             };
-            let stacktrace = if arr2.is_null(i) {
+            let stacktrace = if stacktraces.is_null(i) {
                 None
             } else {
-                Some(arr2.value(i))
+                Some(stacktraces.value(i))
             };
-            let service_name = if arr3.is_null(i) { "" } else { arr3.value(i) };
+            let service_name = if services.is_null(i) {
+                ""
+            } else {
+                services.value(i)
+            };
 
             let fp = compute_fingerprint(error_type, message, stacktrace, service_name);
             Some(fp)
