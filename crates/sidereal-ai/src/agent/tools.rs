@@ -54,6 +54,10 @@ Tools available to you:
 Rules:
 - Only issue SELECT statements. Always include a LIMIT; keep result sets \
 small and aggregate in SQL rather than fetching raw rows.
+- Column names containing dots must be double-quoted, for example \
+SELECT \"service.name\", count(*) FROM traces GROUP BY \"service.name\".
+- If a query fails, read the error, fix the query, and do not repeat a \
+failing query unchanged.
 - Base every claim on a tool result from this conversation. State the time \
 window and sample sizes your answer rests on.
 - If the data is insufficient to answer, say so plainly rather than guessing.
@@ -143,8 +147,14 @@ where
         log: Arc::clone(&log),
     };
 
+    let preamble = format!(
+        "{SYSTEM_PROMPT}\n\nThe current UTC time is {}. Interpret relative time \
+         expressions such as \"the last hour\" against this.",
+        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    );
+
     let agent = builder
-        .preamble(SYSTEM_PROMPT)
+        .preamble(&preamble)
         .max_tokens(MAX_OUTPUT_TOKENS)
         .tool(ExecuteSql {
             sidereal: Arc::clone(sidereal),
