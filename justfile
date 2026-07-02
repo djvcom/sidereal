@@ -27,5 +27,8 @@ run *ARGS:
 docker:
     docker compose up --build
 
+ai-demo *ARGS:
+    ./scripts/ai-demo.sh {{ARGS}}
+
 clean:
     cargo clean
