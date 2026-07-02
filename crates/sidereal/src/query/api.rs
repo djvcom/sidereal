@@ -701,7 +701,10 @@ impl IntoResponse for QueryError {
                         format!("query timed out after {duration:?}")
                     }
                     TelemetryError::Config(_) => "configuration error".to_owned(),
-                    TelemetryError::DataFusion(_) => "query execution error".to_owned(),
+                    // DataFusion messages describe problems with the caller's own
+                    // SQL (unknown columns, parse errors) and are needed to fix
+                    // the query; they do not expose storage internals.
+                    TelemetryError::DataFusion(e) => format!("query error: {e}"),
                     TelemetryError::Arrow(_) => "data processing error".to_owned(),
                     TelemetryError::Parquet(_) => "storage read error".to_owned(),
                     TelemetryError::ObjectStore(_) => "storage access error".to_owned(),
