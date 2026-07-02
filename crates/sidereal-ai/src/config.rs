@@ -102,15 +102,17 @@ pub fn load() -> Result<Config, ConfigError> {
     let config_path = config_file_path();
     Figment::new()
         .merge(Toml::file(config_path))
-        .merge(Env::prefixed("SIDEREAL_AI_").map(|k| match k.as_str() {
-            "oidc_issuer" => "oidc.issuer".into(),
-            "oidc_client_id" => "oidc.client_id".into(),
-            "model_provider" => "model.provider".into(),
-            "model_name" => "model.name".into(),
-            "model_api_key" => "model.api_key".into(),
-            "model_base_url" => "model.base_url".into(),
-            other => other.into(),
-        }))
+        .merge(Env::prefixed("SIDEREAL_AI_").map(
+            |k| match k.as_str().to_ascii_lowercase().as_str() {
+                "oidc_issuer" => "oidc.issuer".into(),
+                "oidc_client_id" => "oidc.client_id".into(),
+                "model_provider" => "model.provider".into(),
+                "model_name" => "model.name".into(),
+                "model_api_key" => "model.api_key".into(),
+                "model_base_url" => "model.base_url".into(),
+                _ => k.into(),
+            },
+        ))
         .merge(Env::raw().map(|k| match k.as_str() {
             "SIDEREAL_URL" => "sidereal.url".into(),
             "SIDEREAL_LISTEN_ADDRESS" => "listen_address".into(),
@@ -140,9 +142,31 @@ fn xdg_config_dir() -> PathBuf {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::indexing_slicing)]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::result_large_err
+)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn environment_variables_override_model_configuration() {
+        figment::Jail::expect_with(|jail| {
+            let jail_dir = jail.directory().to_string_lossy().into_owned();
+            jail.set_env("XDG_CONFIG_HOME", jail_dir);
+            jail.set_env("SIDEREAL_URL", "http://localhost:13100");
+            jail.set_env("SIDEREAL_AI_MODEL_PROVIDER", "ollama");
+            jail.set_env("SIDEREAL_AI_MODEL_NAME", "qwen3:1.7b");
+
+            let config = load().expect("configuration should load from the environment");
+            assert_eq!(config.model.provider, ModelProvider::Ollama);
+            assert_eq!(config.model.name.as_deref(), Some("qwen3:1.7b"));
+            assert_eq!(config.sidereal.url, "http://localhost:13100");
+            assert!(config.oidc.is_none());
+            Ok(())
+        });
+    }
 
     #[test]
     fn model_config_defaults_to_anthropic() {
