@@ -33,7 +33,12 @@ async fn main() {
 async fn run() -> Result<(), RunError> {
     let cfg = config::load()?;
 
-    let token = auth::authenticate(&cfg.oidc).await?;
+    let token = if let Some(oidc) = &cfg.oidc {
+        Some(auth::authenticate(oidc).await?)
+    } else {
+        tracing::warn!("no OIDC configuration; connecting to Sidereal unauthenticated");
+        None
+    };
 
     let client = Arc::new(SiderealClient::new(cfg.sidereal.url.clone(), token));
     client.health().await?;

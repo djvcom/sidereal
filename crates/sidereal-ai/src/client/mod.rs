@@ -7,12 +7,15 @@ use serde_json::json;
 pub struct SiderealClient {
     http: reqwest::Client,
     base_url: String,
-    token: String,
+    token: Option<String>,
 }
 
 impl SiderealClient {
-    /// Create a new client targeting the given base URL with a Bearer token.
-    pub fn new(base_url: String, token: String) -> Self {
+    /// Create a new client targeting the given base URL.
+    ///
+    /// When `token` is `Some`, it is sent as a Bearer token on every request;
+    /// when `None`, requests are unauthenticated.
+    pub fn new(base_url: String, token: Option<String>) -> Self {
         Self {
             http: reqwest::Client::new(),
             base_url,
@@ -20,10 +23,17 @@ impl SiderealClient {
         }
     }
 
+    fn authorised(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.token {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        }
+    }
+
     /// Check that the Sidereal service is reachable and healthy.
     pub async fn health(&self) -> Result<(), ClientError> {
         let url = format!("{}/health", self.base_url.trim_end_matches('/'));
-        let response = self.http.get(&url).bearer_auth(&self.token).send().await?;
+        let response = self.authorised(self.http.get(&url)).send().await?;
 
         if response.status().is_success() {
             Ok(())
@@ -43,9 +53,7 @@ impl SiderealClient {
         });
 
         let response = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.token)
+            .authorised(self.http.post(&url))
             .json(&request_body)
             .send()
             .await?;
@@ -72,10 +80,7 @@ impl SiderealClient {
             .collect();
 
         let response = self
-            .http
-            .get(&url)
-            .query(&query)
-            .bearer_auth(&self.token)
+            .authorised(self.http.get(&url).query(&query))
             .send()
             .await?;
 

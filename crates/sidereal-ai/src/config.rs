@@ -21,8 +21,10 @@ use std::path::PathBuf;
 /// Top-level configuration.
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// OIDC authentication configuration.
-    pub oidc: OidcConfig,
+    /// OIDC authentication configuration. When absent, requests to the
+    /// Sidereal query API are sent unauthenticated, for servers running
+    /// without auth.
+    pub oidc: Option<OidcConfig>,
     /// Sidereal service configuration.
     pub sidereal: SiderealConfig,
     /// Model provider configuration.
