@@ -1,11 +1,15 @@
 //! AI query companion for Sidereal.
 
+mod agent;
 mod auth;
 mod client;
 mod config;
+mod http;
 
 use std::process;
+use std::sync::Arc;
 
+use agent::QueryAgent;
 use client::SiderealClient;
 use tracing_subscriber::EnvFilter;
 
@@ -31,14 +35,12 @@ async fn run() -> Result<(), RunError> {
 
     let token = auth::authenticate(&cfg.oidc).await?;
 
-    let client = SiderealClient::new(cfg.sidereal.url.clone(), token);
+    let client = Arc::new(SiderealClient::new(cfg.sidereal.url.clone(), token));
     client.health().await?;
-
     tracing::info!(url = %cfg.sidereal.url, "connected to Sidereal");
-    tracing::debug!(listen_address = %cfg.listen_address, "future HTTP API will bind here");
 
-    let version_result = client.sql("SELECT 1 AS version").await;
-    tracing::debug!(?version_result, "connectivity probe");
+    let agent = Arc::new(QueryAgent::new(client, cfg.model));
+    http::serve(&cfg.listen_address, agent).await?;
 
     Ok(())
 }
@@ -61,4 +63,6 @@ enum RunError {
     Auth(#[from] auth::AuthError),
     #[error("connection to Sidereal failed: {0}")]
     Client(#[from] client::ClientError),
+    #[error("HTTP server failed: {0}")]
+    Serve(#[from] http::ServeError),
 }

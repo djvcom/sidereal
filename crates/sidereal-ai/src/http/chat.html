@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidereal AI</title>
+<style>
+  :root {
+    --bg: #101418;
+    --panel: #1a2028;
+    --text: #e6e9ec;
+    --muted: #8b95a1;
+    --accent: #6fb3d2;
+    --border: #2a323c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  header {
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+  header span { color: var(--muted); font-weight: 400; font-size: 0.85rem; margin-left: 0.5rem; }
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.25rem;
+    max-width: 52rem;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .msg { margin-bottom: 1rem; line-height: 1.5; }
+  .msg.user { color: var(--accent); }
+  .msg.user::before { content: "You  "; color: var(--muted); font-size: 0.8rem; }
+  .msg.assistant { white-space: pre-wrap; }
+  .msg.error { color: #d98080; }
+  .msg.pending { color: var(--muted); font-style: italic; }
+  details {
+    margin-top: 0.5rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+  details summary { cursor: pointer; color: var(--muted); }
+  details pre {
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--muted);
+  }
+  form {
+    display: flex;
+    gap: 0.5rem;
+    padding: 1rem 1.25rem;
+    border-top: 1px solid var(--border);
+    max-width: 52rem;
+    width: 100%;
+    margin: 0 auto;
+  }
+  input {
+    flex: 1;
+    padding: 0.6rem 0.8rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    font-size: 1rem;
+  }
+  input:focus { outline: 1px solid var(--accent); }
+  button {
+    padding: 0.6rem 1.1rem;
+    border-radius: 6px;
+    border: none;
+    background: var(--accent);
+    color: #0d1116;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+<header>Sidereal AI <span>ask questions of your telemetry data</span></header>
+<main id="log"></main>
+<form id="form">
+  <input id="question" placeholder="e.g. Which services had the highest error rates in the last hour?" autocomplete="off" autofocus>
+  <button id="send" type="submit">Ask</button>
+</form>
+<script>
+  const log = document.getElementById("log");
+  const form = document.getElementById("form");
+  const input = document.getElementById("question");
+  const send = document.getElementById("send");
+
+  function append(cls, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + cls;
+    div.textContent = text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+
+  function appendProvenance(container, provenance) {
+    if (!provenance || provenance.length === 0) return;
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Evidence: " + provenance.length + " tool call" + (provenance.length === 1 ? "" : "s");
+    details.appendChild(summary);
+    for (const call of provenance) {
+      const pre = document.createElement("pre");
+      pre.textContent = call.tool + " " + JSON.stringify(call.arguments, null, 2) + "\n→ " + call.result_summary;
+      details.appendChild(pre);
+    }
+    container.appendChild(details);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const question = input.value.trim();
+    if (!question) return;
+    input.value = "";
+    send.disabled = true;
+    append("user", question);
+    const pending = append("pending", "Thinking…");
+    try {
+      const response = await fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      const body = await response.json();
+      pending.remove();
+      if (!response.ok) {
+        const failure = append("error", body.error || ("Request failed (" + response.status + ")"));
+        appendProvenance(failure, body.provenance);
+      } else {
+        const answer = append("assistant", body.text);
+        appendProvenance(answer, body.provenance);
+      }
+    } catch (err) {
+      pending.remove();
+      append("error", "Request failed: " + err);
+    } finally {
+      send.disabled = false;
+      input.focus();
+    }
+  });
+</script>
+</body>
+</html>

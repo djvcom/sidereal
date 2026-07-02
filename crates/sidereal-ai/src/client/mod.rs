@@ -50,6 +50,39 @@ impl SiderealClient {
             .send()
             .await?;
 
+        Self::json_or_error(response).await
+    }
+
+    /// Issue a GET request against a query API path, returning JSON.
+    ///
+    /// Parameters with `None` values are omitted from the query string.
+    pub async fn get_json(
+        &self,
+        path: &str,
+        params: Vec<(&str, Option<String>)>,
+    ) -> Result<serde_json::Value, ClientError> {
+        let url = format!(
+            "{}/{}",
+            self.base_url.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        );
+        let query: Vec<(&str, String)> = params
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|value| (k, value)))
+            .collect();
+
+        let response = self
+            .http
+            .get(&url)
+            .query(&query)
+            .bearer_auth(&self.token)
+            .send()
+            .await?;
+
+        Self::json_or_error(response).await
+    }
+
+    async fn json_or_error(response: reqwest::Response) -> Result<serde_json::Value, ClientError> {
         if response.status() == StatusCode::OK {
             let value = response.json::<serde_json::Value>().await?;
             Ok(value)
