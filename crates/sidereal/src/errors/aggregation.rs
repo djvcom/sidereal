@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::{Array, BinaryArray, FixedSizeBinaryArray, StringArray, UInt64Array};
+use arrow::array::{
+    Array, BinaryArray, FixedSizeBinaryArray, Int64Array, StringArray, UInt64Array,
+};
 use chrono::{DateTime, TimeZone, Utc};
 
 use crate::query::QueryEngine;
@@ -106,11 +108,11 @@ impl ErrorAggregator {
 
             let counts = batch
                 .column_by_name("count")
-                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>());
+                .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
 
             let affected_traces = batch
                 .column_by_name("affected_traces")
-                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>());
+                .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
 
             let first_seen = batch
                 .column_by_name("first_seen_nanos")
@@ -164,8 +166,9 @@ impl ErrorAggregator {
                     }
                 });
 
-                let count = counts.map_or(0, |a| a.value(i));
-                let affected = affected_traces.map_or(0, |a| a.value(i));
+                let count = counts.map_or(0, |a| u64::try_from(a.value(i)).unwrap_or(0));
+                let affected =
+                    affected_traces.map_or(0, |a| u64::try_from(a.value(i)).unwrap_or(0));
 
                 let first_seen_ts =
                     first_seen.map_or_else(Utc::now, |a| nanos_to_datetime(a.value(i)));
@@ -406,7 +409,7 @@ impl ErrorAggregator {
             let buckets = batch.column_by_name("bucket");
             let counts = batch
                 .column_by_name("count")
-                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>());
+                .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
 
             let num_rows = batch.num_rows();
             for i in 0..num_rows {
@@ -414,7 +417,7 @@ impl ErrorAggregator {
                     .and_then(|c| extract_timestamp(c, i))
                     .unwrap_or_else(Utc::now);
 
-                let count = counts.map_or(0, |a| a.value(i));
+                let count = counts.map_or(0, |a| u64::try_from(a.value(i)).unwrap_or(0));
 
                 timeline.push((ts, count));
             }
@@ -437,10 +440,10 @@ impl ErrorAggregator {
         for batch in batches {
             if let Some(count_col) = batch
                 .column_by_name("error_count")
-                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
             {
                 if !count_col.is_null(0) {
-                    total_errors = count_col.value(0);
+                    total_errors = u64::try_from(count_col.value(0)).unwrap_or(0);
                 }
             }
         }
