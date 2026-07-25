@@ -156,6 +156,11 @@
               audience = "${cfg.auth.oidc.audience}"
               jwks_refresh_secs = ${toString cfg.auth.oidc.jwksRefreshSecs}
             ''}
+            ${lib.optionalString (cfg.retention.days != null) ''
+              [retention]
+              days = ${toString cfg.retention.days}
+              sweep_interval_secs = ${toString cfg.retention.sweepIntervalSecs}
+            ''}
           '';
 
           environmentFiles =
@@ -277,6 +282,25 @@
                 type = lib.types.int;
                 default = 3600;
                 description = "Interval in seconds at which the JWKS key cache is refreshed.";
+              };
+            };
+
+            retention = {
+              days = lib.mkOption {
+                type = lib.types.nullOr lib.types.int;
+                default = null;
+                description = ''
+                  Number of days of telemetry to keep. Date partitions older
+                  than this are deleted by a background sweep. Null keeps
+                  telemetry indefinitely.
+                '';
+                example = 30;
+              };
+
+              sweepIntervalSecs = lib.mkOption {
+                type = lib.types.int;
+                default = 3600;
+                description = "Interval in seconds between retention sweeps.";
               };
             };
           };

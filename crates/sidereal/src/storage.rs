@@ -12,10 +12,14 @@
 //! {signal}/date={YYYY-MM-DD}/hour={HH}/{ulid}.parquet
 //! ```
 //!
-//! This structure enables efficient time-based retention policies using native
-//! cloud storage lifecycle rules. **The recommended approach is to configure
-//! retention directly on the storage backend** rather than in the application,
-//! as this is more reliable and doesn't require the telemetry service to be running.
+//! This structure enables efficient time-based retention. **The built-in
+//! retention sweep is the recommended approach**: configure a `[retention]`
+//! section (see [`crate::config::RetentionConfig`]) and the server deletes
+//! expired date partitions on every backend, including local storage.
+//!
+//! Provider-side lifecycle rules remain an alternative for cloud object
+//! stores when retention should be enforced even while the telemetry
+//! service is not running.
 //!
 //! ## AWS S3 Lifecycle Rules
 //!
@@ -132,21 +136,8 @@
 //!
 //! ## Local Filesystem Retention
 //!
-//! For local storage, use a cron job with find:
-//!
-//! ```bash
-//! # Delete traces older than 7 days
-//! find /data/telemetry/traces -name "*.parquet" -mtime +7 -delete
-//!
-//! # Delete metrics older than 30 days
-//! find /data/telemetry/metrics -name "*.parquet" -mtime +30 -delete
-//!
-//! # Delete logs older than 14 days
-//! find /data/telemetry/logs -name "*.parquet" -mtime +14 -delete
-//!
-//! # Clean up empty date/hour directories
-//! find /data/telemetry -type d -empty -delete
-//! ```
+//! Local storage has no provider-side lifecycle mechanism; use the built-in
+//! `[retention]` configuration.
 //!
 //! ## S3-Compatible Services (MinIO, Garage, etc.)
 //!

@@ -25,6 +25,7 @@ pub mod errors;
 pub mod ingest;
 pub mod query;
 pub mod redact;
+pub mod retention;
 pub mod schema;
 pub mod storage;
 

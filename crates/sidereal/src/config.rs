@@ -66,6 +66,9 @@ pub const DEFAULT_QUERY_MEMORY_LIMIT: usize = 256 * 1024 * 1024;
 /// Default query timeout in seconds.
 pub const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 30;
 
+/// Default interval between retention sweeps in seconds.
+pub const DEFAULT_RETENTION_SWEEP_INTERVAL_SECS: u64 = 3_600;
+
 /// Telemetry service configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -84,6 +87,8 @@ pub struct TelemetryConfig {
     pub auth: AuthConfig,
     /// Query engine configuration.
     pub query: QueryConfig,
+    /// Retention configuration. Absent means telemetry is kept indefinitely.
+    pub retention: Option<RetentionConfig>,
 }
 
 impl TelemetryConfig {
@@ -337,6 +342,23 @@ impl Default for QueryConfig {
     }
 }
 
+/// Retention configuration for stored telemetry.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RetentionConfig {
+    /// Number of days of telemetry to keep.
+    ///
+    /// Date partitions dated more than this many days before the current
+    /// UTC date are deleted by the background retention sweep.
+    pub days: u32,
+    /// Interval between retention sweeps in seconds. Defaults to one hour.
+    #[serde(default = "default_retention_sweep_interval_secs")]
+    pub sweep_interval_secs: u64,
+}
+
+const fn default_retention_sweep_interval_secs() -> u64 {
+    DEFAULT_RETENTION_SWEEP_INTERVAL_SECS
+}
+
 /// Parquet file configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -373,6 +395,27 @@ mod tests {
         assert_eq!(config.server.grpc_addr.port(), DEFAULT_GRPC_PORT);
         assert_eq!(config.server.http_addr.port(), DEFAULT_HTTP_PORT);
         assert_eq!(config.server.query_addr.port(), DEFAULT_QUERY_PORT);
+    }
+
+    #[test]
+    fn retention_is_absent_by_default() {
+        let config = TelemetryConfig::default();
+        assert!(config.retention.is_none());
+    }
+
+    #[test]
+    fn retention_parses_with_a_defaulted_sweep_interval() {
+        let config: TelemetryConfig = figment::Figment::new()
+            .merge(figment::providers::Toml::string("[retention]\ndays = 30"))
+            .extract()
+            .unwrap();
+
+        let retention = config.retention.expect("retention should be present");
+        assert_eq!(retention.days, 30);
+        assert_eq!(
+            retention.sweep_interval_secs,
+            DEFAULT_RETENTION_SWEEP_INTERVAL_SECS
+        );
     }
 
     #[test]
