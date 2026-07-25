@@ -387,7 +387,8 @@
                 EnvironmentVariables = {
                   SIDEREAL_URL = cfg.sidereal.url;
                   SIDEREAL_LISTEN_ADDRESS = cfg.listenAddress;
-                } // lib.optionalAttrs cfg.auth.oidc.enable {
+                }
+                // lib.optionalAttrs cfg.auth.oidc.enable {
                   SIDEREAL_AI_OIDC_ISSUER = cfg.auth.oidc.issuer;
                   SIDEREAL_AI_OIDC_CLIENT_ID = cfg.auth.oidc.clientId;
                 };
@@ -409,7 +410,8 @@
                 Environment = [
                   "SIDEREAL_URL=${cfg.sidereal.url}"
                   "SIDEREAL_LISTEN_ADDRESS=${cfg.listenAddress}"
-                ] ++ lib.optionals cfg.auth.oidc.enable [
+                ]
+                ++ lib.optionals cfg.auth.oidc.enable [
                   "SIDEREAL_AI_OIDC_ISSUER=${cfg.auth.oidc.issuer}"
                   "SIDEREAL_AI_OIDC_CLIENT_ID=${cfg.auth.oidc.clientId}"
                 ];
@@ -421,26 +423,44 @@
           };
         };
 
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell (
-          {
-            packages = [
-              (rustToolchain pkgs)
-              pkgs.just
-              pkgs.pkg-config
-              pkgs.openssl
-              pkgs.nixfmt
-              pkgs.statix
-              pkgs.deadnix
-              pkgs.ollama
-              pkgs.jq
-            ];
+      devShells = forAllSystems (
+        pkgs:
+        let
+          rustShellEnv = {
             RUST_BACKTRACE = "1";
           }
           // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
             CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-Clinker-features=-lld -Clink-arg=-Wl,--copy-dt-needed-entries";
-          }
-        );
-      });
+          };
+
+          ciPackages = [
+            (rustToolchain pkgs)
+            pkgs.just
+            pkgs.pkg-config
+            pkgs.openssl
+          ];
+        in
+        {
+          default = pkgs.mkShell (
+            {
+              packages = ciPackages ++ [
+                pkgs.nixfmt
+                pkgs.statix
+                pkgs.deadnix
+                pkgs.ollama
+                pkgs.jq
+              ];
+            }
+            // rustShellEnv
+          );
+
+          ci = pkgs.mkShell (
+            {
+              packages = ciPackages;
+            }
+            // rustShellEnv
+          );
+        }
+      );
     };
 }

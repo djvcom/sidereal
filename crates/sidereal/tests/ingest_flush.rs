@@ -10,11 +10,13 @@ use std::sync::Arc;
 
 use object_store::memory::InMemory;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use sidereal::buffer::Ingester;
 use sidereal::config::{BufferConfig, ParquetConfig};
-use sidereal::ingest::{convert_logs_to_arrow, convert_traces_to_arrow};
+use sidereal::ingest::{convert_logs_to_arrow, convert_metrics_to_arrow, convert_traces_to_arrow};
 use sidereal::schema::logs::logs_storage_schema;
+use sidereal::schema::metrics::number_metrics_storage_schema;
 use sidereal::schema::traces::traces_storage_schema;
 use sidereal::storage::Signal;
 
@@ -43,6 +45,25 @@ const TRACE_JSON: &str = r#"{"resourceSpans":[{"resource":{"attributes":[
    "endTimeUnixNano":"1751400000300000000",
    "status":{"code":1}}
 ]}]}]}"#;
+
+const METRICS_JSON: &str = r#"{"resourceMetrics":[{"resource":{"attributes":[
+  {"key":"service.name","value":{"stringValue":"payments"}},
+  {"key":"service.version","value":{"stringValue":"1.4.1"}}
+]},"scopeMetrics":[{"metrics":[
+  {"name":"queue.depth","unit":"1","gauge":{"dataPoints":[
+    {"timeUnixNano":"1751400000000000000","asInt":"42"}
+  ]}}
+]}]}]}"#;
+
+#[test]
+fn converted_metrics_match_the_storage_schema() {
+    let request: ExportMetricsServiceRequest =
+        serde_json::from_str(METRICS_JSON).expect("OTLP JSON should decode");
+    let batch = convert_metrics_to_arrow(&request, None)
+        .expect("conversion should succeed")
+        .batch;
+    assert_eq!(batch.schema(), number_metrics_storage_schema());
+}
 
 #[test]
 fn converted_logs_match_the_storage_schema() {

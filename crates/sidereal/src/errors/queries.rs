@@ -294,10 +294,14 @@ impl ErrorTimelineQueryBuilder {
     }
 
     /// Build the SQL query.
+    ///
+    /// The timestamp column is cast to `BIGINT` before division: dividing an
+    /// unsigned column by a signed literal coerces both to `DECIMAL`, which
+    /// `to_timestamp` rejects at execution time.
     pub fn build(&self) -> String {
         let mut sql = String::from(
             r"SELECT
-    date_trunc('hour', to_timestamp(start_time_unix_nano / 1000000000)) AS bucket,
+    date_trunc('hour', to_timestamp(CAST(start_time_unix_nano AS BIGINT) / 1000000000)) AS bucket,
     COUNT(*) AS count
 FROM traces
 WHERE ",
