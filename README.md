@@ -6,6 +6,8 @@ Sidereal receives standard [OpenTelemetry](https://opentelemetry.io/) data via
 OTLP (gRPC and HTTP), converts it to [Apache Arrow](https://arrow.apache.org/)
 format, stores it as [Parquet](https://parquet.apache.org/) files on object
 storage, and queries it with [Apache DataFusion](https://datafusion.apache.org/).
+A companion service, `sidereal-ai`, answers natural-language questions about
+the stored telemetry using a model of your choosing.
 
 ```text
 OTLP gRPC (:4317) ─┐                                    ┌─ Object Storage
@@ -19,6 +21,10 @@ OTLP HTTP (:4318) ─┘                                    └─────�
                                                         ├── /sql
                                                         ├── /errors
                                                         └── /deployments
+                                                                 │
+                                                        sidereal-ai (:3200)
+                                                        ├── /ask
+                                                        └── chat page
 ```
 
 ## Quickstart
@@ -37,7 +43,7 @@ Once running, query the ingested data:
 ```sh
 curl -s http://localhost:3100/sql \
   -H 'Content-Type: application/json' \
-  -d '{"sql": "SELECT service_name, count(*) as span_count FROM traces GROUP BY service_name"}'
+  -d '{"sql": "SELECT \"service.name\", count(*) AS span_count FROM traces GROUP BY \"service.name\""}'
 ```
 
 ### From source
@@ -49,7 +55,7 @@ nix develop
 just run
 ```
 
-Or with a Rust toolchain (1.80+):
+Or with a Rust toolchain (1.95+):
 
 ```sh
 cargo run
@@ -59,6 +65,44 @@ Sidereal starts three servers on the default
 [OTLP ports](https://opentelemetry.io/docs/specs/otel/protocol/exporter/)
 and a query API on port 3100. Point any OpenTelemetry SDK or Collector at
 `localhost:4317` (gRPC) or `localhost:4318` (HTTP) to begin ingesting data.
+
+## Asking questions in natural language
+
+The `sidereal-ai` companion service turns questions like *"which services are
+erroring right now?"* or *"did error rates change after yesterday's payments
+deployment?"* into SQL and API calls against Sidereal, and answers with the
+evidence attached: every response lists the queries that produced it, so
+answers can be verified rather than trusted.
+
+Bring your own model — an Anthropic API key, a local
+[Ollama](https://ollama.com/) instance, or any OpenAI-compatible endpoint:
+
+```toml
+# ~/.config/sidereal-ai/config.toml
+
+[sidereal]
+url = "http://127.0.0.1:3100"
+
+[model]
+provider = "anthropic"        # or "ollama", "openai"
+# name = "claude-opus-4-8"    # defaults per provider
+# api_key = "sk-ant-..."      # falls back to ANTHROPIC_API_KEY
+# base_url = "..."            # for self-hosted endpoints
+```
+
+Run it and open the chat page at `http://127.0.0.1:3200`, or ask over HTTP:
+
+```sh
+cargo run -p sidereal-ai
+
+curl -s http://127.0.0.1:3200/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "Which services have the most errors in the last hour?"}'
+```
+
+Settings can also be provided as `SIDEREAL_AI_`-prefixed environment
+variables (e.g. `SIDEREAL_AI_MODEL_PROVIDER=ollama`). To see the whole
+loop working against generated telemetry, run `just ai-demo`.
 
 ## Configuration
 
@@ -97,11 +141,12 @@ timeout_secs = 30               # default
 
 ## Servers
 
-| Server    | Default port | Protocol | Purpose                           |
-|-----------|-------------|----------|-----------------------------------|
-| gRPC      | 4317        | tonic    | OTLP gRPC ingestion              |
-| HTTP OTLP | 4318        | axum     | OTLP HTTP ingestion              |
-| Query API | 3100        | axum     | SQL queries, errors, deployments  |
+| Server      | Default port | Protocol | Purpose                            |
+|-------------|-------------|----------|-------------------------------------|
+| gRPC        | 4317        | tonic    | OTLP gRPC ingestion                |
+| HTTP OTLP   | 4318        | axum     | OTLP HTTP ingestion                |
+| Query API   | 3100        | axum     | SQL queries, errors, deployments    |
+| sidereal-ai | 3200        | axum     | Natural-language questions, chat UI |
 
 ### Query API endpoints
 
@@ -161,12 +206,15 @@ days = 30
 - **Error tracking** — content-addressed fingerprinting, grouping, timeline,
   and cross-version comparison
 - **Deployment tracking** — correlate deployments with newly introduced errors
+- **Natural-language querying** — the `sidereal-ai` companion answers
+  questions over the stored telemetry with verifiable provenance, using
+  Anthropic, Ollama, or any OpenAI-compatible model
 - **Backpressure** — configurable buffer limits with 413/503 responses
 - **Graceful shutdown** — in-flight requests drain and buffers flush on SIGTERM
 
 ## Development
 
-Prerequisites: [Nix](https://nixos.org/) (recommended) or Rust 1.80+ with
+Prerequisites: [Nix](https://nixos.org/) (recommended) or Rust 1.95+ with
 `pkg-config` and `libssl-dev`.
 
 ```sh
@@ -175,6 +223,7 @@ just check           # format, lint, and test
 just test            # run tests only
 just lint            # clippy + nix linters
 just build           # build release binary
+just ai-demo         # end-to-end demo: ingest sample data, ask questions
 ```
 
 ## Licence
