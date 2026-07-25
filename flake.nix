@@ -398,6 +398,44 @@
                 example = "sidereal";
               };
             };
+
+            model = {
+              provider = lib.mkOption {
+                type = lib.types.enum [
+                  "anthropic"
+                  "ollama"
+                  "openai"
+                ];
+                default = "anthropic";
+                description = "Model provider backing the companion.";
+              };
+
+              name = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Model name. Each provider has a sensible default when null.";
+                example = "claude-opus-4-8";
+              };
+
+              baseUrl = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Base URL override for self-hosted or OpenAI-compatible endpoints.";
+                example = "http://127.0.0.1:11434";
+              };
+
+              environmentFile = lib.mkOption {
+                type = lib.types.nullOr lib.types.path;
+                default = null;
+                description = ''
+                  Environment file providing the model API key outside the Nix
+                  store, as SIDEREAL_AI_MODEL_API_KEY or a provider variable
+                  such as ANTHROPIC_API_KEY. Only applied to the systemd user
+                  service; on Darwin, set the key in the configuration file
+                  instead.
+                '';
+              };
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -411,6 +449,13 @@
                 EnvironmentVariables = {
                   SIDEREAL_URL = cfg.sidereal.url;
                   SIDEREAL_LISTEN_ADDRESS = cfg.listenAddress;
+                  SIDEREAL_AI_MODEL_PROVIDER = cfg.model.provider;
+                }
+                // lib.optionalAttrs (cfg.model.name != null) {
+                  SIDEREAL_AI_MODEL_NAME = cfg.model.name;
+                }
+                // lib.optionalAttrs (cfg.model.baseUrl != null) {
+                  SIDEREAL_AI_MODEL_BASE_URL = cfg.model.baseUrl;
                 }
                 // lib.optionalAttrs cfg.auth.oidc.enable {
                   SIDEREAL_AI_OIDC_ISSUER = cfg.auth.oidc.issuer;
@@ -434,12 +479,22 @@
                 Environment = [
                   "SIDEREAL_URL=${cfg.sidereal.url}"
                   "SIDEREAL_LISTEN_ADDRESS=${cfg.listenAddress}"
+                  "SIDEREAL_AI_MODEL_PROVIDER=${cfg.model.provider}"
+                ]
+                ++ lib.optionals (cfg.model.name != null) [
+                  "SIDEREAL_AI_MODEL_NAME=${cfg.model.name}"
+                ]
+                ++ lib.optionals (cfg.model.baseUrl != null) [
+                  "SIDEREAL_AI_MODEL_BASE_URL=${cfg.model.baseUrl}"
                 ]
                 ++ lib.optionals cfg.auth.oidc.enable [
                   "SIDEREAL_AI_OIDC_ISSUER=${cfg.auth.oidc.issuer}"
                   "SIDEREAL_AI_OIDC_CLIENT_ID=${cfg.auth.oidc.clientId}"
                 ];
                 Restart = "on-failure";
+              }
+              // lib.optionalAttrs (cfg.model.environmentFile != null) {
+                EnvironmentFile = cfg.model.environmentFile;
               };
 
               Install.WantedBy = [ "default.target" ];
