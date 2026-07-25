@@ -146,7 +146,9 @@ impl QueryEngineBuilder {
             // Enable repartitioning for joins (useful for trace correlation queries)
             .with_repartition_joins(true)
             // Use a reasonable batch size for telemetry data (balance memory vs performance)
-            .with_batch_size(DEFAULT_QUERY_BATCH_SIZE);
+            .with_batch_size(DEFAULT_QUERY_BATCH_SIZE)
+            // Expose information_schema so clients can discover tables and columns
+            .with_information_schema(true);
 
         let state = SessionStateBuilder::new_with_default_features()
             .with_config(config)
@@ -200,7 +202,8 @@ impl QueryEngine {
     /// rather than using the provided store. This is because DataFusion's URL-based store
     /// lookup requires the store to be registered at the URL scheme root for local paths.
     pub async fn new(store: Arc<dyn ObjectStore>, base_url: &str) -> Result<Self, TelemetryError> {
-        let ctx = SessionContext::new();
+        let ctx =
+            SessionContext::new_with_config(SessionConfig::new().with_information_schema(true));
         let url = Url::parse(base_url).map_err(TelemetryError::UrlParse)?;
 
         // Register custom UDFs for error tracking
@@ -551,6 +554,22 @@ mod tests {
             let result = engine.ctx.table_exist(TableReference::bare(table));
             assert!(result.unwrap_or(false), "Table '{table}' should exist");
         }
+    }
+
+    #[tokio::test]
+    async fn information_schema_exposes_table_columns() {
+        let (engine, _store) = setup_test_engine().await;
+
+        let results = engine
+            .query(
+                "SELECT column_name FROM information_schema.columns \
+                 WHERE table_name = 'traces' AND column_name = 'trace_id'",
+            )
+            .await
+            .unwrap();
+
+        let total_rows: usize = results.iter().map(RecordBatch::num_rows).sum();
+        assert_eq!(total_rows, 1, "traces.trace_id should be discoverable");
     }
 
     #[tokio::test]

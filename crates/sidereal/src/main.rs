@@ -20,7 +20,10 @@ use sidereal::{
     },
     query::{query_router, query_router_with_oidc, QueryApiState, QueryEngineBuilder},
     redact::RedactionEngine,
-    schema::{logs::logs_schema, metrics::number_metrics_schema, traces::traces_schema},
+    schema::{
+        logs::logs_storage_schema, metrics::number_metrics_storage_schema,
+        traces::traces_storage_schema,
+    },
     storage::{base_url, create_object_store, Signal},
     TelemetryConfig,
 };
@@ -206,7 +209,7 @@ fn create_ingesters(
 ) -> (Arc<Ingester>, Arc<Ingester>, Arc<Ingester>) {
     let trace_ingester = Arc::new(Ingester::new(
         Signal::Traces,
-        traces_schema(),
+        traces_storage_schema(),
         store.clone(),
         buffer_config.clone(),
         parquet_config.clone(),
@@ -214,7 +217,7 @@ fn create_ingesters(
 
     let metrics_ingester = Arc::new(Ingester::new(
         Signal::Metrics,
-        number_metrics_schema(),
+        number_metrics_storage_schema(),
         store.clone(),
         buffer_config.clone(),
         parquet_config.clone(),
@@ -222,7 +225,7 @@ fn create_ingesters(
 
     let logs_ingester = Arc::new(Ingester::new(
         Signal::Logs,
-        logs_schema(),
+        logs_storage_schema(),
         store,
         buffer_config.clone(),
         parquet_config.clone(),

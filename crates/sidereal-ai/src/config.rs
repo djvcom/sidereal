@@ -6,6 +6,10 @@
 //! Supported environment variables:
 //! - `SIDEREAL_AI_OIDC_ISSUER`
 //! - `SIDEREAL_AI_OIDC_CLIENT_ID`
+//! - `SIDEREAL_AI_MODEL_PROVIDER`
+//! - `SIDEREAL_AI_MODEL_NAME`
+//! - `SIDEREAL_AI_MODEL_API_KEY`
+//! - `SIDEREAL_AI_MODEL_BASE_URL`
 //! - `SIDEREAL_URL`
 //! - `SIDEREAL_LISTEN_ADDRESS`
 
@@ -17,11 +21,16 @@ use std::path::PathBuf;
 /// Top-level configuration.
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// OIDC authentication configuration.
-    pub oidc: OidcConfig,
+    /// OIDC authentication configuration. When absent, requests to the
+    /// Sidereal query API are sent unauthenticated, for servers running
+    /// without auth.
+    pub oidc: Option<OidcConfig>,
     /// Sidereal service configuration.
     pub sidereal: SiderealConfig,
-    /// Address for the future HTTP API to listen on.
+    /// Model provider configuration.
+    #[serde(default)]
+    pub model: ModelConfig,
+    /// Address for the HTTP API to listen on.
     #[serde(default = "default_listen_address")]
     pub listen_address: String,
 }
@@ -40,6 +49,34 @@ pub struct OidcConfig {
 pub struct SiderealConfig {
     /// Base URL of the Sidereal query API.
     pub url: String,
+}
+
+/// Model provider configuration.
+#[derive(Debug, Default, Deserialize)]
+pub struct ModelConfig {
+    /// Which provider to use.
+    #[serde(default)]
+    pub provider: ModelProvider,
+    /// Model name, e.g. `claude-opus-4-8`. Defaults per provider.
+    pub name: Option<String>,
+    /// API key. Falls back to the provider's conventional environment
+    /// variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) when unset.
+    pub api_key: Option<String>,
+    /// Base URL override, for self-hosted or OpenAI-compatible endpoints.
+    pub base_url: Option<String>,
+}
+
+/// Supported model providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelProvider {
+    /// The Anthropic API (default).
+    #[default]
+    Anthropic,
+    /// A self-hosted Ollama instance.
+    Ollama,
+    /// An `OpenAI`-compatible endpoint (`OpenAI` itself, vLLM, and similar).
+    Openai,
 }
 
 fn default_listen_address() -> String {
@@ -65,11 +102,17 @@ pub fn load() -> Result<Config, ConfigError> {
     let config_path = config_file_path();
     Figment::new()
         .merge(Toml::file(config_path))
-        .merge(Env::prefixed("SIDEREAL_AI_").map(|k| match k.as_str() {
-            "oidc_issuer" => "oidc.issuer".into(),
-            "oidc_client_id" => "oidc.client_id".into(),
-            other => other.into(),
-        }))
+        .merge(Env::prefixed("SIDEREAL_AI_").map(
+            |k| match k.as_str().to_ascii_lowercase().as_str() {
+                "oidc_issuer" => "oidc.issuer".into(),
+                "oidc_client_id" => "oidc.client_id".into(),
+                "model_provider" => "model.provider".into(),
+                "model_name" => "model.name".into(),
+                "model_api_key" => "model.api_key".into(),
+                "model_base_url" => "model.base_url".into(),
+                _ => k.into(),
+            },
+        ))
         .merge(Env::raw().map(|k| match k.as_str() {
             "SIDEREAL_URL" => "sidereal.url".into(),
             "SIDEREAL_LISTEN_ADDRESS" => "listen_address".into(),
@@ -96,4 +139,61 @@ fn xdg_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::result_large_err
+)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn environment_variables_override_model_configuration() {
+        figment::Jail::expect_with(|jail| {
+            let jail_dir = jail.directory().to_string_lossy().into_owned();
+            jail.set_env("XDG_CONFIG_HOME", jail_dir);
+            jail.set_env("SIDEREAL_URL", "http://localhost:13100");
+            jail.set_env("SIDEREAL_AI_MODEL_PROVIDER", "ollama");
+            jail.set_env("SIDEREAL_AI_MODEL_NAME", "qwen3:1.7b");
+
+            let config = load().expect("configuration should load from the environment");
+            assert_eq!(config.model.provider, ModelProvider::Ollama);
+            assert_eq!(config.model.name.as_deref(), Some("qwen3:1.7b"));
+            assert_eq!(config.sidereal.url, "http://localhost:13100");
+            assert!(config.oidc.is_none());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn model_config_defaults_to_anthropic() {
+        let config: ModelConfig = toml::from_str("").expect("empty model config should parse");
+        assert_eq!(config.provider, ModelProvider::Anthropic);
+        assert!(config.name.is_none());
+        assert!(config.api_key.is_none());
+        assert!(config.base_url.is_none());
+    }
+
+    #[test]
+    fn model_provider_parses_lowercase_names() {
+        let config: ModelConfig = toml::from_str(
+            r#"
+            provider = "ollama"
+            name = "qwen2.5:14b"
+            base_url = "http://localhost:11434"
+            "#,
+        )
+        .expect("ollama model config should parse");
+        assert_eq!(config.provider, ModelProvider::Ollama);
+        assert_eq!(config.name.as_deref(), Some("qwen2.5:14b"));
+    }
+
+    #[test]
+    fn model_provider_rejects_unknown_names() {
+        let result: Result<ModelConfig, _> = toml::from_str(r#"provider = "mystery""#);
+        assert!(result.is_err());
+    }
 }
