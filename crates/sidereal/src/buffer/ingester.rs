@@ -59,7 +59,6 @@ pub struct Ingester {
     buffer_bytes: AtomicUsize,
     store: Arc<dyn ObjectStore>,
     buffer_config: BufferConfig,
-    #[allow(dead_code)]
     parquet_config: ParquetConfig,
 }
 
@@ -153,14 +152,13 @@ impl Ingester {
 
     /// Flush the buffer to Parquet in object storage.
     ///
-    /// This method holds the buffer lock for the entire duration of the flush
-    /// to prevent TOCTOU races. Failed flushes are retried with exponential
-    /// backoff. If all retries are exhausted, data is restored to the buffer.
+    /// Buffered rows are grouped by the hour of their own timestamps and each
+    /// group is written to its matching partition, so partition-pruned queries
+    /// always see every row. This method holds the buffer lock for the entire
+    /// duration of the flush to prevent TOCTOU races. Failed writes are
+    /// retried with exponential backoff; batches that still fail are restored
+    /// to the buffer.
     pub async fn flush(&self) -> Result<(), TelemetryError> {
-        use parquet::arrow::AsyncArrowWriter;
-        use parquet::basic::{Compression, ZstdLevel};
-        use parquet::file::properties::WriterProperties;
-
         let mut buffer = self.buffer.write().await;
 
         if buffer.is_empty() {
@@ -168,11 +166,47 @@ impl Ingester {
         }
 
         let batches = std::mem::take(&mut *buffer);
-        let saved_rows = self.buffer_rows.swap(0, Ordering::SeqCst);
-        let saved_bytes = self.buffer_bytes.swap(0, Ordering::SeqCst);
+        self.buffer_rows.store(0, Ordering::SeqCst);
+        self.buffer_bytes.store(0, Ordering::SeqCst);
 
-        let partition_time = self.extract_partition_timestamp(&batches);
-        let path = crate::storage::partition_path(self.signal, partition_time, None);
+        let mut failed: Vec<RecordBatch> = Vec::new();
+        let mut last_error: Option<TelemetryError> = None;
+
+        for (partition_time, partition_batches) in self.partition_batches_by_hour(batches) {
+            let path = crate::storage::partition_path(self.signal, partition_time, None);
+            if let Err(e) = self.write_partition(&path, &partition_batches).await {
+                last_error = Some(e);
+                failed.extend(partition_batches);
+            }
+        }
+
+        if let Some(error) = last_error {
+            let restored_rows: usize = failed.iter().map(RecordBatch::num_rows).sum();
+            let restored_bytes: usize = failed.iter().map(RecordBatch::get_array_memory_size).sum();
+            tracing::error!(
+                signal = %self.signal,
+                rows = restored_rows,
+                "All flush retries exhausted, restoring unflushed batches to buffer"
+            );
+            *buffer = failed;
+            self.buffer_rows.store(restored_rows, Ordering::SeqCst);
+            self.buffer_bytes.store(restored_bytes, Ordering::SeqCst);
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
+    /// Write one partition's batches to a single Parquet file, retrying with
+    /// exponential backoff.
+    async fn write_partition(
+        &self,
+        path: &object_store::path::Path,
+        batches: &[RecordBatch],
+    ) -> Result<(), TelemetryError> {
+        use parquet::arrow::AsyncArrowWriter;
+        use parquet::basic::{Compression, ZstdLevel};
+        use parquet::file::properties::WriterProperties;
 
         let props = WriterProperties::builder()
             .set_compression(Compression::ZSTD(ZstdLevel::default()))
@@ -206,7 +240,7 @@ impl Ingester {
                     Some(props.clone()),
                 )?;
 
-                for batch in &batches {
+                for batch in batches {
                     writer.write(batch).await?;
                 }
 
@@ -228,7 +262,7 @@ impl Ingester {
 
             let upload_result: Result<_, TelemetryError> = self
                 .store
-                .put(&path, parquet_buffer.into())
+                .put(path, parquet_buffer.into())
                 .await
                 .map_err(Into::into);
 
@@ -238,7 +272,7 @@ impl Ingester {
                         signal = %self.signal,
                         path = %path,
                         attempts = attempt + 1,
-                        "Flushed buffer to Parquet"
+                        "Flushed partition to Parquet"
                     );
                     return Ok(());
                 }
@@ -253,15 +287,6 @@ impl Ingester {
                 }
             }
         }
-
-        tracing::error!(
-            signal = %self.signal,
-            attempts = max_retries + 1,
-            "All flush retries exhausted, restoring buffer"
-        );
-        *buffer = batches;
-        self.buffer_rows.store(saved_rows, Ordering::SeqCst);
-        self.buffer_bytes.store(saved_bytes, Ordering::SeqCst);
 
         Err(
             last_error.unwrap_or_else(|| TelemetryError::BufferOverflow {
@@ -290,54 +315,106 @@ impl Ingester {
         self.signal
     }
 
-    /// Extract the earliest timestamp from the batches for partitioning.
+    /// Group buffered batches by the hour of each row's own timestamp.
     ///
-    /// Uses the data's own timestamp (not ingestion time) to ensure correct
-    /// partitioning for out-of-order data. Falls back to current time if no
-    /// timestamp can be extracted.
-    fn extract_partition_timestamp(
+    /// Every group maps to exactly one `date=/hour=` partition, so a buffer
+    /// spanning an hour boundary produces one file per hour rather than a
+    /// single file whose rows partly sit in a partition that queries would
+    /// prune away. Batches without a usable timestamp column, and rows with
+    /// null timestamps, are grouped under the current hour.
+    fn partition_batches_by_hour(
         &self,
-        batches: &[RecordBatch],
-    ) -> chrono::DateTime<chrono::Utc> {
-        use arrow::array::{Array, UInt64Array};
+        batches: Vec<RecordBatch>,
+    ) -> Vec<(chrono::DateTime<chrono::Utc>, Vec<RecordBatch>)> {
+        use std::collections::BTreeMap;
+
+        use arrow::array::{Array, BooleanArray, UInt64Array};
         use chrono::{TimeZone, Utc};
+
+        const NANOS_PER_HOUR: u64 = 3_600_000_000_000;
+        const SECONDS_PER_HOUR: i64 = 3_600;
 
         let timestamp_column = match self.signal {
             Signal::Traces => "start_time_unix_nano",
             Signal::Metrics | Signal::Logs => "time_unix_nano",
         };
 
-        let min_nanos = batches
-            .iter()
-            .filter_map(|batch| batch.column_by_name(timestamp_column))
-            .filter_map(|col| col.as_any().downcast_ref::<UInt64Array>())
-            .flat_map(|arr| {
-                (0..arr.len()).filter_map(|i| {
-                    if arr.is_null(i) {
-                        None
-                    } else {
-                        Some(arr.value(i))
-                    }
-                })
-            })
-            .min();
+        let fallback_hour = Utc::now().timestamp().div_euclid(SECONDS_PER_HOUR);
+        let mut groups: BTreeMap<i64, Vec<RecordBatch>> = BTreeMap::new();
 
-        match min_nanos {
-            Some(nanos) => {
-                #[allow(
-                    clippy::cast_possible_wrap,
-                    clippy::cast_possible_truncation,
-                    clippy::as_conversions
-                )]
-                let secs = (nanos / 1_000_000_000) as i64;
-                #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
-                let nsecs = (nanos % 1_000_000_000) as u32;
-                Utc.timestamp_opt(secs, nsecs)
-                    .single()
-                    .unwrap_or_else(Utc::now)
+        for batch in batches {
+            if batch.num_rows() == 0 {
+                continue;
             }
-            None => Utc::now(),
+
+            let Some(timestamps) = batch
+                .column_by_name(timestamp_column)
+                .and_then(|col| col.as_any().downcast_ref::<UInt64Array>())
+                .cloned()
+            else {
+                groups.entry(fallback_hour).or_default().push(batch);
+                continue;
+            };
+
+            let hour_of_row = |i: usize| -> i64 {
+                if timestamps.is_null(i) {
+                    fallback_hour
+                } else {
+                    i64::try_from(timestamps.value(i) / NANOS_PER_HOUR).unwrap_or(fallback_hour)
+                }
+            };
+
+            let hours: Vec<i64> = (0..batch.num_rows()).map(hour_of_row).collect();
+            let mut distinct_hours = hours.clone();
+            distinct_hours.sort_unstable();
+            distinct_hours.dedup();
+
+            if let [only_hour] = distinct_hours.as_slice() {
+                groups.entry(*only_hour).or_default().push(batch);
+                continue;
+            }
+
+            let mut split: Vec<(i64, RecordBatch)> = Vec::with_capacity(distinct_hours.len());
+            let mut split_error = None;
+            for hour in distinct_hours {
+                let mask: BooleanArray = hours.iter().map(|h| Some(*h == hour)).collect();
+                match arrow::compute::filter_record_batch(&batch, &mask) {
+                    Ok(filtered) => split.push((hour, filtered)),
+                    Err(e) => {
+                        split_error = Some(e);
+                        break;
+                    }
+                }
+            }
+
+            match split_error {
+                None => {
+                    for (hour, filtered) in split {
+                        groups.entry(hour).or_default().push(filtered);
+                    }
+                }
+                Some(e) => {
+                    tracing::error!(
+                        signal = %self.signal,
+                        error = %e,
+                        "Failed to split batch by hour, keeping it whole"
+                    );
+                    let earliest_hour = hours.iter().copied().min().unwrap_or(fallback_hour);
+                    groups.entry(earliest_hour).or_default().push(batch);
+                }
+            }
         }
+
+        groups
+            .into_iter()
+            .map(|(hour, batches)| {
+                let partition_time = Utc
+                    .timestamp_opt(hour.saturating_mul(SECONDS_PER_HOUR), 0)
+                    .single()
+                    .unwrap_or_else(Utc::now);
+                (partition_time, batches)
+            })
+            .collect()
     }
 }
 
