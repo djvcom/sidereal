@@ -137,9 +137,16 @@ partition pruning on time-range queries.
 | Azure   | `azure`     | `--features azure` | Production (Azure Blob Storage)  |
 | Memory  | `memory`    | *(default)*       | Testing only                      |
 
-Retention is managed by the storage backend's lifecycle policies. See
-[`storage.rs`](src/storage.rs) for detailed examples of configuring
-retention rules for each backend.
+Retention is built in: configure a `[retention]` section and a background
+sweep deletes date partitions older than the configured number of days on
+any backend. Provider lifecycle rules remain an alternative for cloud
+object stores; see [`storage.rs`](crates/sidereal/src/storage.rs) for
+examples.
+
+```toml
+[retention]
+days = 30
+```
 
 ## Features
 

@@ -80,3 +80,12 @@ path = "./telemetry-data"
 # Can also be set via TELEMETRY_AUTH_API_KEY environment variable.
 # [auth]
 # api_key = "your-secret-api-key"
+
+# Retention (optional)
+# When set, a background sweep deletes date partitions dated more than
+# this many days before the current UTC date. Absent means telemetry is
+# kept indefinitely.
+# [retention]
+# days = 30
+# Interval between sweeps in seconds (default: 3600)
+# sweep_interval_secs = 3600

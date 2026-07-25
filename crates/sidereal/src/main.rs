@@ -20,6 +20,7 @@ use sidereal::{
     },
     query::{query_router, query_router_with_oidc, QueryApiState, QueryEngineBuilder},
     redact::RedactionEngine,
+    retention::{start_background_retention, RetentionSweeper},
     schema::{
         logs::logs_storage_schema, metrics::number_metrics_storage_schema,
         traces::traces_storage_schema,
@@ -58,6 +59,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (trace_ingester, metrics_ingester, logs_ingester) =
         create_ingesters(store.clone(), &config.buffer, &config.parquet);
     let flush_handles = start_flush_tasks(&trace_ingester, &metrics_ingester, &logs_ingester);
+
+    let retention_handle = config.retention.as_ref().map(|retention| {
+        let sweeper = Arc::new(RetentionSweeper::new(store.clone(), retention.days));
+        start_background_retention(sweeper, retention)
+    });
 
     let query_engine = Arc::new(
         QueryEngineBuilder::new(store.clone(), &base_url_str)
@@ -194,6 +200,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Shutting down background tasks");
     for handle in flush_handles {
+        handle.shutdown().await;
+    }
+    if let Some(handle) = retention_handle {
         handle.shutdown().await;
     }
 
