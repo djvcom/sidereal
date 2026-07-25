@@ -592,21 +592,38 @@ fn nanos_to_datetime(nanos: u64) -> DateTime<Utc> {
 }
 
 fn extract_timestamp(array: &dyn Array, index: usize) -> Option<DateTime<Utc>> {
-    use arrow::array::TimestampSecondArray;
-    use arrow::datatypes::DataType;
+    use arrow::array::{
+        TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
+        TimestampSecondArray,
+    };
+    use arrow::datatypes::{DataType, TimeUnit};
 
     if array.is_null(index) {
         return None;
     }
 
-    if let DataType::Timestamp(_, _) = array.data_type() {
-        if let Some(ts_array) = array.as_any().downcast_ref::<TimestampSecondArray>() {
-            let secs = ts_array.value(index);
-            return Utc.timestamp_opt(secs, 0).single();
-        }
-    }
+    let DataType::Timestamp(unit, _) = array.data_type() else {
+        return None;
+    };
 
-    None
+    match unit {
+        TimeUnit::Second => array
+            .as_any()
+            .downcast_ref::<TimestampSecondArray>()
+            .and_then(|a| DateTime::from_timestamp(a.value(index), 0)),
+        TimeUnit::Millisecond => array
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .and_then(|a| DateTime::from_timestamp_millis(a.value(index))),
+        TimeUnit::Microsecond => array
+            .as_any()
+            .downcast_ref::<TimestampMicrosecondArray>()
+            .and_then(|a| DateTime::from_timestamp_micros(a.value(index))),
+        TimeUnit::Nanosecond => array
+            .as_any()
+            .downcast_ref::<TimestampNanosecondArray>()
+            .map(|a| DateTime::from_timestamp_nanos(a.value(index))),
+    }
 }
 
 fn decode_cbor_attributes(bytes: &[u8]) -> Option<HashMap<String, String>> {
