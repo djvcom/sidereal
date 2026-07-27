@@ -117,6 +117,7 @@ pub fn test_config(
         auth: AuthConfig::default(),
         query: QueryConfig::default(),
         retention: None,
+        wal: None,
     };
     (config, temp_dir)
 }
@@ -138,6 +139,7 @@ pub fn memory_test_config(
         auth: AuthConfig::default(),
         query: QueryConfig::default(),
         retention: None,
+        wal: None,
     }
 }
 
@@ -328,6 +330,7 @@ impl TestEnv {
             auth: AuthConfig::default(),
             query: QueryConfig::default(),
             retention: None,
+            wal: None,
         };
 
         Self {

@@ -15,6 +15,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::{BufferConfig, ParquetConfig};
 use crate::storage::Signal;
+use crate::wal::Wal;
 use crate::TelemetryError;
 
 /// Calculate exponential backoff delay for retry attempts.
@@ -60,6 +61,7 @@ pub struct Ingester {
     store: Arc<dyn ObjectStore>,
     buffer_config: BufferConfig,
     parquet_config: ParquetConfig,
+    wal: Option<Wal>,
 }
 
 impl Ingester {
@@ -80,7 +82,79 @@ impl Ingester {
             store,
             buffer_config,
             parquet_config,
+            wal: None,
         }
+    }
+
+    /// Attach a write-ahead log so acknowledged batches survive a crash.
+    ///
+    /// Batches are logged before they enter the buffer, and log segments are
+    /// removed once a flush confirms their contents in object storage. Call
+    /// [`Ingester::recover_from_wal`] after construction to replay anything a
+    /// previous process left behind.
+    #[must_use]
+    pub fn with_wal(mut self, wal: Wal) -> Self {
+        self.wal = Some(wal);
+        self
+    }
+
+    /// Replay batches from sealed WAL segments into the buffer.
+    ///
+    /// Returns the number of recovered rows. Batches whose schema no longer
+    /// matches the ingester's are skipped with a warning. Replayed segments
+    /// stay on disk until the next successful flush confirms their data in
+    /// object storage, so a crash during recovery cannot lose them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log directory or a segment file cannot be
+    /// read.
+    pub async fn recover_from_wal(&self) -> Result<usize, TelemetryError> {
+        let Some(wal) = &self.wal else {
+            return Ok(0);
+        };
+
+        let segments = wal.sealed_segments().await?;
+        if segments.is_empty() {
+            return Ok(0);
+        }
+
+        let mut buffer = self.buffer.write().await;
+        let mut recovered_rows = 0usize;
+        let mut recovered_bytes = 0usize;
+        for segment in &segments {
+            for batch in wal.read_segment(segment)? {
+                if batch.schema() != self.schema {
+                    tracing::warn!(
+                        signal = %self.signal,
+                        segment = %segment.display(),
+                        "Skipping WAL batch with a mismatched schema"
+                    );
+                    continue;
+                }
+                recovered_rows += batch.num_rows();
+                recovered_bytes += batch
+                    .columns()
+                    .iter()
+                    .map(|c| c.get_buffer_memory_size())
+                    .sum::<usize>();
+                buffer.push(batch);
+            }
+        }
+
+        self.buffer_rows.fetch_add(recovered_rows, Ordering::SeqCst);
+        self.buffer_bytes
+            .fetch_add(recovered_bytes, Ordering::SeqCst);
+
+        if recovered_rows > 0 {
+            tracing::info!(
+                signal = %self.signal,
+                rows = recovered_rows,
+                segments = segments.len(),
+                "Recovered unflushed rows from the write-ahead log"
+            );
+        }
+        Ok(recovered_rows)
     }
 
     /// Ingest a record batch into the buffer.
@@ -101,7 +175,7 @@ impl Ingester {
 
         let new_rows = self
             .append_batch_with_consistent_counters(batch, batch_rows, batch_bytes)
-            .await;
+            .await?;
 
         if new_rows >= self.buffer_config.max_batch_size {
             self.flush().await?;
@@ -137,17 +211,24 @@ impl Ingester {
     /// Append a batch to the buffer while keeping counters consistent with buffer contents.
     ///
     /// Counters are updated while holding the write lock to ensure `buffered_rows()`
-    /// and `buffered_bytes()` always reflect the actual buffer state.
+    /// and `buffered_bytes()` always reflect the actual buffer state. When a WAL is
+    /// attached the batch is logged first, still under the buffer lock, so a flush
+    /// can never seal the log between a batch being logged and it entering the
+    /// buffer. A WAL failure rejects the batch entirely: nothing is buffered, and
+    /// the client sees the error rather than a false acknowledgement.
     async fn append_batch_with_consistent_counters(
         &self,
         batch: RecordBatch,
         batch_rows: usize,
         batch_bytes: usize,
-    ) -> usize {
+    ) -> Result<usize, TelemetryError> {
         let mut buffer = self.buffer.write().await;
+        if let Some(wal) = &self.wal {
+            wal.append(&batch).await?;
+        }
         buffer.push(batch);
         self.buffer_bytes.fetch_add(batch_bytes, Ordering::SeqCst);
-        self.buffer_rows.fetch_add(batch_rows, Ordering::SeqCst) + batch_rows
+        Ok(self.buffer_rows.fetch_add(batch_rows, Ordering::SeqCst) + batch_rows)
     }
 
     /// Flush the buffer to Parquet in object storage.
@@ -168,6 +249,21 @@ impl Ingester {
         let batches = std::mem::take(&mut *buffer);
         self.buffer_rows.store(0, Ordering::SeqCst);
         self.buffer_bytes.store(0, Ordering::SeqCst);
+
+        let sealed_segments = match &self.wal {
+            Some(wal) => match wal.seal_and_rotate().await {
+                Ok(sealed) => sealed,
+                Err(e) => {
+                    tracing::error!(
+                        signal = %self.signal,
+                        error = %e,
+                        "Failed to rotate the WAL; retaining existing segments"
+                    );
+                    Vec::new()
+                }
+            },
+            None => Vec::new(),
+        };
 
         let mut failed: Vec<RecordBatch> = Vec::new();
         let mut last_error: Option<TelemetryError> = None;
@@ -191,10 +287,46 @@ impl Ingester {
             *buffer = failed;
             self.buffer_rows.store(restored_rows, Ordering::SeqCst);
             self.buffer_bytes.store(restored_bytes, Ordering::SeqCst);
+            self.relog_restored_batches(&buffer, &sealed_segments).await;
             return Err(error);
         }
 
+        if let Some(wal) = &self.wal {
+            wal.remove_segments(&sealed_segments);
+        }
+
         Ok(())
+    }
+
+    /// Keep restored batches durable after a failed flush.
+    ///
+    /// The restored batches live in sealed segments that would normally be
+    /// removed on the next successful flush, which will also carry these
+    /// batches. Re-logging them into the fresh active segment keeps the
+    /// invariant that the buffer's contents are always covered by segments a
+    /// flush has not yet removed; only then are the sealed segments deleted.
+    /// If re-logging fails the sealed segments are retained instead, trading
+    /// a possible duplicate replay for guaranteed durability.
+    async fn relog_restored_batches(
+        &self,
+        restored: &[RecordBatch],
+        sealed_segments: &[std::path::PathBuf],
+    ) {
+        let Some(wal) = &self.wal else {
+            return;
+        };
+
+        for batch in restored {
+            if let Err(e) = wal.append(batch).await {
+                tracing::error!(
+                    signal = %self.signal,
+                    error = %e,
+                    "Failed to re-log restored batches; retaining sealed WAL segments"
+                );
+                return;
+            }
+        }
+        wal.remove_segments(sealed_segments);
     }
 
     /// Write one partition's batches to a single Parquet file, retrying with
@@ -974,6 +1106,96 @@ mod tests {
             }
             other => panic!("expected RequestTooLarge, got {other:?}"),
         }
+    }
+
+    fn wal_segment_count(root: &std::path::Path, signal: Signal) -> usize {
+        std::fs::read_dir(root.join(signal.as_str()))
+            .map(|entries| entries.count())
+            .unwrap_or(0)
+    }
+
+    #[tokio::test]
+    async fn wal_replay_restores_unflushed_batches_after_a_crash() {
+        use crate::wal::Wal;
+        use object_store::ObjectStore;
+
+        let root = tempfile::tempdir().unwrap();
+        let schema = test_schema();
+        let store = Arc::new(InMemory::new());
+        let config = test_buffer_config(1000, 10 * 1024 * 1024);
+        let parquet_config = ParquetConfig {
+            row_group_size: 1000,
+            compression: "zstd".to_owned(),
+        };
+
+        let crashed = Ingester::new(
+            Signal::Traces,
+            schema.clone(),
+            store.clone(),
+            config.clone(),
+            parquet_config.clone(),
+        )
+        .with_wal(Wal::open(root.path(), Signal::Traces, schema.clone(), false).unwrap());
+
+        crashed.ingest(test_batch(&schema, 10)).await.unwrap();
+        crashed.ingest(test_batch(&schema, 15)).await.unwrap();
+        drop(crashed);
+
+        let recovered = Ingester::new(
+            Signal::Traces,
+            schema.clone(),
+            store.clone(),
+            config,
+            parquet_config,
+        )
+        .with_wal(Wal::open(root.path(), Signal::Traces, schema.clone(), false).unwrap());
+
+        let rows = recovered.recover_from_wal().await.unwrap();
+        assert_eq!(rows, 25);
+        assert_eq!(recovered.buffered_rows(), 25);
+
+        recovered.flush().await.unwrap();
+        assert_eq!(recovered.buffered_rows(), 0);
+
+        let files: Vec<_> = store.list(None).collect::<Vec<_>>().await;
+        assert_eq!(files.len(), 1, "recovered rows should reach object storage");
+        assert_eq!(
+            wal_segment_count(root.path(), Signal::Traces),
+            1,
+            "only the fresh active segment should remain after the flush"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_removes_sealed_wal_segments() {
+        use crate::wal::Wal;
+
+        let root = tempfile::tempdir().unwrap();
+        let schema = test_schema();
+        let store = Arc::new(InMemory::new());
+        let config = test_buffer_config(1000, 10 * 1024 * 1024);
+        let parquet_config = ParquetConfig {
+            row_group_size: 1000,
+            compression: "zstd".to_owned(),
+        };
+
+        let ingester = Ingester::new(Signal::Logs, schema.clone(), store, config, parquet_config)
+            .with_wal(Wal::open(root.path(), Signal::Logs, schema.clone(), false).unwrap());
+
+        ingester.ingest(test_batch(&schema, 10)).await.unwrap();
+        assert_eq!(
+            wal_segment_count(root.path(), Signal::Logs),
+            1,
+            "ingested batches should be logged in the active segment"
+        );
+
+        ingester.flush().await.unwrap();
+        assert_eq!(
+            wal_segment_count(root.path(), Signal::Logs),
+            1,
+            "the sealed segment should be removed once its data is flushed"
+        );
+        assert_eq!(ingester.recover_from_wal().await.unwrap(), 0);
     }
 
     /// Test multiple concurrent ingests race safely

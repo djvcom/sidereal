@@ -89,3 +89,16 @@ path = "./telemetry-data"
 # days = 30
 # Interval between sweeps in seconds (default: 3600)
 # sweep_interval_secs = 3600
+
+# Write-ahead log (optional)
+# When set, buffered telemetry is appended to local log segments before
+# it is acknowledged, so a crash cannot lose data that has not yet been
+# flushed to object storage. Segments are removed automatically once
+# their contents are confirmed in object storage.
+# [wal]
+# path = "/var/lib/sidereal/wal"
+# Synchronise every append to disk before acknowledging it. Off (the
+# default), appends survive a process crash but not necessarily host
+# power loss; on, the guarantee extends to power loss at a per-append
+# latency cost.
+# fsync = false
