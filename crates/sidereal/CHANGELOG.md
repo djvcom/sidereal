@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/djvcom/sidereal/compare/sidereal-v0.1.0...sidereal-v0.2.0) - 2026-07-27
+
+### Added
+
+- *(buffer)* add write-ahead log for crash-safe ingestion
+
+### Other
+
+- release v0.1.0
+
 ## [0.1.0](https://github.com/djvcom/sidereal/releases/tag/sidereal-v0.1.0) - 2026-07-25
 
 ### Added
