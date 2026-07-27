@@ -193,6 +193,17 @@ examples.
 days = 30
 ```
 
+Crash safety is built in too: configure a `[wal]` section and buffered
+telemetry is appended to a local write-ahead log before it is
+acknowledged, then replayed on startup if the process died before a
+flush. Segments are removed automatically once their contents are
+confirmed in object storage.
+
+```toml
+[wal]
+path = "/var/lib/sidereal/wal"
+```
+
 ## Features
 
 - **OTLP ingestion** — gRPC and HTTP with protobuf and JSON content types
@@ -209,6 +220,8 @@ days = 30
 - **Natural-language querying** — the `sidereal-ai` companion answers
   questions over the stored telemetry with verifiable provenance, using
   Anthropic, Ollama, or any OpenAI-compatible model
+- **Crash safety** — optional write-ahead log makes acknowledged telemetry
+  survive a crash, with automatic replay on startup
 - **Backpressure** — configurable buffer limits with 413/503 responses
 - **Graceful shutdown** — in-flight requests drain and buffers flush on SIGTERM
 

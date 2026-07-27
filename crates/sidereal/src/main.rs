@@ -11,7 +11,7 @@ use std::time::Duration;
 use sidereal::{
     auth::{grpc_auth_interceptor, OidcValidator},
     buffer::{start_background_flush, FlushHandle, Ingester},
-    config::{BufferConfig, ParquetConfig},
+    config::{BufferConfig, ParquetConfig, WalConfig},
     deployments::{deployment_router, DeploymentApiState},
     errors::{error_router, ErrorApiState},
     ingest::{
@@ -26,6 +26,7 @@ use sidereal::{
         traces::traces_storage_schema,
     },
     storage::{base_url, create_object_store, Signal},
+    wal::Wal,
     TelemetryConfig,
 };
 use tokio::signal;
@@ -56,8 +57,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let base_url_str = base_url(&config.storage);
     tracing::info!(base_url = %base_url_str, "Object store created");
 
-    let (trace_ingester, metrics_ingester, logs_ingester) =
-        create_ingesters(store.clone(), &config.buffer, &config.parquet);
+    if let Some(wal) = &config.wal {
+        tracing::info!(
+            path = %wal.path.display(),
+            fsync = wal.fsync,
+            "Write-ahead log enabled"
+        );
+    } else {
+        tracing::warn!("Write-ahead log disabled — buffered telemetry is lost on crash");
+    }
+
+    let (trace_ingester, metrics_ingester, logs_ingester) = create_ingesters(
+        store.clone(),
+        &config.buffer,
+        &config.parquet,
+        config.wal.as_ref(),
+    )?;
+
+    for ingester in [&trace_ingester, &metrics_ingester, &logs_ingester] {
+        ingester.recover_from_wal().await?;
+    }
+
     let flush_handles = start_flush_tasks(&trace_ingester, &metrics_ingester, &logs_ingester);
 
     let retention_handle = config.retention.as_ref().map(|retention| {
@@ -210,37 +230,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Create ingesters for all signal types.
+/// Create ingesters for all signal types, attaching a write-ahead log when
+/// one is configured.
 fn create_ingesters(
     store: Arc<dyn object_store::ObjectStore>,
     buffer_config: &BufferConfig,
     parquet_config: &ParquetConfig,
-) -> (Arc<Ingester>, Arc<Ingester>, Arc<Ingester>) {
-    let trace_ingester = Arc::new(Ingester::new(
-        Signal::Traces,
-        traces_storage_schema(),
-        store.clone(),
-        buffer_config.clone(),
-        parquet_config.clone(),
-    ));
+    wal_config: Option<&WalConfig>,
+) -> Result<(Arc<Ingester>, Arc<Ingester>, Arc<Ingester>), sidereal::TelemetryError> {
+    let create = |signal: Signal,
+                  schema: arrow::datatypes::SchemaRef|
+     -> Result<Arc<Ingester>, sidereal::TelemetryError> {
+        let ingester = Ingester::new(
+            signal,
+            schema.clone(),
+            store.clone(),
+            buffer_config.clone(),
+            parquet_config.clone(),
+        );
+        let ingester = match wal_config {
+            Some(wal) => ingester.with_wal(Wal::open(&wal.path, signal, schema, wal.fsync)?),
+            None => ingester,
+        };
+        Ok(Arc::new(ingester))
+    };
 
-    let metrics_ingester = Arc::new(Ingester::new(
-        Signal::Metrics,
-        number_metrics_storage_schema(),
-        store.clone(),
-        buffer_config.clone(),
-        parquet_config.clone(),
-    ));
-
-    let logs_ingester = Arc::new(Ingester::new(
-        Signal::Logs,
-        logs_storage_schema(),
-        store,
-        buffer_config.clone(),
-        parquet_config.clone(),
-    ));
-
-    (trace_ingester, metrics_ingester, logs_ingester)
+    Ok((
+        create(Signal::Traces, traces_storage_schema())?,
+        create(Signal::Metrics, number_metrics_storage_schema())?,
+        create(Signal::Logs, logs_storage_schema())?,
+    ))
 }
 
 /// Start background flush tasks for all ingesters.

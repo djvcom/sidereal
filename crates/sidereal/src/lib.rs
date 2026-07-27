@@ -28,6 +28,7 @@ pub mod redact;
 pub mod retention;
 pub mod schema;
 pub mod storage;
+pub mod wal;
 
 #[cfg(test)]
 #[allow(

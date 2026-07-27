@@ -161,6 +161,11 @@
               days = ${toString cfg.retention.days}
               sweep_interval_secs = ${toString cfg.retention.sweepIntervalSecs}
             ''}
+            ${lib.optionalString cfg.wal.enable ''
+              [wal]
+              path = "${cfg.wal.path}"
+              fsync = ${lib.boolToString cfg.wal.fsync}
+            ''}
           '';
 
           environmentFiles =
@@ -301,6 +306,35 @@
                 type = lib.types.int;
                 default = 3600;
                 description = "Interval in seconds between retention sweeps.";
+              };
+            };
+
+            wal = {
+              enable = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = ''
+                  Whether to write buffered telemetry to a local write-ahead
+                  log before acknowledging it, so a crash cannot lose data
+                  that has not yet been flushed to object storage.
+                '';
+              };
+
+              path = lib.mkOption {
+                type = lib.types.str;
+                default = "/var/lib/sidereal/wal";
+                description = "Directory for write-ahead log segments.";
+              };
+
+              fsync = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                  Whether to synchronise every append to disk before
+                  acknowledging it. Off, appends survive a process crash but
+                  not necessarily host power loss; on, the guarantee extends
+                  to power loss at a per-append latency cost.
+                '';
               };
             };
           };

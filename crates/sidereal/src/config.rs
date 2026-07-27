@@ -89,6 +89,9 @@ pub struct TelemetryConfig {
     pub query: QueryConfig,
     /// Retention configuration. Absent means telemetry is kept indefinitely.
     pub retention: Option<RetentionConfig>,
+    /// Write-ahead log configuration. Absent means acknowledged telemetry is
+    /// only durable once flushed to object storage.
+    pub wal: Option<WalConfig>,
 }
 
 impl TelemetryConfig {
@@ -359,6 +362,20 @@ const fn default_retention_sweep_interval_secs() -> u64 {
     DEFAULT_RETENTION_SWEEP_INTERVAL_SECS
 }
 
+/// Write-ahead log configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WalConfig {
+    /// Directory for WAL segments, with one subdirectory per signal.
+    pub path: PathBuf,
+    /// Synchronise every append to disk before acknowledging it.
+    ///
+    /// Disabled by default: appends then survive a process crash but not
+    /// necessarily host power loss. Enabling it extends the guarantee to
+    /// power loss at a per-append latency cost.
+    #[serde(default)]
+    pub fsync: bool,
+}
+
 /// Parquet file configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -416,6 +433,26 @@ mod tests {
             retention.sweep_interval_secs,
             DEFAULT_RETENTION_SWEEP_INTERVAL_SECS
         );
+    }
+
+    #[test]
+    fn wal_is_absent_by_default() {
+        let config = TelemetryConfig::default();
+        assert!(config.wal.is_none());
+    }
+
+    #[test]
+    fn wal_parses_with_fsync_defaulted_off() {
+        let config: TelemetryConfig = figment::Figment::new()
+            .merge(figment::providers::Toml::string(
+                "[wal]\npath = \"/var/lib/sidereal/wal\"",
+            ))
+            .extract()
+            .unwrap();
+
+        let wal = config.wal.expect("wal should be present");
+        assert_eq!(wal.path, PathBuf::from("/var/lib/sidereal/wal"));
+        assert!(!wal.fsync);
     }
 
     #[test]
