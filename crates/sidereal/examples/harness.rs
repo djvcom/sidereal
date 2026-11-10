@@ -33,12 +33,17 @@
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::stream::{self, BoxStream, StreamExt};
 use object_store::local::LocalFileSystem;
-use object_store::throttle::{ThrottleConfig, ThrottledStore};
-use object_store::ObjectStore;
+use object_store::path::Path as ObjectPath;
+use object_store::{
+    GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
+    PutMultipartOptions, PutOptions, PutPayload, PutResult,
+};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, InstrumentationScope, KeyValue};
 use opentelemetry_proto::tonic::resource::v1::Resource;
@@ -74,6 +79,7 @@ struct Args {
     json: Option<PathBuf>,
     label: String,
     get_latency_ms: u64,
+    cache_mib: usize,
     only: Option<String>,
 }
 
@@ -89,6 +95,7 @@ impl Args {
             json: None,
             label: "run".to_owned(),
             get_latency_ms: 0,
+            cache_mib: 256,
             only: None,
         };
         let mut it = std::env::args().skip(1);
@@ -106,16 +113,18 @@ impl Args {
                 "--json" => args.json = Some(PathBuf::from(value())),
                 "--label" => args.label = value(),
                 "--get-latency-ms" => args.get_latency_ms = value().parse().unwrap(),
+                "--cache-mib" => args.cache_mib = value().parse().unwrap(),
                 "--only" => args.only = Some(value()),
                 "--reuse" => args.reuse = true,
                 "--help" | "-h" => {
                     println!(
                         "harness [--traces N] [--hours H] [--flushes-per-hour F] \
                          [--iterations N] [--dir PATH] [--reuse] [--json PATH] \
-                         [--label NAME] [--get-latency-ms MS] [--only QUERY]\n\n\
+                         [--label NAME] [--get-latency-ms MS] [--cache-mib N] [--only QUERY]\n\n\
                          --reuse            query an existing dataset in --dir\n\
                          --get-latency-ms   add a fixed delay to every object read and\n\
                          \x20                  listing, to approximate remote object storage\n\
+                         --cache-mib        in-memory object cache size, 0 to disable\n\
                          --only             run only queries whose name contains this"
                     );
                     std::process::exit(0);
@@ -792,6 +801,99 @@ fn disk_usage(dir: &Path) -> (usize, u64) {
 }
 
 // ---------------------------------------------------------------------------
+// Simulated remote storage
+// ---------------------------------------------------------------------------
+
+/// Adds a fixed delay to every read and listing, and counts them.
+///
+/// Local disk answers in microseconds; remote object storage takes tens of
+/// milliseconds per request regardless of size. The delay makes the number
+/// of round trips a query needs visible in its latency.
+#[derive(Debug)]
+struct RemoteLike {
+    inner: LocalFileSystem,
+    delay: Duration,
+    gets: AtomicU64,
+    lists: AtomicU64,
+}
+
+impl std::fmt::Display for RemoteLike {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RemoteLike({})", self.inner)
+    }
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for RemoteLike {
+    async fn put_opts(
+        &self,
+        location: &ObjectPath,
+        payload: PutPayload,
+        opts: PutOptions,
+    ) -> object_store::Result<PutResult> {
+        self.inner.put_opts(location, payload, opts).await
+    }
+
+    async fn put_multipart_opts(
+        &self,
+        location: &ObjectPath,
+        opts: PutMultipartOptions,
+    ) -> object_store::Result<Box<dyn MultipartUpload>> {
+        self.inner.put_multipart_opts(location, opts).await
+    }
+
+    async fn get_opts(
+        &self,
+        location: &ObjectPath,
+        options: GetOptions,
+    ) -> object_store::Result<GetResult> {
+        self.gets.fetch_add(1, Ordering::Relaxed);
+        tokio::time::sleep(self.delay).await;
+        self.inner.get_opts(location, options).await
+    }
+
+    async fn delete(&self, location: &ObjectPath) -> object_store::Result<()> {
+        self.inner.delete(location).await
+    }
+
+    fn list(
+        &self,
+        prefix: Option<&ObjectPath>,
+    ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+        self.lists.fetch_add(1, Ordering::Relaxed);
+        let delay = self.delay;
+        let listing = self.inner.list(prefix);
+        stream::once(async move {
+            tokio::time::sleep(delay).await;
+            listing
+        })
+        .flatten()
+        .boxed()
+    }
+
+    async fn list_with_delimiter(
+        &self,
+        prefix: Option<&ObjectPath>,
+    ) -> object_store::Result<ListResult> {
+        self.lists.fetch_add(1, Ordering::Relaxed);
+        tokio::time::sleep(self.delay).await;
+        self.inner.list_with_delimiter(prefix).await
+    }
+
+    async fn copy(&self, from: &ObjectPath, to: &ObjectPath) -> object_store::Result<()> {
+        self.inner.copy(from, to).await
+    }
+
+    async fn copy_if_not_exists(
+        &self,
+        from: &ObjectPath,
+        to: &ObjectPath,
+    ) -> object_store::Result<()> {
+        self.inner.copy_if_not_exists(from, to).await
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
 
@@ -959,21 +1061,39 @@ struct QueryResult {
     p50_ms: f64,
     p95_ms: f64,
     max_ms: f64,
+    /// Storage requests made by the first iteration.
+    first_requests: u64,
+    /// Mean storage requests per iteration after the first.
+    later_requests: f64,
     rows: usize,
     error: Option<String>,
 }
 
-async fn run_case(engine: &QueryEngine, case: &QueryCase, iterations: usize) -> QueryResult {
+async fn run_case(
+    engine: &QueryEngine,
+    remote: &RemoteLike,
+    case: &QueryCase,
+    iterations: usize,
+) -> QueryResult {
+    let requests = || remote.gets.load(Ordering::Relaxed) + remote.lists.load(Ordering::Relaxed);
+    let mut first_requests = 0;
+    let mut later_requests = 0;
     let mut timings = Vec::with_capacity(iterations);
     let mut rows = 0;
     let mut error = None;
 
     for i in 0..iterations {
         let sql = (case.sql)(i);
+        let requests_before = requests();
         let started = Instant::now();
         match engine.query(&sql).await {
             Ok(batches) => {
                 timings.push(started.elapsed().as_secs_f64() * 1e3);
+                if i == 0 {
+                    first_requests = requests() - requests_before;
+                } else {
+                    later_requests += requests() - requests_before;
+                }
                 rows = batches.iter().map(|b| b.num_rows()).sum();
                 if let Some(expected) = (case.expected_rows)(i) {
                     if rows != expected && error.is_none() {
@@ -1007,6 +1127,8 @@ async fn run_case(engine: &QueryEngine, case: &QueryCase, iterations: usize) -> 
         p50_ms: percentile(0.5),
         p95_ms: percentile(0.95),
         max_ms: sorted.last().copied().unwrap_or(f64::NAN),
+        first_requests,
+        later_requests: later_requests as f64 / (timings.len().max(2) - 1) as f64,
         rows,
         error,
     }
@@ -1016,6 +1138,7 @@ async fn run_case(engine: &QueryEngine, case: &QueryCase, iterations: usize) -> 
 struct Report {
     label: String,
     get_latency_ms: u64,
+    cache_mib: usize,
     traces: usize,
     spans: usize,
     hours: u64,
@@ -1059,19 +1182,16 @@ async fn main() {
 
     // Queries read through a store registered under its own URL scheme, so
     // an optional per-request delay can stand in for remote object storage.
-    let local = LocalFileSystem::new_with_prefix(&dir).unwrap();
-    let delay = Duration::from_millis(args.get_latency_ms);
-    let store: Arc<dyn ObjectStore> = Arc::new(ThrottledStore::new(
-        local,
-        ThrottleConfig {
-            wait_get_per_call: delay,
-            wait_list_per_call: delay,
-            wait_list_with_delimiter_per_call: delay,
-            ..Default::default()
-        },
-    ));
+    let remote = Arc::new(RemoteLike {
+        inner: LocalFileSystem::new_with_prefix(&dir).unwrap(),
+        delay: Duration::from_millis(args.get_latency_ms),
+        gets: AtomicU64::new(0),
+        lists: AtomicU64::new(0),
+    });
+    let store: Arc<dyn ObjectStore> = remote.clone();
     let engine = QueryEngineBuilder::new(store, "harness://data")
         .with_timeout(Some(Duration::from_secs(600)))
+        .with_cache_bytes(args.cache_mib * 1024 * 1024)
         .build()
         .await
         .unwrap();
@@ -1085,12 +1205,13 @@ async fn main() {
         {
             continue;
         }
-        results.push(run_case(&engine, &case, args.iterations).await);
+        results.push(run_case(&engine, &remote, &case, args.iterations).await);
     }
 
     let report = Report {
         label: args.label.clone(),
         get_latency_ms: args.get_latency_ms,
+        cache_mib: args.cache_mib,
         traces: meta.traces,
         spans: meta.spans,
         hours: meta.hours,
@@ -1129,19 +1250,20 @@ async fn main() {
     .unwrap();
     writeln!(
         out,
-        "{:<28} {:>9} {:>9} {:>9} {:>9} {:>7}  {}",
-        "query", "first ms", "p50 ms", "p95 ms", "max ms", "rows", "user story"
+        "{:<28} {:>9} {:>9} {:>9} {:>9} {:>9} {:>7}  {}",
+        "query", "first ms", "p50 ms", "p95 ms", "reqs 1st", "reqs next", "rows", "user story"
     )
     .unwrap();
     for q in &report.queries {
         writeln!(
             out,
-            "{:<28} {:>9.1} {:>9.1} {:>9.1} {:>9.1} {:>7}  {}{}",
+            "{:<28} {:>9.1} {:>9.1} {:>9.1} {:>9} {:>9.1} {:>7}  {}{}",
             q.name,
             q.first_ms,
             q.p50_ms,
             q.p95_ms,
-            q.max_ms,
+            q.first_requests,
+            q.later_requests,
             q.rows,
             q.story,
             q.error
