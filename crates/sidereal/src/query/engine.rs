@@ -58,6 +58,45 @@ pub const DEFAULT_QUERY_CACHE_BYTES: usize = 256 * 1024 * 1024;
 /// per-batch overhead.
 pub const DEFAULT_QUERY_BATCH_SIZE: usize = 8192;
 
+/// How many times a query is re-planned after a data file turns out to be
+/// missing from storage.
+const MISSING_FILE_RETRIES: usize = 3;
+
+/// Whether `error` was caused by an object that no longer exists.
+///
+/// Storage errors reach us wrapped in several layers (DataFusion, Arrow,
+/// Parquet), so the whole chain is searched.
+fn is_missing_object(error: &(dyn std::error::Error + 'static)) -> bool {
+    use arrow::error::ArrowError;
+    use datafusion::error::DataFusionError;
+    use parquet::errors::ParquetError;
+
+    if let Some(store_error) = error.downcast_ref::<object_store::Error>() {
+        return matches!(store_error, object_store::Error::NotFound { .. });
+    }
+    let inner: Option<&(dyn std::error::Error + 'static)> =
+        if let Some(df_error) = error.downcast_ref::<DataFusionError>() {
+            match df_error {
+                DataFusionError::ObjectStore(e) => Some(e.as_ref()),
+                DataFusionError::ArrowError(e, _) => Some(e.as_ref()),
+                DataFusionError::ParquetError(e) => Some(e.as_ref()),
+                DataFusionError::External(e) => Some(e.as_ref()),
+                DataFusionError::Context(_, e) => Some(e.as_ref()),
+                DataFusionError::Shared(e) => Some(e.as_ref()),
+                _ => None,
+            }
+        } else if let Some(ArrowError::ExternalError(e)) = error.downcast_ref::<ArrowError>() {
+            Some(e.as_ref())
+        } else if let Some(ParquetError::External(e)) = error.downcast_ref::<ParquetError>() {
+            Some(e.as_ref())
+        } else {
+            None
+        };
+    inner
+        .or_else(|| error.source())
+        .is_some_and(is_missing_object)
+}
+
 /// Query engine wrapping a DataFusion SessionContext.
 pub struct QueryEngine {
     ctx: SessionContext,
@@ -293,16 +332,7 @@ impl QueryEngine {
     ) -> Result<Vec<arrow::record_batch::RecordBatch>, TelemetryError> {
         let df = self.ctx.sql(sql).await?;
 
-        let collect_future = df.collect();
-
-        if let Some(timeout) = self.query_timeout {
-            match tokio::time::timeout(timeout, collect_future).await {
-                Ok(result) => result.map_err(Into::into),
-                Err(_) => Err(TelemetryError::QueryTimeout { duration: timeout }),
-            }
-        } else {
-            collect_future.await.map_err(Into::into)
-        }
+        self.collect(df).await
     }
 
     /// Execute a SQL query with an enforced maximum row limit.
@@ -319,15 +349,44 @@ impl QueryEngine {
         let df = self.ctx.sql(sql).await?;
         let df = df.limit(0, Some(max_rows))?;
 
-        let collect_future = df.collect();
+        self.collect(df).await
+    }
+
+    /// Collect a query's results, subject to the configured timeout.
+    ///
+    /// A data file can disappear between being listed and being read, for
+    /// example when a bucket lifecycle rule expires it. That is not a
+    /// failure of the query: the file's data is gone by the operator's own
+    /// policy. The query is planned again, which no longer sees the missing
+    /// file, and answers from the data that remains.
+    async fn collect(
+        &self,
+        df: DataFrame,
+    ) -> Result<Vec<arrow::record_batch::RecordBatch>, TelemetryError> {
+        let attempts = async {
+            let mut retries = 0;
+            loop {
+                match df.clone().collect().await {
+                    Err(error) if retries < MISSING_FILE_RETRIES && is_missing_object(&error) => {
+                        retries += 1;
+                        tracing::info!(
+                            %error,
+                            retries,
+                            "Data file vanished during query, planning again without it"
+                        );
+                    }
+                    result => return result,
+                }
+            }
+        };
 
         if let Some(timeout) = self.query_timeout {
-            match tokio::time::timeout(timeout, collect_future).await {
+            match tokio::time::timeout(timeout, attempts).await {
                 Ok(result) => result.map_err(Into::into),
                 Err(_) => Err(TelemetryError::QueryTimeout { duration: timeout }),
             }
         } else {
-            collect_future.await.map_err(Into::into)
+            attempts.await.map_err(Into::into)
         }
     }
 
@@ -352,16 +411,7 @@ impl QueryEngine {
         &self,
         df: DataFrame,
     ) -> Result<Vec<arrow::record_batch::RecordBatch>, TelemetryError> {
-        let collect_future = df.collect();
-
-        if let Some(timeout) = self.query_timeout {
-            match tokio::time::timeout(timeout, collect_future).await {
-                Ok(result) => result.map_err(Into::into),
-                Err(_) => Err(TelemetryError::QueryTimeout { duration: timeout }),
-            }
-        } else {
-            collect_future.await.map_err(Into::into)
-        }
+        self.collect(df).await
     }
 
     /// Get the underlying SessionContext for advanced use cases.

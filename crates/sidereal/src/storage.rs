@@ -329,6 +329,21 @@ pub fn partition_path(signal: Signal, timestamp: DateTime<Utc>, project_id: Opti
     Path::from(path_str)
 }
 
+/// URL under which the query engine addresses the store returned by
+/// [`create_object_store`].
+///
+/// The local filesystem store is rooted at its configured directory, so it
+/// is addressed by an internal URL and store-relative paths, exactly like a
+/// bucket. This keeps one code path for every backend: queries always go
+/// through the store instance they are given, including any catalogue or
+/// cache wrapped around it.
+pub fn query_base_url(config: &StorageConfig) -> String {
+    match config {
+        StorageConfig::Local { .. } => "sidereal://local".to_owned(),
+        _ => base_url(config),
+    }
+}
+
 /// Get the base URL for DataFusion table registration.
 ///
 /// Returns the appropriate URL scheme for the storage backend:

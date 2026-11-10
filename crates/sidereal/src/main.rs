@@ -11,6 +11,7 @@ use std::time::Duration;
 use sidereal::{
     auth::{grpc_auth_interceptor, OidcValidator},
     buffer::{start_background_flush, FlushHandle, Ingester},
+    catalogue::{start_background_refresh, CatalogueStore},
     config::{BufferConfig, ParquetConfig, WalConfig},
     deployments::{deployment_router, DeploymentApiState},
     errors::{error_router, ErrorApiState},
@@ -25,7 +26,7 @@ use sidereal::{
         logs::logs_storage_schema, metrics::number_metrics_storage_schema,
         traces::traces_storage_schema,
     },
-    storage::{base_url, create_object_store, Signal},
+    storage::{base_url, create_object_store, query_base_url, Signal},
     wal::Wal,
     TelemetryConfig,
 };
@@ -53,9 +54,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Configuration loaded"
     );
 
-    let store = create_object_store(&config.storage)?;
-    let base_url_str = base_url(&config.storage);
-    tracing::info!(base_url = %base_url_str, "Object store created");
+    // Every component shares one catalogued store, so flushes and retention
+    // deletes are visible to queries immediately and queries never list the
+    // bucket. The catalogue is rebuilt from storage on each start.
+    let catalogue = Arc::new(CatalogueStore::load(create_object_store(&config.storage)?).await?);
+    let store: Arc<dyn object_store::ObjectStore> = catalogue.clone();
+    let base_url_str = query_base_url(&config.storage);
+    tracing::info!(
+        storage = %base_url(&config.storage),
+        objects = catalogue.len(),
+        "Object store catalogued"
+    );
+    let catalogue_handle = start_background_refresh(
+        catalogue,
+        Duration::from_secs(config.catalogue.refresh_interval_secs.max(1)),
+    );
 
     if let Some(wal) = &config.wal {
         tracing::info!(
@@ -85,18 +98,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         start_background_retention(sweeper, retention)
     });
 
+    // The operating system already caches local files.
+    let query_cache_bytes = match config.storage {
+        sidereal::config::StorageConfig::Local { .. } => 0,
+        _ => config.query.cache_bytes,
+    };
     let query_engine = Arc::new(
         QueryEngineBuilder::new(store.clone(), &base_url_str)
             .with_timeout(Some(Duration::from_secs(config.query.timeout_secs)))
             .with_memory_limit(config.query.memory_limit_bytes)
-            .with_cache_bytes(config.query.cache_bytes)
+            .with_cache_bytes(query_cache_bytes)
             .build()
             .await?,
     );
     tracing::info!(
         memory_limit_bytes = config.query.memory_limit_bytes,
         timeout_secs = config.query.timeout_secs,
-        cache_bytes = config.query.cache_bytes,
+        cache_bytes = query_cache_bytes,
         "Query engine initialised"
     );
 
@@ -224,6 +242,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for handle in flush_handles {
         handle.shutdown().await;
     }
+    catalogue_handle.shutdown().await;
     if let Some(handle) = retention_handle {
         handle.shutdown().await;
     }

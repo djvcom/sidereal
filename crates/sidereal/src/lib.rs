@@ -18,6 +18,7 @@
 
 pub mod auth;
 pub mod buffer;
+pub mod catalogue;
 pub mod config;
 pub mod deployments;
 pub mod error;

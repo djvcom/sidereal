@@ -79,6 +79,14 @@ path = "./telemetry-data"
 # with local filesystem storage.
 # cache_bytes = 268435456
 
+# Catalogue
+# Sidereal keeps the list of stored files in memory, rebuilt from storage
+# on every start, so queries never list the bucket. Its own writes and
+# deletes are tracked as they happen; this refresh notices changes made
+# by anything else, such as a bucket lifecycle rule expiring objects.
+# [catalogue]
+# refresh_interval_secs = 300
+
 # Authentication (optional)
 # When set, all data endpoints require this key as a Bearer token
 # or X-API-Key header. Health and readiness endpoints remain open.

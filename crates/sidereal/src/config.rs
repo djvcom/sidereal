@@ -51,6 +51,9 @@ pub const DEFAULT_FLUSH_INITIAL_DELAY_MS: u64 = 100;
 /// Default maximum retry delay in milliseconds.
 pub const DEFAULT_FLUSH_MAX_DELAY_MS: u64 = 10_000;
 
+/// Default interval between catalogue refreshes, in seconds.
+pub const DEFAULT_CATALOGUE_REFRESH_SECS: u64 = 300;
+
 /// Default maximum rows per Parquet row group.
 pub const DEFAULT_ROW_GROUP_SIZE: usize = 1_000_000;
 
@@ -87,6 +90,8 @@ pub struct TelemetryConfig {
     pub auth: AuthConfig,
     /// Query engine configuration.
     pub query: QueryConfig,
+    /// Catalogue configuration.
+    pub catalogue: CatalogueConfig,
     /// Retention configuration. Absent means telemetry is kept indefinitely.
     pub retention: Option<RetentionConfig>,
     /// Write-ahead log configuration. Absent means acknowledged telemetry is
@@ -349,6 +354,26 @@ impl Default for QueryConfig {
             memory_limit_bytes: DEFAULT_QUERY_MEMORY_LIMIT,
             timeout_secs: DEFAULT_QUERY_TIMEOUT_SECS,
             cache_bytes: crate::query::engine::DEFAULT_QUERY_CACHE_BYTES,
+        }
+    }
+}
+
+/// Configuration for the in-memory catalogue of stored objects.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CatalogueConfig {
+    /// Seconds between reconciliations of the catalogue with storage.
+    ///
+    /// Sidereal's own writes and deletes are catalogued as they happen.
+    /// The refresh exists to notice changes made by anything else, such
+    /// as a bucket lifecycle rule expiring objects. Defaults to 300.
+    pub refresh_interval_secs: u64,
+}
+
+impl Default for CatalogueConfig {
+    fn default() -> Self {
+        Self {
+            refresh_interval_secs: DEFAULT_CATALOGUE_REFRESH_SECS,
         }
     }
 }

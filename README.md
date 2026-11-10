@@ -198,6 +198,22 @@ examples.
 days = 30
 ```
 
+The bucket is the only source of truth. Sidereal keeps a catalogue of
+its files in memory so that queries never list the bucket, and rebuilds
+it from storage on every start: there is no other database, and nothing
+besides the bucket to back up or recover. Objects may be removed from
+underneath it, for example by a lifecycle rule, without breaking
+anything: a query that meets a missing file answers from the data that
+remains, and a periodic refresh reconciles the rest.
+
+```toml
+[catalogue]
+refresh_interval_secs = 300  # default
+```
+
+Bucket lifecycle rules expire objects by the time they were written,
+whereas `[retention]` goes by the date of the telemetry inside them.
+
 Crash safety is built in too: configure a `[wal]` section and buffered
 telemetry is appended to a local write-ahead log before it is
 acknowledged, then replayed on startup if the process died before a

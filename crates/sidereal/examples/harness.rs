@@ -51,6 +51,7 @@ use opentelemetry_proto::tonic::trace::v1::{span, ResourceSpans, ScopeSpans, Spa
 use serde::{Deserialize, Serialize};
 
 use sidereal::buffer::Ingester;
+use sidereal::catalogue::CatalogueStore;
 use sidereal::config::{BufferConfig, ParquetConfig};
 use sidereal::ingest::convert_traces_to_arrow;
 use sidereal::query::{QueryEngine, QueryEngineBuilder};
@@ -80,6 +81,7 @@ struct Args {
     label: String,
     get_latency_ms: u64,
     cache_mib: usize,
+    no_catalogue: bool,
     only: Option<String>,
 }
 
@@ -96,6 +98,7 @@ impl Args {
             label: "run".to_owned(),
             get_latency_ms: 0,
             cache_mib: 256,
+            no_catalogue: false,
             only: None,
         };
         let mut it = std::env::args().skip(1);
@@ -116,6 +119,7 @@ impl Args {
                 "--cache-mib" => args.cache_mib = value().parse().unwrap(),
                 "--only" => args.only = Some(value()),
                 "--reuse" => args.reuse = true,
+                "--no-catalogue" => args.no_catalogue = true,
                 "--help" | "-h" => {
                     println!(
                         "harness [--traces N] [--hours H] [--flushes-per-hour F] \
@@ -125,6 +129,7 @@ impl Args {
                          --get-latency-ms   add a fixed delay to every object read and\n\
                          \x20                  listing, to approximate remote object storage\n\
                          --cache-mib        in-memory object cache size, 0 to disable\n\
+                         --no-catalogue     list storage on every query, as before the catalogue\n\
                          --only             run only queries whose name contains this"
                     );
                     std::process::exit(0);
@@ -1188,7 +1193,13 @@ async fn main() {
         gets: AtomicU64::new(0),
         lists: AtomicU64::new(0),
     });
-    let store: Arc<dyn ObjectStore> = remote.clone();
+    // As in the server: listings are answered from the in-memory catalogue,
+    // built by listing storage once at startup.
+    let store: Arc<dyn ObjectStore> = if args.no_catalogue {
+        remote.clone()
+    } else {
+        Arc::new(CatalogueStore::load(remote.clone()).await.unwrap())
+    };
     let engine = QueryEngineBuilder::new(store, "harness://data")
         .with_timeout(Some(Duration::from_secs(600)))
         .with_cache_bytes(args.cache_mib * 1024 * 1024)
