@@ -136,7 +136,7 @@ impl QueryEngineBuilder {
         };
 
         // Configure session for telemetry query workload
-        let config = SessionConfig::new()
+        let mut config = SessionConfig::new()
             // Enable statistics collection for better query planning
             .with_collect_statistics(true)
             // Enable repartitioning for file scans to improve parallelism
@@ -149,6 +149,14 @@ impl QueryEngineBuilder {
             .with_batch_size(DEFAULT_QUERY_BATCH_SIZE)
             // Expose information_schema so clients can discover tables and columns
             .with_information_schema(true);
+
+        // Evaluate filters while decoding Parquet rather than afterwards, so
+        // a selective query (one trace out of millions of spans) only
+        // materialises the wide attribute columns for rows that match.
+        // Reordering runs the cheapest, most selective predicates first.
+        let parquet_options = &mut config.options_mut().execution.parquet;
+        parquet_options.pushdown_filters = true;
+        parquet_options.reorder_filters = true;
 
         let state = SessionStateBuilder::new_with_default_features()
             .with_config(config)
@@ -202,46 +210,7 @@ impl QueryEngine {
     /// rather than using the provided store. This is because DataFusion's URL-based store
     /// lookup requires the store to be registered at the URL scheme root for local paths.
     pub async fn new(store: Arc<dyn ObjectStore>, base_url: &str) -> Result<Self, TelemetryError> {
-        let ctx =
-            SessionContext::new_with_config(SessionConfig::new().with_information_schema(true));
-        let url = Url::parse(base_url).map_err(TelemetryError::UrlParse)?;
-
-        // Register custom UDFs for error tracking
-        for udf in super::udfs::all_udfs() {
-            ctx.register_udf(udf);
-        }
-
-        // Register object store with DataFusion.
-        // For local filesystem, register at file:/// root to ensure URL path matching works.
-        // For other schemes (s3://, memory://), register at the exact URL.
-        if url.scheme() == "file" {
-            let root_url = Url::parse("file:///").map_err(TelemetryError::UrlParse)?;
-            let local_store: Arc<dyn ObjectStore> =
-                Arc::new(object_store::local::LocalFileSystem::new());
-            ctx.register_object_store(&root_url, local_store);
-        } else {
-            ctx.register_object_store(&url, store);
-        }
-
-        // Create engine instance with default timeout
-        let engine = Self {
-            ctx,
-            base_url: url,
-            query_timeout: Some(DEFAULT_QUERY_TIMEOUT),
-        };
-
-        // Register tables for each signal type
-        engine
-            .register_signal_table(Signal::Traces, traces_storage_schema())
-            .await?;
-        engine
-            .register_signal_table(Signal::Metrics, number_metrics_storage_schema())
-            .await?;
-        engine
-            .register_signal_table(Signal::Logs, logs_storage_schema())
-            .await?;
-
-        Ok(engine)
+        QueryEngineBuilder::new(store, base_url).build().await
     }
 
     /// Register a ListingTable for a telemetry signal.
