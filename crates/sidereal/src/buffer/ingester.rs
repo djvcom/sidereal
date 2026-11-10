@@ -13,6 +13,7 @@ use object_store::ObjectStore;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
 
+use super::layout::{base_properties, FileLayout};
 use crate::config::{BufferConfig, ParquetConfig};
 use crate::storage::Signal;
 use crate::wal::Wal;
@@ -331,19 +332,34 @@ impl Ingester {
 
     /// Write one partition's batches to a single Parquet file, retrying with
     /// exponential backoff.
+    ///
+    /// Rows are first arranged in the signal's [`FileLayout`]. If that fails
+    /// the batches are written in arrival order instead: a file that is
+    /// slower to query is better than telemetry that cannot be flushed.
     async fn write_partition(
         &self,
         path: &object_store::path::Path,
         batches: &[RecordBatch],
     ) -> Result<(), TelemetryError> {
         use parquet::arrow::AsyncArrowWriter;
-        use parquet::basic::{Compression, ZstdLevel};
-        use parquet::file::properties::WriterProperties;
 
-        let props = WriterProperties::builder()
-            .set_compression(Compression::ZSTD(ZstdLevel::default()))
-            .set_max_row_group_size(self.parquet_config.row_group_size)
-            .build();
+        let layout = FileLayout::for_signal(self.signal);
+        let sorted = match layout.sort(&self.schema, batches) {
+            Ok(sorted) => Some(sorted),
+            Err(e) => {
+                tracing::warn!(
+                    signal = %self.signal,
+                    error = %e,
+                    "Failed to sort partition, writing it in arrival order"
+                );
+                None
+            }
+        };
+        let props = sorted.as_ref().map_or_else(
+            || base_properties(&self.parquet_config).build(),
+            |sorted| layout.writer_properties(sorted, &self.parquet_config),
+        );
+        let batches = sorted.as_ref().map_or(batches, std::slice::from_ref);
 
         let max_retries = self.buffer_config.flush_max_retries;
         let initial_delay = Duration::from_millis(self.buffer_config.flush_initial_delay_ms);
