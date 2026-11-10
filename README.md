@@ -236,6 +236,7 @@ just check           # format, lint, and test
 just test            # run tests only
 just lint            # clippy + nix linters
 just build           # build release binary
+just bench           # end-to-end benchmark (ingest, flush, fixed query set)
 just ai-demo         # end-to-end demo: ingest sample data, ask questions
 ```
 

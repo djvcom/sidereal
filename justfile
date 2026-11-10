@@ -27,6 +27,10 @@ run *ARGS:
 docker:
     docker compose up --build
 
+# End-to-end benchmark: generate traces, flush them, time a fixed query set
+bench *ARGS:
+    cargo run --release -p sidereal --example harness -- {{ARGS}}
+
 ai-demo *ARGS:
     ./scripts/ai-demo.sh {{ARGS}}
 
