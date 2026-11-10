@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => config.query.cache_bytes,
     };
     let query_engine = Arc::new(
-        QueryEngineBuilder::new(store.clone(), &base_url_str)
+        QueryEngineBuilder::new(store.clone(), base_url_str)
             .with_timeout(Some(Duration::from_secs(config.query.timeout_secs)))
             .with_memory_limit(config.query.memory_limit_bytes)
             .with_cache_bytes(query_cache_bytes)

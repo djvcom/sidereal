@@ -207,7 +207,7 @@ pub fn create_object_store(config: &StorageConfig) -> Result<Arc<dyn ObjectStore
         #[cfg(feature = "s3")]
         StorageConfig::S3 {
             bucket,
-            prefix: _,
+            prefix,
             region,
             endpoint,
             access_key_id,
@@ -238,8 +238,7 @@ pub fn create_object_store(config: &StorageConfig) -> Result<Arc<dyn ObjectStore
                 builder = builder.with_allow_http(true);
             }
 
-            let store = builder.build()?;
-            Ok(Arc::new(store))
+            Ok(rooted(builder.build()?, prefix))
         }
         #[cfg(not(feature = "s3"))]
         StorageConfig::S3 { .. } => Err(TelemetryError::Config(
@@ -248,7 +247,7 @@ pub fn create_object_store(config: &StorageConfig) -> Result<Arc<dyn ObjectStore
         #[cfg(feature = "gcs")]
         StorageConfig::Gcs {
             bucket,
-            prefix: _,
+            prefix,
             service_account_path,
         } => {
             use object_store::gcp::GoogleCloudStorageBuilder;
@@ -259,8 +258,7 @@ pub fn create_object_store(config: &StorageConfig) -> Result<Arc<dyn ObjectStore
                 builder = builder.with_service_account_path(path);
             }
 
-            let store = builder.build()?;
-            Ok(Arc::new(store))
+            Ok(rooted(builder.build()?, prefix))
         }
         #[cfg(not(feature = "gcs"))]
         StorageConfig::Gcs { .. } => Err(TelemetryError::Config(
@@ -270,7 +268,7 @@ pub fn create_object_store(config: &StorageConfig) -> Result<Arc<dyn ObjectStore
         StorageConfig::Azure {
             account,
             container,
-            prefix: _,
+            prefix,
             access_key,
         } => {
             use object_store::azure::MicrosoftAzureBuilder;
@@ -283,13 +281,31 @@ pub fn create_object_store(config: &StorageConfig) -> Result<Arc<dyn ObjectStore
                 builder = builder.with_access_key(key);
             }
 
-            let store = builder.build()?;
-            Ok(Arc::new(store))
+            Ok(rooted(builder.build()?, prefix))
         }
         #[cfg(not(feature = "azure"))]
         StorageConfig::Azure { .. } => Err(TelemetryError::Config(
             "Azure storage requires the 'azure' feature to be enabled".to_owned(),
         )),
+    }
+}
+
+/// Root a cloud store at `prefix`, so that every path Sidereal reads or
+/// writes is relative to it.
+///
+/// Ingestion, retention and queries all address objects by the same
+/// store-relative paths (`traces/date=.../...`), so the prefix has to be
+/// applied in the store itself for them to agree on where data lives.
+#[cfg_attr(
+    not(any(feature = "s3", feature = "gcs", feature = "azure")),
+    allow(dead_code)
+)]
+fn rooted(store: impl ObjectStore, prefix: &str) -> Arc<dyn ObjectStore> {
+    let prefix = prefix.trim_matches('/');
+    if prefix.is_empty() {
+        Arc::new(store)
+    } else {
+        Arc::new(object_store::prefix::PrefixStore::new(store, prefix))
     }
 }
 
@@ -332,21 +348,18 @@ pub fn partition_path(signal: Signal, timestamp: DateTime<Utc>, project_id: Opti
 /// URL under which the query engine addresses the store returned by
 /// [`create_object_store`].
 ///
-/// The local filesystem store is rooted at its configured directory, so it
-/// is addressed by an internal URL and store-relative paths, exactly like a
-/// bucket. This keeps one code path for every backend: queries always go
-/// through the store instance they are given, including any catalogue or
-/// cache wrapped around it.
-pub fn query_base_url(config: &StorageConfig) -> String {
-    match config {
-        StorageConfig::Local { .. } => "sidereal://local".to_owned(),
-        _ => base_url(config),
-    }
+/// That store is always rooted where Sidereal's data lives: at the
+/// configured directory for local storage, or at the configured prefix
+/// within a bucket. Queries therefore use one internal URL and
+/// store-relative paths for every backend, and always go through the store
+/// instance they are given, including any catalogue or cache around it.
+pub const fn query_base_url(_config: &StorageConfig) -> &'static str {
+    "sidereal://store"
 }
 
-/// Get the base URL for DataFusion table registration.
+/// Human-readable location of the configured storage, for logs.
 ///
-/// Returns the appropriate URL scheme for the storage backend:
+/// Queries do not use this; see [`query_base_url`]. The form per backend:
 /// - Local: `file://`
 /// - Memory: `memory://`
 /// - S3: `s3://{bucket}/{prefix}`
@@ -423,6 +436,38 @@ mod tests {
 
         assert!(path_str.starts_with("metrics/date=2024-01-15/hour=14/project=my-app/"));
         assert!(path_str.ends_with(".parquet"));
+    }
+
+    #[tokio::test]
+    async fn a_prefixed_store_keeps_everything_under_its_prefix() {
+        let bucket: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let store = rooted(Arc::clone(&bucket), "/tenants/acme/");
+        let relative = Path::from("traces/date=2026-11-01/hour=00/a.parquet");
+
+        store.put(&relative, vec![1u8].into()).await.unwrap();
+
+        // In the bucket the object sits under the prefix...
+        let in_bucket = Path::from("tenants/acme/traces/date=2026-11-01/hour=00/a.parquet");
+        assert!(bucket.head(&in_bucket).await.is_ok());
+        // ...while readers of the rooted store use the same relative path
+        // the writer did, which is what lets ingestion and queries agree.
+        assert!(store.head(&relative).await.is_ok());
+        let listed: Vec<object_store::ObjectMeta> =
+            futures::TryStreamExt::try_collect(store.list(None))
+                .await
+                .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].location, relative);
+    }
+
+    #[tokio::test]
+    async fn an_empty_prefix_leaves_the_store_at_the_bucket_root() {
+        let bucket: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let store = rooted(Arc::clone(&bucket), "");
+        let path = Path::from("traces/a.parquet");
+
+        store.put(&path, vec![1u8].into()).await.unwrap();
+        assert!(bucket.head(&path).await.is_ok());
     }
 
     #[test]

@@ -39,7 +39,7 @@ use sidereal::config::{BufferConfig, ParquetConfig, StorageConfig};
 use sidereal::ingest::convert_traces_to_arrow;
 use sidereal::query::QueryEngine;
 use sidereal::schema::traces::traces_storage_schema;
-use sidereal::storage::{base_url, create_object_store, Signal};
+use sidereal::storage::{create_object_store, query_base_url, Signal};
 
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
@@ -142,7 +142,7 @@ async fn s3_write_and_list() {
 #[ignore = "requires S3-compatible service with credentials"]
 async fn s3_ingest_flush_query() {
     let config = get_s3_config().expect("S3 config not set - see test docs");
-    let base = base_url(&config);
+    let base = query_base_url(&config);
     let store = create_object_store(&config).expect("failed to create S3 store");
 
     // Create ingester with storage schema (excludes partition columns)
@@ -176,7 +176,7 @@ async fn s3_ingest_flush_query() {
     assert!(!parquet_files.is_empty(), "should have parquet files");
 
     // Query via DataFusion
-    let engine = QueryEngine::new(store.clone(), &base)
+    let engine = QueryEngine::new(store.clone(), base)
         .await
         .expect("failed to create query engine");
 
@@ -188,14 +188,10 @@ async fn s3_ingest_flush_query() {
     let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 3, "should have 3 trace spans");
 
-    // Clean up - delete all files with our test prefix
-    let prefix = match &config {
-        StorageConfig::S3 { prefix, .. } => prefix.clone(),
-        _ => String::new(),
-    };
-    let prefix_path = object_store::path::Path::from(prefix);
+    // Clean up. The store is rooted at this test's prefix, so listing it
+    // returns only the objects this test wrote.
     let files_to_delete: Vec<_> = store
-        .list(Some(&prefix_path))
+        .list(None)
         .collect::<Vec<_>>()
         .await
         .into_iter()
