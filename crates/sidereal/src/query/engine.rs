@@ -19,6 +19,7 @@ use datafusion::sql::TableReference;
 use object_store::ObjectStore;
 use url::Url;
 
+use super::cache::BlockCache;
 use crate::schema::{
     logs::logs_storage_schema, metrics::number_metrics_storage_schema,
     traces::traces_storage_schema, PARTITION_COLUMNS,
@@ -47,6 +48,9 @@ pub enum MemoryPoolStrategy {
 /// Default query timeout (30 seconds).
 pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Default size of the in-memory object cache (256 MiB).
+pub const DEFAULT_QUERY_CACHE_BYTES: usize = 256 * 1024 * 1024;
+
 /// Default DataFusion batch size for query execution.
 ///
 /// This value balances memory usage against processing efficiency for typical
@@ -68,6 +72,7 @@ pub struct QueryEngineBuilder {
     base_url: String,
     memory_pool: MemoryPoolStrategy,
     query_timeout: Option<Duration>,
+    cache_bytes: usize,
 }
 
 impl QueryEngineBuilder {
@@ -80,7 +85,20 @@ impl QueryEngineBuilder {
             base_url: base_url.into(),
             memory_pool: MemoryPoolStrategy::default(),
             query_timeout: Some(DEFAULT_QUERY_TIMEOUT),
+            cache_bytes: DEFAULT_QUERY_CACHE_BYTES,
         }
+    }
+
+    /// Set how much object data is cached in memory, in bytes.
+    ///
+    /// Reads from remote object storage are served from a [`BlockCache`]
+    /// of this size, so repeated queries over the same files do not pay
+    /// for the network again. Zero disables the cache. Local filesystem
+    /// storage is never cached here, since the operating system already
+    /// caches it.
+    pub const fn with_cache_bytes(mut self, cache_bytes: usize) -> Self {
+        self.cache_bytes = cache_bytes;
+        self
     }
 
     /// Set a query timeout.
@@ -175,6 +193,9 @@ impl QueryEngineBuilder {
             let local_store: Arc<dyn ObjectStore> =
                 Arc::new(object_store::local::LocalFileSystem::new());
             ctx.register_object_store(&root_url, local_store);
+        } else if self.cache_bytes > 0 {
+            let cached = BlockCache::new(self.store, self.cache_bytes);
+            ctx.register_object_store(&url, Arc::new(cached));
         } else {
             ctx.register_object_store(&url, self.store);
         }

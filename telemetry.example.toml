@@ -73,6 +73,11 @@ path = "./telemetry-data"
 # memory_limit_bytes = 268435456
 # Query timeout in seconds (default: 30).
 # timeout_secs = 30
+# In-memory cache of object storage reads (default: 256 MiB, 0 disables).
+# Flushed files never change, so cached data never goes stale; a larger
+# cache answers more queries without touching remote storage. Not used
+# with local filesystem storage.
+# cache_bytes = 268435456
 
 # Authentication (optional)
 # When set, all data endpoints require this key as a Bearer token

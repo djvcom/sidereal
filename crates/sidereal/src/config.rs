@@ -334,6 +334,13 @@ pub struct QueryConfig {
     pub memory_limit_bytes: usize,
     /// Query timeout in seconds. Defaults to 30.
     pub timeout_secs: u64,
+    /// Size in bytes of the in-memory cache of object storage reads.
+    ///
+    /// Flushed files are immutable, so cached data never goes stale; a
+    /// larger cache means more queries are answered without touching
+    /// remote storage. Zero disables it. Defaults to 256 MiB. Not used
+    /// with local filesystem storage.
+    pub cache_bytes: usize,
 }
 
 impl Default for QueryConfig {
@@ -341,6 +348,7 @@ impl Default for QueryConfig {
         Self {
             memory_limit_bytes: DEFAULT_QUERY_MEMORY_LIMIT,
             timeout_secs: DEFAULT_QUERY_TIMEOUT_SECS,
+            cache_bytes: crate::query::engine::DEFAULT_QUERY_CACHE_BYTES,
         }
     }
 }

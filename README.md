@@ -137,7 +137,12 @@ from exhausting system resources:
 [query]
 memory_limit_bytes = 268435456  # 256 MiB (default)
 timeout_secs = 30               # default
+cache_bytes = 268435456         # 256 MiB (default), 0 disables
 ```
+
+`cache_bytes` sizes an in-memory cache of object storage reads. Flushed
+files never change, so repeated queries over the same data are answered
+without further requests to remote storage.
 
 ## Servers
 
