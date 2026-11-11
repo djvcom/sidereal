@@ -30,6 +30,7 @@ pub mod redact;
 pub mod retention;
 pub mod schema;
 pub mod storage;
+pub mod trace_index;
 pub mod wal;
 
 #[cfg(test)]

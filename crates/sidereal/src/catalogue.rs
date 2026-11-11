@@ -27,8 +27,8 @@ use chrono::{DateTime, Utc};
 use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use object_store::path::Path;
 use object_store::{
-    GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, Result,
+    Attributes, GetOptions, GetResult, GetResultPayload, ListResult, MultipartUpload, ObjectMeta,
+    ObjectStore, PutMultipartOptions, PutOptions, PutPayload, PutResult, Result,
 };
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -258,6 +258,18 @@ impl ObjectStore for CatalogueStore {
     }
 
     async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
+        // A plain metadata request for a catalogued object needs no round
+        // trip: the catalogue already holds exactly what storage would say.
+        if is_plain_head(&options) {
+            if let Some(meta) = self.read().get(location).cloned() {
+                return Ok(GetResult {
+                    payload: GetResultPayload::Stream(stream::empty().boxed()),
+                    range: 0..0,
+                    meta,
+                    attributes: Attributes::default(),
+                });
+            }
+        }
         let result = self.inner.get_opts(location, options).await;
         if matches!(result, Err(object_store::Error::NotFound { .. })) {
             self.forget(location);
@@ -313,6 +325,17 @@ impl ObjectStore for CatalogueStore {
         self.record_from_storage(to).await;
         Ok(())
     }
+}
+
+/// Whether a request asks only for an object's metadata, unconditionally.
+fn is_plain_head(options: &GetOptions) -> bool {
+    options.head
+        && options.range.is_none()
+        && options.version.is_none()
+        && options.if_match.is_none()
+        && options.if_none_match.is_none()
+        && options.if_modified_since.is_none()
+        && options.if_unmodified_since.is_none()
 }
 
 /// Handle for the background catalogue refresh task.
@@ -482,6 +505,25 @@ mod tests {
         assert!(listed(&catalogue, Some("traces/date=2026-11-01/hour=00"))
             .await
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_of_catalogued_objects_is_answered_from_memory() {
+        let (catalogue, inner) = loaded().await;
+        let path = Path::from("traces/date=2026-11-01/hour=00/a.parquet");
+
+        let from_catalogue = catalogue.head(&path).await.unwrap();
+        let from_storage = inner.head(&path).await.unwrap();
+        assert_eq!(from_catalogue, from_storage);
+
+        // Still answered after the object is gone from storage, until a
+        // read or a refresh notices; an uncatalogued path goes to storage.
+        inner.delete(&path).await.unwrap();
+        assert!(catalogue.head(&path).await.is_ok());
+        assert!(matches!(
+            catalogue.head(&Path::from("traces/nope.parquet")).await,
+            Err(object_store::Error::NotFound { .. })
+        ));
     }
 
     #[tokio::test]

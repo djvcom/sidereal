@@ -11,7 +11,7 @@ use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     middleware,
     response::{IntoResponse, Response},
@@ -21,8 +21,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use super::builders::{LogQueryBuilder, MetricQueryBuilder, TraceQueryBuilder};
+use super::trace::{fetch_trace, parse_trace_id};
 use super::QueryEngine;
 use crate::auth::{auth_middleware, oidc_auth_middleware, AuthState, OidcValidator};
+use crate::trace_index::TraceIndex;
 use crate::TelemetryError;
 
 /// Default row limit for queries without explicit LIMIT clause.
@@ -46,6 +48,9 @@ pub struct QueryApiState {
     pub default_row_limit: usize,
     /// Maximum row limit (defaults to `MAX_ROW_LIMIT`).
     pub max_row_limit: usize,
+    /// Index used to find which partitions hold a trace. Without it a
+    /// trace lookup considers every trace file.
+    pub trace_index: Option<Arc<TraceIndex>>,
 }
 
 impl QueryApiState {
@@ -55,7 +60,16 @@ impl QueryApiState {
             engine,
             default_row_limit: DEFAULT_ROW_LIMIT,
             max_row_limit: MAX_ROW_LIMIT,
+            trace_index: None,
         }
+    }
+
+    /// Use `index` to narrow trace lookups to the partitions that can
+    /// hold the trace.
+    #[must_use]
+    pub fn with_trace_index(mut self, index: Arc<TraceIndex>) -> Self {
+        self.trace_index = Some(index);
+        self
     }
 
     /// Create with custom row limits.
@@ -68,6 +82,7 @@ impl QueryApiState {
             engine,
             default_row_limit,
             max_row_limit,
+            trace_index: None,
         }
     }
 }
@@ -92,6 +107,7 @@ pub fn query_router_with_oidc(state: QueryApiState, validator: Arc<OidcValidator
     let data_routes = Router::new()
         .route("/sql", post(handle_sql_query))
         .route("/traces", post(handle_traces_query))
+        .route("/traces/{trace_id}", axum::routing::get(handle_get_trace))
         .route("/metrics", post(handle_metrics_query))
         .route("/logs", post(handle_logs_query))
         .layer(middleware::from_fn_with_state(
@@ -111,6 +127,7 @@ pub fn query_router_with_auth(state: QueryApiState, auth_key: Option<&str>) -> R
     let data_routes = Router::new()
         .route("/sql", post(handle_sql_query))
         .route("/traces", post(handle_traces_query))
+        .route("/traces/{trace_id}", axum::routing::get(handle_get_trace))
         .route("/metrics", post(handle_metrics_query))
         .route("/logs", post(handle_logs_query));
 
@@ -365,6 +382,30 @@ async fn handle_traces_query(
     let sql = builder.newest_first().build();
     let results = state.engine.query(&sql).await?;
     format_response(results, request.format)
+}
+
+/// Query parameters for `GET /traces/{trace_id}`.
+#[derive(Debug, Default, Deserialize)]
+pub struct GetTraceParams {
+    /// Response format (JSON by default).
+    #[serde(default)]
+    pub format: ResponseFormat,
+}
+
+/// Handle GET /traces/{trace_id}: every span of one trace, oldest first.
+#[tracing::instrument(skip(state, params))]
+async fn handle_get_trace(
+    State(state): State<QueryApiState>,
+    Path(trace_id): Path<String>,
+    Query(params): Query<GetTraceParams>,
+) -> Result<Response, QueryError> {
+    let id = parse_trace_id(&trace_id).ok_or_else(|| {
+        QueryError::InvalidRequest("trace ID must be 32 hexadecimal digits".to_owned())
+    })?;
+
+    let results = fetch_trace(&state.engine, state.trace_index.as_deref(), &id).await?;
+    let results = truncate_results(results, state.max_row_limit);
+    format_response(results, params.format)
 }
 
 /// Handle POST /query/metrics

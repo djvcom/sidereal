@@ -414,6 +414,29 @@ impl QueryEngine {
         self.collect(df).await
     }
 
+    /// A DataFrame over exactly the given data files, read with `schema`.
+    ///
+    /// For lookups that already know which files hold their rows: no
+    /// other file is listed, opened or pruned. A file that has since
+    /// disappeared contributes no rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the files cannot be registered for reading.
+    pub async fn read_files(
+        &self,
+        files: &[object_store::path::Path],
+        schema: &arrow::datatypes::Schema,
+    ) -> Result<DataFrame, TelemetryError> {
+        let base = self.base_url.as_str().trim_end_matches('/');
+        let urls: Vec<String> = files.iter().map(|path| format!("{base}/{path}")).collect();
+        let options = ParquetReadOptions::default().schema(schema);
+        self.ctx
+            .read_parquet(urls, options)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Get the underlying SessionContext for advanced use cases.
     pub const fn session_context(&self) -> &SessionContext {
         &self.ctx

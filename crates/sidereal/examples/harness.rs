@@ -55,9 +55,10 @@ use sidereal::catalogue::CatalogueStore;
 use sidereal::compaction::Compactor;
 use sidereal::config::{BufferConfig, CompactionConfig, ParquetConfig};
 use sidereal::ingest::convert_traces_to_arrow;
-use sidereal::query::{QueryEngine, QueryEngineBuilder};
+use sidereal::query::{fetch_trace, parse_trace_id, QueryEngine, QueryEngineBuilder};
 use sidereal::schema::traces::traces_storage_schema;
 use sidereal::storage::Signal;
+use sidereal::trace_index::TraceIndex;
 
 /// 2026-11-01T00:00:00Z.
 const BASE_TIME_SECS: u64 = 1_793_491_200;
@@ -85,6 +86,7 @@ struct Args {
     no_catalogue: bool,
     compact: bool,
     row_group_rows: Option<usize>,
+    sql: Option<String>,
     only: Option<String>,
 }
 
@@ -104,6 +106,7 @@ impl Args {
             no_catalogue: false,
             compact: false,
             row_group_rows: None,
+            sql: None,
             only: None,
         };
         let mut it = std::env::args().skip(1);
@@ -123,6 +126,7 @@ impl Args {
                 "--get-latency-ms" => args.get_latency_ms = value().parse().unwrap(),
                 "--cache-mib" => args.cache_mib = value().parse().unwrap(),
                 "--only" => args.only = Some(value()),
+                "--sql" => args.sql = Some(value()),
                 "--reuse" => args.reuse = true,
                 "--no-catalogue" => args.no_catalogue = true,
                 "--compact" => args.compact = true,
@@ -141,6 +145,8 @@ impl Args {
                          --row-group-rows   rows per Parquet row group (default: the server default)\n\
                          --compact          compact the dataset before querying (rewrites --dir)\n\
                          --no-catalogue     list storage on every query, as before the catalogue\n\
+                         --sql              time one ad-hoc query and print its EXPLAIN ANALYZE;\n\
+                         \x20                  {{trace}} expands to a sample trace ID literal\n\
                          --only             run only queries whose name contains this"
                     );
                     std::process::exit(0);
@@ -916,7 +922,9 @@ impl ObjectStore for RemoteLike {
 struct QueryCase {
     name: &'static str,
     story: &'static str,
-    /// Build the SQL for iteration `i`.
+    /// Build the SQL for iteration `i`. A string of the form
+    /// `TRACE <hex id>` fetches that trace through the trace index, as
+    /// `GET /traces/{id}` does, rather than running SQL.
     sql: Box<dyn Fn(usize) -> String>,
     /// Expected row count for iteration `i`, where it is known.
     expected_rows: Box<dyn Fn(usize) -> Option<usize>>,
@@ -953,6 +961,27 @@ fn query_cases(meta: &DatasetMeta) -> Vec<QueryCase> {
             )
         }),
         expected_rows: Box::new(move |i| Some(pick(&e, i).spans)),
+    });
+
+    let s = samples.clone();
+    let e = samples.clone();
+    cases.push(QueryCase {
+        name: "get_trace",
+        story: "4: GET /traces/{id}, via the trace index",
+        sql: Box::new(move |i| format!("TRACE {}", pick(&s, i).trace_id)),
+        expected_rows: Box::new(move |i| Some(pick(&e, i).spans)),
+    });
+
+    let s = samples.clone();
+    cases.push(QueryCase {
+        name: "get_trace_absent",
+        story: "4: GET /traces/{id} for an unknown ID",
+        sql: Box::new(move |i| {
+            let mut id = hex::decode(pick(&s, i).trace_id).unwrap();
+            id[15] ^= 0xFF;
+            format!("TRACE {}", hex::encode(id))
+        }),
+        expected_rows: Box::new(|_| Some(0)),
     });
 
     let s = samples.clone();
@@ -1088,6 +1117,7 @@ struct QueryResult {
 async fn run_case(
     engine: &QueryEngine,
     remote: &RemoteLike,
+    index: Option<&TraceIndex>,
     case: &QueryCase,
     iterations: usize,
 ) -> QueryResult {
@@ -1102,7 +1132,14 @@ async fn run_case(
         let sql = (case.sql)(i);
         let requests_before = requests();
         let started = Instant::now();
-        match engine.query(&sql).await {
+        let outcome = match sql.strip_prefix("TRACE ") {
+            Some(id) => {
+                let id = parse_trace_id(id).unwrap();
+                fetch_trace(engine, index, &id).await
+            }
+            None => engine.query(&sql).await,
+        };
+        match outcome {
             Ok(batches) => {
                 timings.push(started.elapsed().as_secs_f64() * 1e3);
                 if i == 0 {
@@ -1166,6 +1203,43 @@ struct Report {
     queries: Vec<QueryResult>,
 }
 
+/// Time one ad-hoc query and show where its time goes.
+async fn run_adhoc(engine: &QueryEngine, template: &str, meta: &DatasetMeta, iterations: usize) {
+    let sql_for = |i: usize| {
+        let sample = &meta.samples[(i * 7 + 3) % meta.samples.len()];
+        template.replace("{trace}", &format!("X'{}'", sample.trace_id))
+    };
+    let mut timings = Vec::new();
+    let mut rows = 0;
+    for i in 0..iterations {
+        let started = Instant::now();
+        let batches = engine.query(&sql_for(i)).await.unwrap();
+        timings.push(started.elapsed().as_secs_f64() * 1e3);
+        rows = batches.iter().map(|b| b.num_rows()).sum();
+    }
+    timings.sort_by(f64::total_cmp);
+    println!(
+        "p50 {:.1} ms, min {:.1} ms, {rows} rows: {}",
+        timings[timings.len() / 2],
+        timings[0],
+        sql_for(0)
+    );
+    let plan = engine
+        .query(&format!("EXPLAIN ANALYZE {}", sql_for(0)))
+        .await
+        .unwrap();
+    for batch in &plan {
+        let text = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow::array::StringArray>()
+            .unwrap();
+        for i in 0..batch.num_rows() {
+            println!("{}", text.value(i));
+        }
+    }
+}
+
 fn parquet_config(args: &Args) -> ParquetConfig {
     let mut config = ParquetConfig::default();
     if let Some(rows) = args.row_group_rows {
@@ -1213,8 +1287,8 @@ async fn main() {
     });
     // As in the server: listings are answered from the in-memory catalogue,
     // built by listing storage once at startup.
-    let store: Arc<dyn ObjectStore> = if args.no_catalogue {
-        remote.clone()
+    let (store, index): (Arc<dyn ObjectStore>, Option<Arc<TraceIndex>>) = if args.no_catalogue {
+        (remote.clone(), None)
     } else {
         let catalogue = Arc::new(CatalogueStore::load(remote.clone()).await.unwrap());
         if args.compact {
@@ -1234,7 +1308,18 @@ async fn main() {
                 started.elapsed().as_secs_f64()
             );
         }
-        catalogue
+        // The server fills the index in the background after it starts.
+        let index = Arc::new(TraceIndex::new(catalogue.clone()));
+        let started = Instant::now();
+        index.warm().await;
+        println!(
+            "trace index: {} files, {:.1} KiB, loaded in {:.0} ms with {} storage requests",
+            index.len(),
+            index.memory_bytes() as f64 / 1024.0,
+            started.elapsed().as_secs_f64() * 1e3,
+            remote.gets.load(Ordering::Relaxed)
+        );
+        (catalogue, Some(index))
     };
     remote.gets.store(0, Ordering::Relaxed);
     remote.lists.store(0, Ordering::Relaxed);
@@ -1246,6 +1331,11 @@ async fn main() {
         .await
         .unwrap();
 
+    if let Some(template) = &args.sql {
+        run_adhoc(&engine, template, &meta, args.iterations).await;
+        return;
+    }
+
     let mut results = Vec::new();
     for case in query_cases(&meta) {
         if args
@@ -1255,7 +1345,10 @@ async fn main() {
         {
             continue;
         }
-        results.push(run_case(&engine, &remote, &case, args.iterations).await);
+        if index.is_none() && (case.sql)(0).starts_with("TRACE ") {
+            continue;
+        }
+        results.push(run_case(&engine, &remote, index.as_deref(), &case, args.iterations).await);
     }
 
     let report = Report {

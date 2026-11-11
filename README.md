@@ -161,6 +161,7 @@ without further requests to remote storage.
 | GET    | `/ready`                                            | Readiness probe (verifies DataFusion)|
 | POST   | `/sql`                                              | Raw SQL query                        |
 | POST   | `/traces`                                           | Structured trace query               |
+| GET    | `/traces/{trace_id}`                                | Every span of one trace, oldest first |
 | POST   | `/metrics`                                          | Structured metric query              |
 | POST   | `/logs`                                             | Structured log query                 |
 | GET    | `/errors`                                           | List error groups                    |
@@ -259,6 +260,9 @@ path = "/var/lib/sidereal/wal"
   Anthropic, Ollama, or any OpenAI-compatible model
 - **Crash safety** — optional write-ahead log makes acknowledged telemetry
   survive a crash, with automatic replay on startup
+- **Trace lookup by ID** — an in-memory index of each file's trace IDs
+  sends `GET /traces/{trace_id}` straight to the files holding the trace,
+  with no time range needed and no storage requests to find them
 - **Compaction** — small flushed files are merged in the background into
   large sorted ones, crash-safely and without a second database
 - **Backpressure** — configurable buffer limits with 413/503 responses

@@ -28,6 +28,7 @@ use sidereal::{
         traces::traces_storage_schema,
     },
     storage::{base_url, create_object_store, query_base_url, Signal},
+    trace_index::TraceIndex,
     wal::Wal,
     TelemetryConfig,
 };
@@ -86,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let catalogue_handle = start_background_refresh(
-        catalogue,
+        catalogue.clone(),
         Duration::from_secs(config.catalogue.refresh_interval_secs.max(1)),
     );
 
@@ -161,7 +162,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         redaction,
     };
 
-    let query_state = QueryApiState::new(query_engine.clone());
+    // Trace lookups go straight to the partitions that hold the trace.
+    // The index is filled in the background so that starting up does not
+    // wait on it; a lookup that arrives first simply loads what it needs.
+    let trace_index = Arc::new(TraceIndex::new(catalogue.clone()));
+    tokio::spawn({
+        let trace_index = trace_index.clone();
+        async move {
+            trace_index.warm().await;
+            tracing::info!(
+                files = trace_index.len(),
+                memory_bytes = trace_index.memory_bytes(),
+                "Trace index ready"
+            );
+        }
+    });
+    let query_state = QueryApiState::new(query_engine.clone()).with_trace_index(trace_index);
     let error_aggregator = Arc::new(sidereal::errors::ErrorAggregator::new(query_engine.clone()));
     let error_state = ErrorApiState {
         aggregator: error_aggregator,
