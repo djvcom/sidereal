@@ -12,6 +12,7 @@ use sidereal::{
     auth::{grpc_auth_interceptor, OidcValidator},
     buffer::{start_background_flush, FlushHandle, Ingester},
     catalogue::{start_background_refresh, CatalogueStore},
+    compaction::{start_background_compaction, Compactor},
     config::{BufferConfig, ParquetConfig, WalConfig},
     deployments::{deployment_router, DeploymentApiState},
     errors::{error_router, ErrorApiState},
@@ -65,6 +66,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         objects = catalogue.len(),
         "Object store catalogued"
     );
+    // Finish or undo any compaction a previous run left half done, before
+    // anything is served, so queries never see its leftovers.
+    let compactor = Arc::new(Compactor::new(
+        catalogue.clone(),
+        config.compaction.clone(),
+        config.parquet.clone(),
+    ));
+    let recovered = compactor.recover().await?;
+    if recovered > 0 {
+        tracing::info!(recovered, "Recovered interrupted compactions");
+    }
+    let compaction_handle = config
+        .compaction
+        .enabled
+        .then(|| start_background_compaction(compactor));
+    if compaction_handle.is_none() {
+        tracing::warn!("Compaction disabled — file counts grow with every flush");
+    }
+
     let catalogue_handle = start_background_refresh(
         catalogue,
         Duration::from_secs(config.catalogue.refresh_interval_secs.max(1)),
@@ -240,6 +260,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Shutting down background tasks");
     for handle in flush_handles {
+        handle.shutdown().await;
+    }
+    if let Some(handle) = compaction_handle {
         handle.shutdown().await;
     }
     catalogue_handle.shutdown().await;

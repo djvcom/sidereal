@@ -211,8 +211,24 @@ remains, and a periodic refresh reconciles the rest.
 refresh_interval_secs = 300  # default
 ```
 
+Every flush writes a new small file, so a background compactor merges
+the files of each hour partition into fewer, larger, sorted ones: first
+in groups while the hour is still receiving data, then into its final
+form once it has gone quiet. The swap is recorded in the bucket beside
+the data, so queries never see rows twice or lose them, and a restart
+finishes or undoes whatever a crash interrupted.
+
+```toml
+[compaction]
+enabled = true            # default
+settle_secs = 900         # quiet time before an hour takes its final form
+target_file_bytes = 268435456
+```
+
 Bucket lifecycle rules expire objects by the time they were written,
 whereas `[retention]` goes by the date of the telemetry inside them.
+Compaction rewrites data into new objects, which restarts that clock
+for a lifecycle rule but not for `[retention]`.
 
 Crash safety is built in too: configure a `[wal]` section and buffered
 telemetry is appended to a local write-ahead log before it is
@@ -243,6 +259,8 @@ path = "/var/lib/sidereal/wal"
   Anthropic, Ollama, or any OpenAI-compatible model
 - **Crash safety** — optional write-ahead log makes acknowledged telemetry
   survive a crash, with automatic replay on startup
+- **Compaction** — small flushed files are merged in the background into
+  large sorted ones, crash-safely and without a second database
 - **Backpressure** — configurable buffer limits with 413/503 responses
 - **Graceful shutdown** — in-flight requests drain and buffers flush on SIGTERM
 

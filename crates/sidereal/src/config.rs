@@ -55,7 +55,13 @@ pub const DEFAULT_FLUSH_MAX_DELAY_MS: u64 = 10_000;
 pub const DEFAULT_CATALOGUE_REFRESH_SECS: u64 = 300;
 
 /// Default maximum rows per Parquet row group.
-pub const DEFAULT_ROW_GROUP_SIZE: usize = 1_000_000;
+///
+/// A row group is the unit a scan can skip and the unit scans are
+/// parallelised over, so compacted files are better served by several
+/// modest row groups than by one huge one. Measured on the benchmark
+/// harness, 100,000 rows was as fast or faster than 1,000,000 for every
+/// query at a cost of about 5% in file size.
+pub const DEFAULT_ROW_GROUP_SIZE: usize = 100_000;
 
 /// Default Parquet compression algorithm.
 pub const DEFAULT_COMPRESSION: &str = "zstd";
@@ -92,6 +98,8 @@ pub struct TelemetryConfig {
     pub query: QueryConfig,
     /// Catalogue configuration.
     pub catalogue: CatalogueConfig,
+    /// Compaction configuration.
+    pub compaction: CompactionConfig,
     /// Retention configuration. Absent means telemetry is kept indefinitely.
     pub retention: Option<RetentionConfig>,
     /// Write-ahead log configuration. Absent means acknowledged telemetry is
@@ -374,6 +382,47 @@ impl Default for CatalogueConfig {
     fn default() -> Self {
         Self {
             refresh_interval_secs: DEFAULT_CATALOGUE_REFRESH_SECS,
+        }
+    }
+}
+
+/// Configuration for background compaction of flushed files.
+///
+/// Every flush writes a new small file. Compaction merges the files of an
+/// hour partition into fewer, larger, sorted ones, in two stages: while an
+/// hour is still receiving data its flushed files are merged in groups,
+/// and once it has gone quiet everything in it is merged into files of the
+/// target size.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CompactionConfig {
+    /// Whether compaction runs. Defaults to true.
+    pub enabled: bool,
+    /// Seconds between compaction passes. Defaults to 60.
+    pub interval_secs: u64,
+    /// Number of freshly flushed files in a partition that triggers a
+    /// merge while the partition is still active. Defaults to 10.
+    pub minor_files: usize,
+    /// Seconds a partition must go without new files before it is merged
+    /// into its final form. Defaults to 900.
+    pub settle_secs: u64,
+    /// Approximate size in bytes at which a compacted file is closed and
+    /// the next one started. Defaults to 256 MiB.
+    pub target_file_bytes: u64,
+    /// Memory in bytes a compaction may use for sorting before spilling
+    /// to disk. Defaults to 512 MiB.
+    pub memory_limit_bytes: usize,
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 60,
+            minor_files: 10,
+            settle_secs: 900,
+            target_file_bytes: 256 * 1024 * 1024,
+            memory_limit_bytes: 512 * 1024 * 1024,
         }
     }
 }

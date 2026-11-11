@@ -52,7 +52,8 @@ use serde::{Deserialize, Serialize};
 
 use sidereal::buffer::Ingester;
 use sidereal::catalogue::CatalogueStore;
-use sidereal::config::{BufferConfig, ParquetConfig};
+use sidereal::compaction::Compactor;
+use sidereal::config::{BufferConfig, CompactionConfig, ParquetConfig};
 use sidereal::ingest::convert_traces_to_arrow;
 use sidereal::query::{QueryEngine, QueryEngineBuilder};
 use sidereal::schema::traces::traces_storage_schema;
@@ -82,6 +83,8 @@ struct Args {
     get_latency_ms: u64,
     cache_mib: usize,
     no_catalogue: bool,
+    compact: bool,
+    row_group_rows: Option<usize>,
     only: Option<String>,
 }
 
@@ -99,6 +102,8 @@ impl Args {
             get_latency_ms: 0,
             cache_mib: 256,
             no_catalogue: false,
+            compact: false,
+            row_group_rows: None,
             only: None,
         };
         let mut it = std::env::args().skip(1);
@@ -120,6 +125,10 @@ impl Args {
                 "--only" => args.only = Some(value()),
                 "--reuse" => args.reuse = true,
                 "--no-catalogue" => args.no_catalogue = true,
+                "--compact" => args.compact = true,
+                "--row-group-rows" => {
+                    args.row_group_rows = Some(value().replace('_', "").parse().unwrap());
+                }
                 "--help" | "-h" => {
                     println!(
                         "harness [--traces N] [--hours H] [--flushes-per-hour F] \
@@ -129,6 +138,8 @@ impl Args {
                          --get-latency-ms   add a fixed delay to every object read and\n\
                          \x20                  listing, to approximate remote object storage\n\
                          --cache-mib        in-memory object cache size, 0 to disable\n\
+                         --row-group-rows   rows per Parquet row group (default: the server default)\n\
+                         --compact          compact the dataset before querying (rewrites --dir)\n\
                          --no-catalogue     list storage on every query, as before the catalogue\n\
                          --only             run only queries whose name contains this"
                     );
@@ -1155,6 +1166,14 @@ struct Report {
     queries: Vec<QueryResult>,
 }
 
+fn parquet_config(args: &Args) -> ParquetConfig {
+    let mut config = ParquetConfig::default();
+    if let Some(rows) = args.row_group_rows {
+        config.row_group_size = rows;
+    }
+    config
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -1183,7 +1202,6 @@ async fn main() {
         );
         generate_dataset(&args, &dir).await
     };
-    let (files, bytes) = disk_usage(&dir);
 
     // Queries read through a store registered under its own URL scheme, so
     // an optional per-request delay can stand in for remote object storage.
@@ -1198,8 +1216,29 @@ async fn main() {
     let store: Arc<dyn ObjectStore> = if args.no_catalogue {
         remote.clone()
     } else {
-        Arc::new(CatalogueStore::load(remote.clone()).await.unwrap())
+        let catalogue = Arc::new(CatalogueStore::load(remote.clone()).await.unwrap());
+        if args.compact {
+            let config = CompactionConfig {
+                settle_secs: 0,
+                ..Default::default()
+            };
+            let compactor = Compactor::new(catalogue.clone(), config, parquet_config(&args));
+            let started = Instant::now();
+            let report = compactor.run_once().await.unwrap();
+            println!(
+                "compacted {} files into {} ({} rows, {} failed) in {:.1} s",
+                report.files_in,
+                report.files_out,
+                report.rows,
+                report.failed,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        catalogue
     };
+    remote.gets.store(0, Ordering::Relaxed);
+    remote.lists.store(0, Ordering::Relaxed);
+    let (files, bytes) = disk_usage(&dir);
     let engine = QueryEngineBuilder::new(store, "harness://data")
         .with_timeout(Some(Duration::from_secs(600)))
         .with_cache_bytes(args.cache_mib * 1024 * 1024)

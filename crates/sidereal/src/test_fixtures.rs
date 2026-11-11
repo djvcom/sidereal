@@ -117,6 +117,7 @@ pub fn test_config(
         auth: AuthConfig::default(),
         query: QueryConfig::default(),
         catalogue: crate::config::CatalogueConfig::default(),
+        compaction: crate::config::CompactionConfig::default(),
         retention: None,
         wal: None,
     };
@@ -140,6 +141,7 @@ pub fn memory_test_config(
         auth: AuthConfig::default(),
         query: QueryConfig::default(),
         catalogue: crate::config::CatalogueConfig::default(),
+        compaction: crate::config::CompactionConfig::default(),
         retention: None,
         wal: None,
     }
@@ -332,6 +334,7 @@ impl TestEnv {
             auth: AuthConfig::default(),
             query: QueryConfig::default(),
             catalogue: crate::config::CatalogueConfig::default(),
+            compaction: crate::config::CompactionConfig::default(),
             retention: None,
             wal: None,
         };

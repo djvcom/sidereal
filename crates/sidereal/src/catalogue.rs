@@ -50,6 +50,10 @@ pub struct RefreshReport {
 pub struct CatalogueStore {
     inner: Arc<dyn ObjectStore>,
     objects: RwLock<BTreeMap<Path, ObjectMeta>>,
+    /// Serialises the operations that reconcile or rewrite whole sets of
+    /// objects (refresh and compaction), so neither sees the other's
+    /// half-finished work.
+    maintenance: tokio::sync::Mutex<()>,
 }
 
 impl CatalogueStore {
@@ -62,6 +66,7 @@ impl CatalogueStore {
         let catalogue = Self {
             inner,
             objects: RwLock::new(BTreeMap::new()),
+            maintenance: tokio::sync::Mutex::new(()),
         };
         catalogue.refresh().await?;
         Ok(catalogue)
@@ -79,18 +84,68 @@ impl CatalogueStore {
         self.read().is_empty()
     }
 
+    /// The wrapped store, for writing objects that must not appear in the
+    /// catalogue until they are committed with [`CatalogueStore::replace`].
+    #[must_use]
+    pub fn inner(&self) -> Arc<dyn ObjectStore> {
+        Arc::clone(&self.inner)
+    }
+
+    /// Take the lock that serialises refresh and compaction.
+    pub async fn maintenance(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.maintenance.lock().await
+    }
+
+    /// Catalogued objects strictly below `prefix`, in path order.
+    #[must_use]
+    pub fn objects(&self, prefix: Option<&Path>) -> Vec<ObjectMeta> {
+        self.below(prefix)
+    }
+
+    /// Swap `inputs` for `outputs` in one step.
+    ///
+    /// Queries planned before the call see the inputs, queries planned
+    /// after it see the outputs, and none sees both or neither. This is
+    /// what lets compaction rewrite files underneath running queries.
+    pub fn replace(&self, outputs: Vec<ObjectMeta>, inputs: &[Path]) {
+        let mut objects = self.write();
+        for path in inputs {
+            objects.remove(path);
+        }
+        for meta in outputs {
+            objects.insert(meta.location.clone(), meta);
+        }
+    }
+
+    /// Drop objects from the catalogue without touching storage.
+    pub fn forget_all(&self, paths: &[Path]) {
+        let mut objects = self.write();
+        for path in paths {
+            objects.remove(path);
+        }
+    }
+
     /// Reconcile the catalogue with what is actually in storage.
     ///
     /// Objects written through this wrapper while the listing was in
-    /// progress are kept even if the listing missed them.
+    /// progress are kept even if the listing missed them. Objects that an
+    /// unfinished or uncleared compaction says should not be visible are
+    /// left out, so an interrupted compaction can never show data twice.
     ///
     /// # Errors
     ///
     /// Returns an error if storage cannot be listed; the catalogue is left
     /// unchanged.
     pub async fn refresh(&self) -> Result<RefreshReport> {
+        let _guard = self.maintenance().await;
+        self.refresh_locked().await
+    }
+
+    async fn refresh_locked(&self) -> Result<RefreshReport> {
         let started = Utc::now();
-        let listed: Vec<ObjectMeta> = self.inner.list(None).try_collect().await?;
+        let mut listed: Vec<ObjectMeta> = self.inner.list(None).try_collect().await?;
+        let hidden = crate::compaction::hidden_by_markers(self.inner.as_ref(), &listed).await;
+        listed.retain(|meta| !hidden.contains(&meta.location));
         let listed_paths: BTreeSet<&Path> = listed.iter().map(|meta| &meta.location).collect();
 
         let mut report = RefreshReport::default();
@@ -168,7 +223,7 @@ impl fmt::Debug for CatalogueStore {
         f.debug_struct("CatalogueStore")
             .field("inner", &self.inner)
             .field("objects", &self.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

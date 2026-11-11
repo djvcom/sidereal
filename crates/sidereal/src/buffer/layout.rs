@@ -15,7 +15,7 @@ use arrow::array::RecordBatch;
 use arrow::compute::{
     concat_batches, lexsort_to_indices, partition, take_record_batch, SortColumn,
 };
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{Schema, SchemaRef};
 use arrow::error::ArrowError;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::SortingColumn;
@@ -112,8 +112,25 @@ impl FileLayout {
         sorted: &RecordBatch,
         config: &ParquetConfig,
     ) -> WriterProperties {
+        self.properties(&sorted.schema(), config, |name| {
+            sorted
+                .column_by_name(name)
+                .map_or(1, |column| distinct_values(self, name, sorted, column))
+        })
+    }
+
+    /// Writer properties for a file with this layout and `schema`.
+    ///
+    /// `distinct` gives, for a bloom-filtered column, the number of
+    /// distinct values expected in one row group.
+    #[must_use]
+    pub fn properties(
+        &self,
+        schema: &Schema,
+        config: &ParquetConfig,
+        distinct: impl Fn(&str) -> u64,
+    ) -> WriterProperties {
         let mut builder = base_properties(config);
-        let schema = sorted.schema();
 
         let sorting: Vec<SortingColumn> = self
             .sort_columns
@@ -133,15 +150,14 @@ impl FileLayout {
         }
 
         for name in self.bloom_columns {
-            let Some(column) = sorted.column_by_name(name) else {
+            if schema.index_of(name).is_err() {
                 continue;
-            };
+            }
             let path = ColumnPath::from(*name);
-            let distinct = distinct_values(self, name, sorted, column);
             builder = builder
                 .set_column_bloom_filter_enabled(path.clone(), true)
                 .set_column_bloom_filter_fpp(path.clone(), BLOOM_FILTER_FPP)
-                .set_column_bloom_filter_ndv(path, distinct);
+                .set_column_bloom_filter_ndv(path, distinct(name).max(1));
         }
 
         builder.build()
