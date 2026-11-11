@@ -37,6 +37,28 @@ const fn slot(signal: Signal) -> usize {
     }
 }
 
+/// An attribute that stored telemetry carries.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct KnownAttribute {
+    /// The attribute key.
+    pub key: String,
+    /// Where it is found: `span`, `resource`, or `built_in` for the
+    /// attributes that have dedicated columns.
+    pub scope: &'static str,
+    /// The types it has been sent with.
+    pub types: Vec<&'static str>,
+}
+
+fn type_name(data_type: &arrow::datatypes::DataType) -> &'static str {
+    use arrow::datatypes::DataType;
+    match data_type {
+        DataType::Boolean => "boolean",
+        DataType::Float64 => "number",
+        data_type if data_type.is_integer() => "integer",
+        _ => "text",
+    }
+}
+
 fn base_schema(signal: Signal) -> SchemaRef {
     match signal {
         Signal::Traces => crate::schema::traces::traces_storage_schema(),
@@ -134,6 +156,46 @@ impl AttributeRegistry {
             }
         }
         types
+    }
+
+    /// Every attribute a query on `signal` can refer to, in key order:
+    /// those stored as attribute columns and those with dedicated columns.
+    #[must_use]
+    pub fn known(&self, signal: Signal) -> Vec<KnownAttribute> {
+        let mut found: BTreeMap<(String, &'static str), Vec<&'static str>> = BTreeMap::new();
+
+        // Dedicated columns are named after the attribute itself, which
+        // always contains a dot; plain columns such as `name` are not
+        // attributes.
+        for field in base_schema(signal).fields() {
+            if field.name().contains('.') {
+                found
+                    .entry((field.name().clone(), "built_in"))
+                    .or_default()
+                    .push(type_name(field.data_type()));
+            }
+        }
+
+        let fields = self.fields.read().unwrap_or_else(PoisonError::into_inner);
+        if let Some(known) = fields.get(slot(signal)) {
+            for field in known.values() {
+                if let Some((scope, _, key)) = shred::parse_column_name(field.name()) {
+                    let scope = match scope {
+                        shred::Scope::Record => "span",
+                        shred::Scope::Resource => "resource",
+                    };
+                    found
+                        .entry((key.to_owned(), scope))
+                        .or_default()
+                        .push(type_name(field.data_type()));
+                }
+            }
+        }
+
+        found
+            .into_iter()
+            .map(|((key, scope), types)| KnownAttribute { key, scope, types })
+            .collect()
     }
 
     /// Number of attribute columns known for `signal`.

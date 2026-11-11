@@ -135,6 +135,71 @@ per type, and reads through these functions as text. Attribute columns
 appear in `SELECT *` under names of the form `attr.<type>.<key>` and
 `resource.<type>.<key>`.
 
+## Reliability conditions
+
+A reliability condition is a promise about a kind of request, stated in
+the terms of whoever depends on it: *crawler requests for a product page
+are told whether the product is in stock, 99% of the time, within
+800 ms*. Nothing has to error for such a promise to be broken, so it is
+defined over what requests carry rather than over any service's health.
+
+```json
+{
+  "id": "googlebot-product-availability",
+  "name": "Googlebot sees product availability",
+  "requests": {"all": [
+    {"attribute": "user_agent.original", "op": "contains", "value": "Googlebot"},
+    {"attribute": "http.route", "op": "equals", "value": "/products/{id}"}
+  ]},
+  "success": {
+    "all": [{"attribute": "product.in_stock", "op": "exists"}],
+    "within_ms": 800
+  },
+  "target": {"percent": 99.0, "window_days": 30, "minimum_requests": 100},
+  "impact": {"statement": "Google disapproves our listings", "severity": "high"},
+  "notify": [{"name": "Search marketing", "channel": "email", "address": "search@example.com"}],
+  "trial_days": 7
+}
+```
+
+A request is a whole trace: each test passes if *any* span of the trace
+passes it, so the service that knows who is asking and the service that
+knows how it went need not be the same. Speed is the caller's wait, the
+duration of the entry span.
+
+| Method | Path                              | Purpose                                      |
+|--------|-----------------------------------|----------------------------------------------|
+| POST   | `/conditions/preview`             | How do these requests behave today?          |
+| GET    | `/conditions/attributes`          | Which attributes can a condition refer to?   |
+| POST   | `/conditions`                     | Create a condition                           |
+| GET    | `/conditions`                     | Every condition with its current standing    |
+| GET    | `/conditions/{id}`                | One condition with its current standing      |
+| PUT    | `/conditions/{id}`                | Change a condition                           |
+| DELETE | `/conditions/{id}`                | Retire a condition                           |
+| GET    | `/conditions/{id}/history`        | Every revision: who changed what, and when   |
+| GET    | `/conditions/{id}/backtest`       | How it would have fared over stored history  |
+
+`/conditions/preview` needs no condition to exist. Given a description of
+some requests it returns how many there were, how often they succeeded,
+how long they took, real examples of each outcome, which service
+versions took part and in what share of the failures, a suggested target
+that is already being met, and the same findings as plain sentences.
+
+A condition's standing is one of `healthy`, `at_risk` (most of the
+failure allowance used), `breached`, `not_enough_data` or `paused`. A new
+condition can start with a trial, during which it is measured and shown
+but flagged as not yet notifying anyone.
+
+Definitions are stored in the bucket under `config/conditions/`, one
+object per revision, so the record of changes is the list of objects.
+**A bucket lifecycle rule that expires telemetry must not cover the
+`config/` prefix.** Changes are attributed to the `X-Sidereal-Author`
+request header.
+
+Conditions are evaluated when asked for. Continuous monitoring and
+notifications are not implemented yet: `notify` is recorded but nothing
+is sent.
+
 ## Configuration
 
 Configuration is loaded in priority order:

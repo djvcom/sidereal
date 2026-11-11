@@ -14,6 +14,10 @@ use sidereal::{
     buffer::{start_background_flush, FlushHandle, Ingester},
     catalogue::{start_background_refresh, CatalogueStore},
     compaction::{start_background_compaction, Compactor},
+    conditions::{
+        api::{condition_router, ConditionApiState},
+        store::ConditionStore,
+    },
     config::{BufferConfig, ParquetConfig, WalConfig},
     deployments::{deployment_router, DeploymentApiState},
     errors::{error_router, ErrorApiState},
@@ -195,6 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let query_state = QueryApiState::new(query_engine.clone()).with_trace_index(trace_index);
+    let condition_engine = query_engine.clone();
     let error_aggregator = Arc::new(sidereal::errors::ErrorAggregator::new(query_engine.clone()));
     let error_state = ErrorApiState {
         aggregator: error_aggregator,
@@ -258,9 +263,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Everything that serves telemetry sits behind the same check as the
     // query routes, not beside it.
+    let condition_state = ConditionApiState {
+        engine: condition_engine,
+        store: Arc::new(ConditionStore::new(store.clone())),
+        attributes: attributes.clone(),
+    };
     let extra_routes = axum::Router::new()
         .nest("/errors", error_router(error_state))
-        .nest("/deployments", deployment_router(deployment_state));
+        .nest("/deployments", deployment_router(deployment_state))
+        .nest("/conditions", condition_router(condition_state));
     let api_router = match oidc_validator {
         Some(validator) => {
             let extra_routes = extra_routes.layer(axum::middleware::from_fn_with_state(
