@@ -354,6 +354,12 @@ pub struct QueryConfig {
     /// remote storage. Zero disables it. Defaults to 256 MiB. Not used
     /// with local filesystem storage.
     pub cache_bytes: usize,
+    /// Size in bytes of the cache of parsed file footers.
+    ///
+    /// Every query needs the footer of each file it considers; keeping
+    /// them parsed avoids repeating that work per query. Defaults to
+    /// 256 MiB.
+    pub metadata_cache_bytes: usize,
 }
 
 impl Default for QueryConfig {
@@ -362,6 +368,7 @@ impl Default for QueryConfig {
             memory_limit_bytes: DEFAULT_QUERY_MEMORY_LIMIT,
             timeout_secs: DEFAULT_QUERY_TIMEOUT_SECS,
             cache_bytes: crate::query::engine::DEFAULT_QUERY_CACHE_BYTES,
+            metadata_cache_bytes: crate::query::engine::DEFAULT_METADATA_CACHE_BYTES,
         }
     }
 }

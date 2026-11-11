@@ -3,6 +3,7 @@
 //! Configures a DataFusion SessionContext with ListingTables for traces,
 //! metrics, and logs with automatic Hive-style partition pruning.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,6 +21,7 @@ use object_store::ObjectStore;
 use url::Url;
 
 use super::cache::BlockCache;
+use crate::attributes::AttributeRegistry;
 use crate::schema::{
     logs::logs_storage_schema, metrics::number_metrics_storage_schema,
     traces::traces_storage_schema, PARTITION_COLUMNS,
@@ -50,6 +52,16 @@ pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default size of the in-memory object cache (256 MiB).
 pub const DEFAULT_QUERY_CACHE_BYTES: usize = 256 * 1024 * 1024;
+
+/// Default size of the cache of parsed file footers (256 MiB).
+///
+/// Every query needs the footer of every file it considers. Parsing one
+/// costs a fraction of a millisecond, which adds up over hundreds of
+/// files, so parsed footers are kept between queries. DataFusion's own
+/// default of 50 MiB holds too few: on the benchmark harness's 725-file
+/// dataset it was overflowing, and queries spanning all files took nearly
+/// twice as long as with room for every footer.
+pub const DEFAULT_METADATA_CACHE_BYTES: usize = 256 * 1024 * 1024;
 
 /// Default DataFusion batch size for query execution.
 ///
@@ -102,6 +114,13 @@ pub struct QueryEngine {
     ctx: SessionContext,
     base_url: Url,
     query_timeout: Option<Duration>,
+    /// Source of the attribute columns each table has, if any.
+    attributes: Option<Arc<AttributeRegistry>>,
+    /// The registry version the registered tables were built from.
+    tables_version: AtomicU64,
+    /// Held for reading while a query is planned and for writing while
+    /// tables are swapped, so no query is planned against a missing table.
+    tables: tokio::sync::RwLock<()>,
 }
 
 /// Builder for configuring a QueryEngine.
@@ -112,6 +131,8 @@ pub struct QueryEngineBuilder {
     memory_pool: MemoryPoolStrategy,
     query_timeout: Option<Duration>,
     cache_bytes: usize,
+    metadata_cache_bytes: usize,
+    attributes: Option<Arc<AttributeRegistry>>,
 }
 
 impl QueryEngineBuilder {
@@ -125,7 +146,26 @@ impl QueryEngineBuilder {
             memory_pool: MemoryPoolStrategy::default(),
             query_timeout: Some(DEFAULT_QUERY_TIMEOUT),
             cache_bytes: DEFAULT_QUERY_CACHE_BYTES,
+            metadata_cache_bytes: DEFAULT_METADATA_CACHE_BYTES,
+            attributes: None,
         }
+    }
+
+    /// Set how much memory parsed file footers may occupy between
+    /// queries, in bytes.
+    pub const fn with_metadata_cache_bytes(mut self, bytes: usize) -> Self {
+        self.metadata_cache_bytes = bytes;
+        self
+    }
+
+    /// Give each table the attribute columns recorded in `registry`, and
+    /// keep them current as new attributes are flushed.
+    ///
+    /// Without a registry the tables have only their fixed columns, and
+    /// attributes are reachable only through `cbor_extract`.
+    pub fn with_attribute_registry(mut self, registry: Arc<AttributeRegistry>) -> Self {
+        self.attributes = Some(registry);
+        self
     }
 
     /// Set how much object data is cached in memory, in bytes.
@@ -175,22 +215,19 @@ impl QueryEngineBuilder {
     pub async fn build(self) -> Result<QueryEngine, TelemetryError> {
         let url = Url::parse(&self.base_url).map_err(TelemetryError::UrlParse)?;
 
-        // Build runtime environment with optional memory pool
+        // Build runtime environment with optional memory pool. Parsed file
+        // footers are cached between queries.
+        let runtime = RuntimeEnvBuilder::new().with_metadata_cache_limit(self.metadata_cache_bytes);
         let runtime = match self.memory_pool {
-            MemoryPoolStrategy::Unlimited => RuntimeEnvBuilder::new().build_arc()?,
+            MemoryPoolStrategy::Unlimited => runtime,
             MemoryPoolStrategy::Greedy { max_bytes } => {
-                let pool = GreedyMemoryPool::new(max_bytes);
-                RuntimeEnvBuilder::new()
-                    .with_memory_pool(Arc::new(pool))
-                    .build_arc()?
+                runtime.with_memory_pool(Arc::new(GreedyMemoryPool::new(max_bytes)))
             }
             MemoryPoolStrategy::FairSpill { max_bytes } => {
-                let pool = FairSpillPool::new(max_bytes);
-                RuntimeEnvBuilder::new()
-                    .with_memory_pool(Arc::new(pool))
-                    .build_arc()?
+                runtime.with_memory_pool(Arc::new(FairSpillPool::new(max_bytes)))
             }
-        };
+        }
+        .build_arc()?;
 
         // Configure session for telemetry query workload
         let mut config = SessionConfig::new()
@@ -219,12 +256,19 @@ impl QueryEngineBuilder {
             .with_config(config)
             .with_runtime_env(runtime)
             .build();
-        let ctx = SessionContext::from(state);
+        let mut ctx = SessionContext::from(state);
 
         // Register custom UDFs for error tracking
         for udf in super::udfs::all_udfs() {
             ctx.register_udf(udf);
         }
+        for udf in super::udfs::attr::attribute_udfs(self.attributes.as_ref()) {
+            ctx.register_udf(udf);
+        }
+        datafusion::execution::FunctionRegistry::register_function_rewrite(
+            &mut ctx,
+            Arc::new(super::udfs::attr::AttributeRewrite),
+        )?;
 
         // Register object store with DataFusion
         if url.scheme() == "file" {
@@ -243,18 +287,11 @@ impl QueryEngineBuilder {
             ctx,
             base_url: url,
             query_timeout: self.query_timeout,
+            attributes: self.attributes,
+            tables_version: AtomicU64::new(0),
+            tables: tokio::sync::RwLock::new(()),
         };
-
-        // Register tables for each signal type
-        engine
-            .register_signal_table(Signal::Traces, traces_storage_schema())
-            .await?;
-        engine
-            .register_signal_table(Signal::Metrics, number_metrics_storage_schema())
-            .await?;
-        engine
-            .register_signal_table(Signal::Logs, logs_storage_schema())
-            .await?;
+        engine.register_tables().await?;
 
         Ok(engine)
     }
@@ -271,6 +308,42 @@ impl QueryEngine {
     /// lookup requires the store to be registered at the URL scheme root for local paths.
     pub async fn new(store: Arc<dyn ObjectStore>, base_url: &str) -> Result<Self, TelemetryError> {
         QueryEngineBuilder::new(store, base_url).build().await
+    }
+
+    /// Register the three signal tables, replacing any already registered,
+    /// with whatever attribute columns the registry knows of right now.
+    async fn register_tables(&self) -> Result<(), TelemetryError> {
+        let version = self.attributes.as_ref().map_or(0, |r| r.version());
+        for (signal, base) in [
+            (Signal::Traces, traces_storage_schema()),
+            (Signal::Metrics, number_metrics_storage_schema()),
+            (Signal::Logs, logs_storage_schema()),
+        ] {
+            let schema = self
+                .attributes
+                .as_ref()
+                .map_or_else(|| Arc::clone(&base), |r| r.schema(signal, &base));
+            self.ctx
+                .deregister_table(TableReference::bare(signal.as_str()))?;
+            self.register_signal_table(signal, schema).await?;
+        }
+        self.tables_version.store(version, Ordering::Release);
+        Ok(())
+    }
+
+    /// Plan `sql` against tables that include every attribute column
+    /// flushed so far.
+    async fn plan(&self, sql: &str) -> Result<DataFrame, TelemetryError> {
+        if let Some(registry) = &self.attributes {
+            if registry.version() != self.tables_version.load(Ordering::Acquire) {
+                let _swap = self.tables.write().await;
+                if registry.version() != self.tables_version.load(Ordering::Acquire) {
+                    self.register_tables().await?;
+                }
+            }
+        }
+        let _planning = self.tables.read().await;
+        self.ctx.sql(sql).await.map_err(Into::into)
     }
 
     /// Register a ListingTable for a telemetry signal.
@@ -314,7 +387,7 @@ impl QueryEngine {
         self.ctx
             .register_table(TableReference::bare(table_name), Arc::new(table))?;
 
-        tracing::info!(signal = %signal, path = %table_path, "Registered table with partition pruning");
+        tracing::debug!(signal = %signal, path = %table_path, "Registered table with partition pruning");
 
         Ok(())
     }
@@ -330,7 +403,7 @@ impl QueryEngine {
         &self,
         sql: &str,
     ) -> Result<Vec<arrow::record_batch::RecordBatch>, TelemetryError> {
-        let df = self.ctx.sql(sql).await?;
+        let df = self.plan(sql).await?;
 
         self.collect(df).await
     }
@@ -346,7 +419,7 @@ impl QueryEngine {
         sql: &str,
         max_rows: usize,
     ) -> Result<Vec<arrow::record_batch::RecordBatch>, TelemetryError> {
-        let df = self.ctx.sql(sql).await?;
+        let df = self.plan(sql).await?;
         let df = df.limit(0, Some(max_rows))?;
 
         self.collect(df).await
@@ -398,7 +471,7 @@ impl QueryEngine {
         &self,
         sql: &str,
     ) -> Result<SendableRecordBatchStream, TelemetryError> {
-        let df = self.ctx.sql(sql).await?;
+        let df = self.plan(sql).await?;
         df.execute_stream().await.map_err(Into::into)
     }
 

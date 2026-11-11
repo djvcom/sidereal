@@ -4,7 +4,9 @@
 //! - `normalise_stacktrace(stacktrace)` - Normalise stacktrace for fingerprinting
 //! - `error_fingerprint(error_type, message, stacktrace, service)` - Compute error fingerprint
 //! - `cbor_extract(data, key)` - Extract value from CBOR-encoded attributes
+//! - `attr(key)` and `resource_attr(key)` - Read an attribute from its column
 
+pub mod attr;
 mod cbor;
 mod fingerprint;
 mod normalise;

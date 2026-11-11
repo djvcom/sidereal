@@ -19,10 +19,12 @@ use arrow::datatypes::{Schema, SchemaRef};
 use arrow::error::ArrowError;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::SortingColumn;
+use parquet::file::properties::EnabledStatistics;
 use parquet::file::properties::{WriterProperties, WriterPropertiesBuilder};
 use parquet::schema::types::ColumnPath;
 
 use crate::config::ParquetConfig;
+use crate::ingest::shred;
 use crate::storage::Signal;
 
 /// Target false-positive rate for bloom filters.
@@ -147,6 +149,18 @@ impl FileLayout {
             builder = builder
                 .set_sorting_columns(Some(sorting))
                 .set_data_page_row_count_limit(DATA_PAGE_ROW_LIMIT);
+        }
+
+        // Attribute columns are sparse and in no particular order, so
+        // statistics per page would not narrow a scan; they would only
+        // make every file's page index larger for every query to load.
+        for field in schema.fields() {
+            if shred::parse_column_name(field.name()).is_some() {
+                builder = builder.set_column_statistics_enabled(
+                    ColumnPath::from(field.name().as_str()),
+                    EnabledStatistics::Chunk,
+                );
+            }
         }
 
         for name in self.bloom_columns {

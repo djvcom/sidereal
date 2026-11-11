@@ -50,6 +50,7 @@ use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{span, ResourceSpans, ScopeSpans, Span, Status};
 use serde::{Deserialize, Serialize};
 
+use sidereal::attributes::AttributeRegistry;
 use sidereal::buffer::Ingester;
 use sidereal::catalogue::CatalogueStore;
 use sidereal::compaction::Compactor;
@@ -1059,8 +1060,50 @@ fn query_cases(meta: &DatasetMeta) -> Vec<QueryCase> {
     });
 
     cases.push(QueryCase {
-        name: "custom_attribute_filter",
+        name: "attribute_filter",
         story: "6: count spans for one tenant",
+        sql: Box::new(|i| {
+            format!(
+                "SELECT COUNT(*) FROM traces WHERE attr('tenant.id') = 'tenant-{}'",
+                (i as u64 * 37) % TENANTS
+            )
+        }),
+        expected_rows: Box::new(|_| Some(1)),
+    });
+
+    cases.push(QueryCase {
+        name: "attribute_group_by",
+        story: "6: busiest ten tenants of one service",
+        sql: Box::new(|i| {
+            format!(
+                "SELECT attr('tenant.id') AS tenant, COUNT(*) AS spans, \
+                 AVG(duration_ns) AS mean_ns FROM traces \
+                 WHERE \"service.name\" = '{}' \
+                 GROUP BY attr('tenant.id') ORDER BY spans DESC LIMIT 10",
+                SERVICES[i % 6]
+            )
+        }),
+        expected_rows: Box::new(|_| Some(10)),
+    });
+
+    cases.push(QueryCase {
+        name: "resource_attribute_filter",
+        story: "6: spans from one pod",
+        sql: Box::new(|i| {
+            format!(
+                "SELECT COUNT(*) FROM traces \
+                 WHERE resource_attr('k8s.pod.name') = '{}-{}-{}'",
+                SERVICES[i % SERVICES.len()],
+                i % 2,
+                i % 3
+            )
+        }),
+        expected_rows: Box::new(|_| Some(1)),
+    });
+
+    cases.push(QueryCase {
+        name: "attribute_filter_via_blob",
+        story: "6: the same count, decoding the blob",
         sql: Box::new(|i| {
             format!(
                 "SELECT COUNT(*) FROM traces \
@@ -1287,6 +1330,7 @@ async fn main() {
     });
     // As in the server: listings are answered from the in-memory catalogue,
     // built by listing storage once at startup.
+    let attributes = Arc::new(AttributeRegistry::new());
     let (store, index): (Arc<dyn ObjectStore>, Option<Arc<TraceIndex>>) = if args.no_catalogue {
         (remote.clone(), None)
     } else {
@@ -1319,6 +1363,17 @@ async fn main() {
             started.elapsed().as_secs_f64() * 1e3,
             remote.gets.load(Ordering::Relaxed)
         );
+        // As the server does at startup, before serving queries.
+        let before = remote.gets.load(Ordering::Relaxed);
+        let started = Instant::now();
+        let files_read = attributes.load(&catalogue).await;
+        println!(
+            "attribute columns: {} found in {} files, loaded in {:.0} ms with {} storage requests",
+            attributes.len(Signal::Traces),
+            files_read,
+            started.elapsed().as_secs_f64() * 1e3,
+            remote.gets.load(Ordering::Relaxed) - before
+        );
         (catalogue, Some(index))
     };
     remote.gets.store(0, Ordering::Relaxed);
@@ -1327,6 +1382,7 @@ async fn main() {
     let engine = QueryEngineBuilder::new(store, "harness://data")
         .with_timeout(Some(Duration::from_secs(600)))
         .with_cache_bytes(args.cache_mib * 1024 * 1024)
+        .with_attribute_registry(attributes)
         .build()
         .await
         .unwrap();

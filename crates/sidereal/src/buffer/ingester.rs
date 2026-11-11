@@ -14,7 +14,9 @@ use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
 
 use super::layout::{base_properties, FileLayout};
+use crate::attributes::AttributeRegistry;
 use crate::config::{BufferConfig, ParquetConfig};
+use crate::ingest::shred;
 use crate::storage::Signal;
 use crate::wal::Wal;
 use crate::TelemetryError;
@@ -63,6 +65,7 @@ pub struct Ingester {
     buffer_config: BufferConfig,
     parquet_config: ParquetConfig,
     wal: Option<Wal>,
+    attributes: Option<Arc<AttributeRegistry>>,
 }
 
 impl Ingester {
@@ -84,6 +87,7 @@ impl Ingester {
             buffer_config,
             parquet_config,
             wal: None,
+            attributes: None,
         }
     }
 
@@ -96,6 +100,14 @@ impl Ingester {
     #[must_use]
     pub fn with_wal(mut self, wal: Wal) -> Self {
         self.wal = Some(wal);
+        self
+    }
+
+    /// Report the attribute columns of every flushed file to `registry`,
+    /// so that queries can see them as soon as the file is written.
+    #[must_use]
+    pub fn with_attribute_registry(mut self, registry: Arc<AttributeRegistry>) -> Self {
+        self.attributes = Some(registry);
         self
     }
 
@@ -125,7 +137,7 @@ impl Ingester {
         let mut recovered_bytes = 0usize;
         for segment in &segments {
             for batch in wal.read_segment(segment)? {
-                if batch.schema() != self.schema {
+                if !shred::extends(&self.schema, &batch.schema()) {
                     tracing::warn!(
                         signal = %self.signal,
                         segment = %segment.display(),
@@ -343,8 +355,17 @@ impl Ingester {
     ) -> Result<(), TelemetryError> {
         use parquet::arrow::AsyncArrowWriter;
 
+        // Batches differ in which attribute columns they carry; the file
+        // gets every column any of them has.
+        let (schema, unified) = shred::unify(&self.schema, batches)?;
+        // Registered before the file exists: a query must never meet a
+        // file whose columns it could not have planned for.
+        if let Some(registry) = &self.attributes {
+            registry.observe(self.signal, &schema);
+        }
+
         let layout = FileLayout::for_signal(self.signal);
-        let sorted = match layout.sort(&self.schema, batches) {
+        let sorted = match layout.sort(&schema, &unified) {
             Ok(sorted) => Some(sorted),
             Err(e) => {
                 tracing::warn!(
@@ -359,7 +380,9 @@ impl Ingester {
             || base_properties(&self.parquet_config).build(),
             |sorted| layout.writer_properties(sorted, &self.parquet_config),
         );
-        let batches = sorted.as_ref().map_or(batches, std::slice::from_ref);
+        let batches = sorted
+            .as_ref()
+            .map_or(unified.as_slice(), std::slice::from_ref);
 
         let max_retries = self.buffer_config.flush_max_retries;
         let initial_delay = Duration::from_millis(self.buffer_config.flush_initial_delay_ms);
@@ -384,7 +407,7 @@ impl Ingester {
             let write_result: Result<(), TelemetryError> = async {
                 let mut writer = AsyncArrowWriter::try_new(
                     &mut parquet_buffer,
-                    self.schema.clone(),
+                    schema.clone(),
                     Some(props.clone()),
                 )?;
 
@@ -1151,7 +1174,7 @@ mod tests {
             config.clone(),
             parquet_config.clone(),
         )
-        .with_wal(Wal::open(root.path(), Signal::Traces, schema.clone(), false).unwrap());
+        .with_wal(Wal::open(root.path(), Signal::Traces, false).unwrap());
 
         crashed.ingest(test_batch(&schema, 10)).await.unwrap();
         crashed.ingest(test_batch(&schema, 15)).await.unwrap();
@@ -1164,7 +1187,7 @@ mod tests {
             config,
             parquet_config,
         )
-        .with_wal(Wal::open(root.path(), Signal::Traces, schema.clone(), false).unwrap());
+        .with_wal(Wal::open(root.path(), Signal::Traces, false).unwrap());
 
         let rows = recovered.recover_from_wal().await.unwrap();
         assert_eq!(rows, 25);
@@ -1196,7 +1219,7 @@ mod tests {
         };
 
         let ingester = Ingester::new(Signal::Logs, schema.clone(), store, config, parquet_config)
-            .with_wal(Wal::open(root.path(), Signal::Logs, schema.clone(), false).unwrap());
+            .with_wal(Wal::open(root.path(), Signal::Logs, false).unwrap());
 
         ingester.ingest(test_batch(&schema, 10)).await.unwrap();
         assert_eq!(

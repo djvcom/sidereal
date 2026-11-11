@@ -16,6 +16,7 @@
 //!                                    HTTP Query API
 //! ```
 
+pub mod attributes;
 pub mod auth;
 pub mod buffer;
 pub mod catalogue;

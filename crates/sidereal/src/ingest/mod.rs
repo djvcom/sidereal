@@ -5,6 +5,7 @@
 pub mod convert;
 pub mod grpc;
 pub mod http;
+pub mod shred;
 
 pub use convert::{
     convert_logs_to_arrow, convert_metrics_to_arrow, convert_traces_to_arrow, ConversionResult,

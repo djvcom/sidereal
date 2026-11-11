@@ -78,6 +78,9 @@ path = "./telemetry-data"
 # cache answers more queries without touching remote storage. Not used
 # with local filesystem storage.
 # cache_bytes = 268435456
+# Cache of parsed file footers (default: 256 MiB). Every query needs the
+# footer of each file it considers.
+# metadata_cache_bytes = 268435456
 
 # Catalogue
 # Sidereal keeps the list of stored files in memory, rebuilt from storage

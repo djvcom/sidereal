@@ -8,6 +8,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::shred::{self, AttributeShredder};
+
 /// Result of converting OTLP data to Arrow format.
 ///
 /// Tracks both successfully converted records and any that were rejected
@@ -440,6 +442,9 @@ pub fn convert_traces_to_arrow(
         semconv::CLIENT_PORT,
     ];
 
+    let mut shredder = AttributeShredder::new();
+    let mut row = 0usize;
+
     for resource_spans in &request.resource_spans {
         // Extract resource attributes and dropped count once per resource
         let (raw_resource_attrs, res_dropped_count) =
@@ -672,6 +677,16 @@ pub fn convert_traces_to_arrow(
                     extract_i32_attr(&span_map, semconv::CLIENT_PORT),
                 );
 
+                // Every remaining attribute as a column of its own
+                shredder.add(
+                    row,
+                    shred::Scope::Resource,
+                    &resource_attrs,
+                    &resource_extracted_keys,
+                );
+                shredder.add(row, shred::Scope::Record, &span_attrs, &span_extracted_keys);
+                row += 1;
+
                 // Remaining attributes as CBOR
                 append_option_binary(&mut resource_attributes, remaining_resource.as_deref());
                 append_option_binary(
@@ -750,7 +765,7 @@ pub fn convert_traces_to_arrow(
         Arc::new(links.finish()),
     ];
 
-    let batch = RecordBatch::try_new(schema, columns)?;
+    let batch = shredder.finish(&schema, columns)?;
     Ok(ConversionResult::success(batch))
 }
 
@@ -936,6 +951,9 @@ pub fn convert_metrics_to_arrow(
         semconv::K8S_NAMESPACE_NAME,
     ];
 
+    let mut shredder = AttributeShredder::new();
+    let mut row = 0usize;
+
     for resource_metrics in &request.resource_metrics {
         let (raw_resource_attrs, res_dropped_count) = resource_metrics
             .resource
@@ -1071,6 +1089,14 @@ pub fn convert_metrics_to_arrow(
                                 Signal::Metrics,
                                 AttributeScope::DataPoint,
                             );
+                            shredder.add(
+                                row,
+                                shred::Scope::Resource,
+                                &resource_attrs,
+                                &resource_extracted_keys,
+                            );
+                            shredder.add(row, shred::Scope::Record, &redacted_dp_attrs, &[]);
+                            row += 1;
                             append_option_binary(
                                 &mut data_point_attributes,
                                 encode_remaining_attrs(&redacted_dp_attrs, &[]).as_deref(),
@@ -1153,6 +1179,14 @@ pub fn convert_metrics_to_arrow(
                                 Signal::Metrics,
                                 AttributeScope::DataPoint,
                             );
+                            shredder.add(
+                                row,
+                                shred::Scope::Resource,
+                                &resource_attrs,
+                                &resource_extracted_keys,
+                            );
+                            shredder.add(row, shred::Scope::Record, &redacted_dp_attrs, &[]);
+                            row += 1;
                             append_option_binary(
                                 &mut data_point_attributes,
                                 encode_remaining_attrs(&redacted_dp_attrs, &[]).as_deref(),
@@ -1249,6 +1283,14 @@ pub fn convert_metrics_to_arrow(
                                 Signal::Metrics,
                                 AttributeScope::DataPoint,
                             );
+                            shredder.add(
+                                row,
+                                shred::Scope::Resource,
+                                &resource_attrs,
+                                &resource_extracted_keys,
+                            );
+                            shredder.add(row, shred::Scope::Record, &redacted_dp_attrs, &[]);
+                            row += 1;
                             append_option_binary(
                                 &mut data_point_attributes,
                                 encode_remaining_attrs(&redacted_dp_attrs, &[]).as_deref(),
@@ -1344,6 +1386,14 @@ pub fn convert_metrics_to_arrow(
                                 Signal::Metrics,
                                 AttributeScope::DataPoint,
                             );
+                            shredder.add(
+                                row,
+                                shred::Scope::Resource,
+                                &resource_attrs,
+                                &resource_extracted_keys,
+                            );
+                            shredder.add(row, shred::Scope::Record, &redacted_dp_attrs, &[]);
+                            row += 1;
                             append_option_binary(
                                 &mut data_point_attributes,
                                 encode_remaining_attrs(&redacted_dp_attrs, &[]).as_deref(),
@@ -1424,6 +1474,14 @@ pub fn convert_metrics_to_arrow(
                                 Signal::Metrics,
                                 AttributeScope::DataPoint,
                             );
+                            shredder.add(
+                                row,
+                                shred::Scope::Resource,
+                                &resource_attrs,
+                                &resource_extracted_keys,
+                            );
+                            shredder.add(row, shred::Scope::Record, &redacted_dp_attrs, &[]);
+                            row += 1;
                             append_option_binary(
                                 &mut data_point_attributes,
                                 encode_remaining_attrs(&redacted_dp_attrs, &[]).as_deref(),
@@ -1474,7 +1532,7 @@ pub fn convert_metrics_to_arrow(
         Arc::new(exemplars.finish()),
     ];
 
-    let batch = RecordBatch::try_new(schema, columns)?;
+    let batch = shredder.finish(&schema, columns)?;
     Ok(ConversionResult::success(batch))
 }
 
@@ -1808,6 +1866,9 @@ pub fn convert_logs_to_arrow(
         semconv::EVENT_DOMAIN,
     ];
 
+    let mut shredder = AttributeShredder::new();
+    let mut row = 0usize;
+
     for resource_logs in &request.resource_logs {
         let (raw_resource_attrs, res_dropped_count) =
             resource_logs.resource.as_ref().map_or((&[][..], 0), |r| {
@@ -1990,6 +2051,15 @@ pub fn convert_logs_to_arrow(
                     &mut event_domain,
                     extract_string_attr(&log_map, semconv::EVENT_DOMAIN).as_deref(),
                 );
+                shredder.add(
+                    row,
+                    shred::Scope::Resource,
+                    &resource_attrs,
+                    &resource_extracted_keys,
+                );
+                shredder.add(row, shred::Scope::Record, &log_attrs, &log_extracted_keys);
+                row += 1;
+
                 append_option_binary(&mut resource_attributes, remaining_resource.as_deref());
                 append_option_binary(
                     &mut log_attributes,
@@ -2034,7 +2104,7 @@ pub fn convert_logs_to_arrow(
         Arc::new(log_attributes.finish()),
     ];
 
-    let batch = RecordBatch::try_new(schema, columns)?;
+    let batch = shredder.finish(&schema, columns)?;
     Ok(ConversionResult::success(batch))
 }
 

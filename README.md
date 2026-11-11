@@ -104,6 +104,37 @@ Settings can also be provided as `SIDEREAL_AI_`-prefixed environment
 variables (e.g. `SIDEREAL_AI_MODEL_PROVIDER=ollama`). To see the whole
 loop working against generated telemetry, run `just ai-demo`.
 
+## Querying by attribute
+
+Every attribute a service sends is stored as a column of its own, with
+its own type, as well as in the complete attribute blob. Nothing has to
+be declared first. Two SQL functions read an attribute by name:
+
+```sql
+-- What share of crawler requests for product pages were told the
+-- product is in stock?
+SELECT CAST(COUNT(*) FILTER (WHERE attr('product.in_stock')) AS DOUBLE) / COUNT(*)
+FROM traces
+WHERE attr('user_agent.original') LIKE '%Googlebot%'
+  AND attr('http.route') = '/products/{id}'
+  AND resource_attr('deployment.environment.name') = 'production'
+```
+
+- `attr('key')` reads an attribute of the span, log record or data point
+- `resource_attr('key')` reads an attribute of the resource that emitted it
+
+Both resolve to the underlying column while the query is planned, so
+filters, grouping and aggregation on any attribute cost what they would
+on a built-in column. Integers, floats and booleans keep their types;
+arrays, maps and byte strings are available only through the blob with
+`cbor_extract`. An attribute nobody has sent yet reads as `NULL`, so a
+query can be written before the first service is instrumented.
+
+A key sent with different types by different services keeps one column
+per type, and reads through these functions as text. Attribute columns
+appear in `SELECT *` under names of the form `attr.<type>.<key>` and
+`resource.<type>.<key>`.
+
 ## Configuration
 
 Configuration is loaded in priority order:
@@ -138,6 +169,7 @@ from exhausting system resources:
 memory_limit_bytes = 268435456  # 256 MiB (default)
 timeout_secs = 30               # default
 cache_bytes = 268435456         # 256 MiB (default), 0 disables
+metadata_cache_bytes = 268435456  # 256 MiB (default)
 ```
 
 `cache_bytes` sizes an in-memory cache of object storage reads. Flushed
@@ -248,8 +280,12 @@ path = "/var/lib/sidereal/wal"
 - **Semantic convention columns** — frequently-queried OTel attributes
   (e.g. `service.name`, `http.request.method`) are extracted to dedicated
   Arrow columns for efficient querying
-- **CBOR attribute encoding** — remaining attributes are stored as CBOR binary,
-  queryable via the `cbor_extract` UDF
+- **Attributes as columns** — every attribute is also stored as its own
+  typed column, so `attr('any.key')` filters and groups as fast as a
+  built-in column, with nothing to declare in advance
+- **Complete attribute record** — all attributes are also kept as CBOR
+  binary, queryable via the `cbor_extract` UDF, including the arrays and
+  maps that have no column form
 - **PII redaction** — configurable ingestion-time redaction pipeline with
   drop, mask, and HMAC-hash actions
 - **Error tracking** — content-addressed fingerprinting, grouping, timeline,

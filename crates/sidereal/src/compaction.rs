@@ -54,6 +54,7 @@ use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
 use futures::StreamExt;
 use object_store::path::Path;
 use object_store::{ObjectMeta, ObjectStore};
+use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 use parquet::arrow::async_writer::ParquetObjectWriter;
 use parquet::arrow::AsyncArrowWriter;
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,7 @@ use url::Url;
 use crate::buffer::FileLayout;
 use crate::catalogue::CatalogueStore;
 use crate::config::{CompactionConfig, ParquetConfig};
+use crate::ingest::shred;
 use crate::schema::{
     logs::logs_storage_schema, metrics::number_metrics_storage_schema,
     traces::traces_storage_schema,
@@ -524,7 +526,15 @@ impl Compactor {
         id: &str,
     ) -> Result<(Vec<ObjectMeta>, usize), TelemetryError> {
         let store = self.catalogue.inner();
-        let schema = storage_schema(job.signal);
+        // Inputs differ in which attribute columns they carry; the outputs
+        // get every column any of them has.
+        let mut shredded = Vec::new();
+        for input in &job.inputs {
+            if let Some(schema) = read_arrow_schema(&store, input).await? {
+                shredded.extend(shred::shredded_fields(&schema));
+            }
+        }
+        let schema = shred::with_shredded(&storage_schema(job.signal), shredded);
         let layout = FileLayout::for_signal(job.signal);
 
         let runtime = RuntimeEnvBuilder::new()
@@ -612,6 +622,31 @@ impl Compactor {
             outputs.push(store.head(path).await?);
         }
         Ok((outputs, rows_out))
+    }
+}
+
+/// The Arrow schema of a stored Parquet file, or `None` if the file no
+/// longer exists.
+///
+/// # Errors
+///
+/// Returns an error if the file exists but its footer cannot be read.
+pub async fn read_arrow_schema(
+    store: &Arc<dyn ObjectStore>,
+    meta: &ObjectMeta,
+) -> Result<Option<SchemaRef>, TelemetryError> {
+    let reader = ParquetObjectReader::new(Arc::clone(store), meta.location.clone())
+        .with_file_size(meta.size);
+    match ParquetRecordBatchStreamBuilder::new(reader).await {
+        Ok(builder) => Ok(Some(Arc::clone(builder.schema()))),
+        Err(parquet::errors::ParquetError::External(error))
+            if error
+                .downcast_ref::<object_store::Error>()
+                .is_some_and(|e| matches!(e, object_store::Error::NotFound { .. })) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
     }
 }
 

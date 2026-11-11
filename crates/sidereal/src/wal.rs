@@ -8,10 +8,13 @@
 //! confirmed in object storage. On startup, leftover segments are replayed
 //! into the buffer, restoring anything a previous process failed to flush.
 //!
-//! Segments use the Arrow IPC stream format under ULID filenames, so
-//! lexicographic order is chronological order. A crash can tear the tail of
-//! the active segment; reads stop at the first corrupt message and discard
-//! the remainder, so a torn final append cannot poison the log. With `fsync`
+//! Segments have ULID filenames, so lexicographic order is chronological
+//! order. Each append is one frame: a four-byte little-endian length
+//! followed by a complete Arrow IPC stream holding the batch and its own
+//! schema. Carrying the schema per batch matters because batches differ in
+//! which attribute columns they have. A crash can tear the tail of the
+//! active segment; reads stop at the first incomplete or corrupt frame and
+//! discard the remainder, so a torn final append cannot poison the log. With `fsync`
 //! disabled (the default) appends survive a process crash but not
 //! necessarily host power loss; enabling `fsync` extends the guarantee to
 //! power loss at a per-append latency cost. Removal is deferred until after
@@ -19,9 +22,9 @@
 //! rows: delivery to object storage is at-least-once, not exactly-once.
 
 use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use arrow::datatypes::SchemaRef;
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
@@ -32,17 +35,19 @@ use crate::TelemetryError;
 
 const SEGMENT_EXTENSION: &str = "wal";
 
+/// First four bytes of a segment written before frames were introduced:
+/// the Arrow IPC continuation marker. No frame length can equal it.
+const LEGACY_MARKER: [u8; 4] = [0xFF; 4];
+
 struct ActiveSegment {
     path: PathBuf,
-    writer: StreamWriter<File>,
-    sync_handle: File,
+    file: File,
 }
 
 /// Append-only log of buffered batches for one telemetry signal.
 pub struct Wal {
     signal: Signal,
     dir: PathBuf,
-    schema: SchemaRef,
     fsync: bool,
     active: Mutex<ActiveSegment>,
 }
@@ -59,19 +64,13 @@ impl Wal {
     ///
     /// Returns an error if the directory or the initial segment file cannot
     /// be created.
-    pub fn open(
-        root: &Path,
-        signal: Signal,
-        schema: SchemaRef,
-        fsync: bool,
-    ) -> Result<Self, TelemetryError> {
+    pub fn open(root: &Path, signal: Signal, fsync: bool) -> Result<Self, TelemetryError> {
         let dir = root.join(signal.as_str());
         std::fs::create_dir_all(&dir)?;
-        let active = open_segment(&dir, &schema)?;
+        let active = open_segment(&dir)?;
         Ok(Self {
             signal,
             dir,
-            schema,
             fsync,
             active: Mutex::new(active),
         })
@@ -87,10 +86,24 @@ impl Wal {
     /// Returns an error if writing or synchronising the segment file fails;
     /// the batch must then be rejected rather than acknowledged.
     pub async fn append(&self, batch: &RecordBatch) -> Result<(), TelemetryError> {
+        let mut body = Vec::new();
+        {
+            let mut writer = StreamWriter::try_new(&mut body, batch.schema_ref())?;
+            writer.write(batch)?;
+            writer.finish()?;
+        }
+        let length = u32::try_from(body.len()).map_err(|_| {
+            TelemetryError::Config("batch too large for the write-ahead log".to_owned())
+        })?;
+        let mut frame = Vec::with_capacity(body.len() + 4);
+        frame.extend_from_slice(&length.to_le_bytes());
+        frame.extend_from_slice(&body);
+
+        // One write per frame, so a crash leaves at most one torn frame.
         let mut active = self.active.lock().await;
-        active.writer.write(batch)?;
+        active.file.write_all(&frame)?;
         if self.fsync {
-            active.sync_handle.sync_data()?;
+            active.file.sync_data()?;
         }
         Ok(())
     }
@@ -110,11 +123,10 @@ impl Wal {
     /// place in that case.
     pub async fn seal_and_rotate(&self) -> Result<Vec<PathBuf>, TelemetryError> {
         let mut active = self.active.lock().await;
-        active.writer.finish()?;
         if self.fsync {
-            active.sync_handle.sync_data()?;
+            active.file.sync_data()?;
         }
-        let replacement = open_segment(&self.dir, &self.schema)?;
+        let replacement = open_segment(&self.dir)?;
         drop(std::mem::replace(&mut *active, replacement));
         self.segments_except(&active.path)
     }
@@ -158,17 +170,53 @@ impl Wal {
     /// Returns an error only if the segment file cannot be opened; corrupt
     /// contents are tolerated as described above.
     pub fn read_segment(&self, path: &Path) -> Result<Vec<RecordBatch>, TelemetryError> {
-        let file = File::open(path)?;
-        let reader = match StreamReader::try_new(file, None) {
+        let mut bytes = Vec::new();
+        File::open(path)?.read_to_end(&mut bytes)?;
+
+        if bytes.starts_with(&LEGACY_MARKER) {
+            return Ok(self.read_ipc_stream(path, &bytes));
+        }
+
+        let mut batches = Vec::new();
+        let mut rest = bytes.as_slice();
+        while !rest.is_empty() {
+            let frame = rest.split_first_chunk::<4>().and_then(|(length, tail)| {
+                let length = usize::try_from(u32::from_le_bytes(*length)).ok()?;
+                tail.split_at_checked(length)
+            });
+            let Some((body, tail)) = frame else {
+                tracing::warn!(
+                    signal = %self.signal,
+                    path = %path.display(),
+                    "WAL segment truncated mid-frame; discarding remainder"
+                );
+                break;
+            };
+            let frame_batches = self.read_ipc_stream(path, body);
+            if frame_batches.is_empty() {
+                // A frame always holds one batch; an unreadable one means
+                // the rest of the segment cannot be trusted either.
+                break;
+            }
+            batches.extend(frame_batches);
+            rest = tail;
+        }
+        Ok(batches)
+    }
+
+    /// Read the batches of one Arrow IPC stream, stopping at the first
+    /// message that cannot be decoded.
+    fn read_ipc_stream(&self, path: &Path, bytes: &[u8]) -> Vec<RecordBatch> {
+        let reader = match StreamReader::try_new(bytes, None) {
             Ok(reader) => reader,
             Err(e) => {
                 tracing::warn!(
                     signal = %self.signal,
                     path = %path.display(),
                     error = %e,
-                    "WAL segment header unreadable; treating segment as empty"
+                    "WAL data unreadable; discarding it"
                 );
-                return Ok(Vec::new());
+                return Vec::new();
             }
         };
 
@@ -181,13 +229,13 @@ impl Wal {
                         signal = %self.signal,
                         path = %path.display(),
                         error = %e,
-                        "WAL segment truncated mid-message; discarding remainder"
+                        "WAL data truncated mid-message; discarding remainder"
                     );
                     break;
                 }
             }
         }
-        Ok(batches)
+        batches
     }
 
     fn segments_except(&self, active_path: &Path) -> Result<Vec<PathBuf>, TelemetryError> {
@@ -204,19 +252,13 @@ impl Wal {
     }
 }
 
-fn open_segment(dir: &Path, schema: &SchemaRef) -> Result<ActiveSegment, TelemetryError> {
+fn open_segment(dir: &Path) -> Result<ActiveSegment, TelemetryError> {
     let path = dir.join(format!("{}.{SEGMENT_EXTENSION}", ulid::Ulid::new()));
     let file = OpenOptions::new()
         .create_new(true)
-        .write(true)
+        .append(true)
         .open(&path)?;
-    let sync_handle = file.try_clone()?;
-    let writer = StreamWriter::try_new(file, schema)?;
-    Ok(ActiveSegment {
-        path,
-        writer,
-        sync_handle,
-    })
+    Ok(ActiveSegment { path, file })
 }
 
 #[cfg(test)]
@@ -231,7 +273,7 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::array::UInt64Array;
-    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 
     use super::*;
 
@@ -248,7 +290,7 @@ mod tests {
     async fn appended_batches_survive_rotation_and_replay() {
         let root = tempfile::tempdir().unwrap();
         let schema = test_schema();
-        let wal = Wal::open(root.path(), Signal::Traces, schema.clone(), false).unwrap();
+        let wal = Wal::open(root.path(), Signal::Traces, false).unwrap();
 
         wal.append(&test_batch(&schema, 0, 5)).await.unwrap();
         wal.append(&test_batch(&schema, 5, 3)).await.unwrap();
@@ -267,11 +309,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let schema = test_schema();
 
-        let first = Wal::open(root.path(), Signal::Logs, schema.clone(), false).unwrap();
+        let first = Wal::open(root.path(), Signal::Logs, false).unwrap();
         first.append(&test_batch(&schema, 0, 4)).await.unwrap();
         drop(first);
 
-        let second = Wal::open(root.path(), Signal::Logs, schema.clone(), false).unwrap();
+        let second = Wal::open(root.path(), Signal::Logs, false).unwrap();
         let sealed = second.sealed_segments().await.unwrap();
         assert_eq!(sealed.len(), 1);
 
@@ -287,7 +329,7 @@ mod tests {
     async fn a_torn_tail_is_discarded_without_losing_earlier_batches() {
         let root = tempfile::tempdir().unwrap();
         let schema = test_schema();
-        let wal = Wal::open(root.path(), Signal::Metrics, schema.clone(), false).unwrap();
+        let wal = Wal::open(root.path(), Signal::Metrics, false).unwrap();
 
         wal.append(&test_batch(&schema, 0, 6)).await.unwrap();
         wal.append(&test_batch(&schema, 6, 6)).await.unwrap();
@@ -310,7 +352,7 @@ mod tests {
     async fn removed_segments_no_longer_appear_as_sealed() {
         let root = tempfile::tempdir().unwrap();
         let schema = test_schema();
-        let wal = Wal::open(root.path(), Signal::Traces, schema.clone(), false).unwrap();
+        let wal = Wal::open(root.path(), Signal::Traces, false).unwrap();
 
         wal.append(&test_batch(&schema, 0, 2)).await.unwrap();
         let sealed = wal.seal_and_rotate().await.unwrap();
@@ -321,10 +363,66 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unreadable_header_is_treated_as_an_empty_segment() {
+    async fn batches_with_different_schemas_share_a_segment() {
+        let root = tempfile::tempdir().unwrap();
+        let wal = Wal::open(root.path(), Signal::Traces, false).unwrap();
+
+        let narrow = test_schema();
+        let wide = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::UInt64, false),
+            Field::new("attr.int.extra", DataType::UInt64, true),
+        ]));
+        let wide_batch = RecordBatch::try_new(
+            wide.clone(),
+            vec![
+                Arc::new(UInt64Array::from(vec![7, 8])),
+                Arc::new(UInt64Array::from(vec![Some(1), None])),
+            ],
+        )
+        .unwrap();
+
+        wal.append(&test_batch(&narrow, 0, 3)).await.unwrap();
+        wal.append(&wide_batch).await.unwrap();
+        wal.append(&test_batch(&narrow, 3, 1)).await.unwrap();
+        let sealed = wal.seal_and_rotate().await.unwrap();
+
+        let batches = wal.read_segment(&sealed[0]).unwrap();
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0].schema(), narrow);
+        assert_eq!(batches[1], wide_batch);
+        assert_eq!(batches[2].num_rows(), 1);
+    }
+
+    #[tokio::test]
+    async fn segments_from_before_framing_are_still_replayed() {
         let root = tempfile::tempdir().unwrap();
         let schema = test_schema();
-        let wal = Wal::open(root.path(), Signal::Logs, schema, false).unwrap();
+        let wal = Wal::open(root.path(), Signal::Logs, false).unwrap();
+
+        // The previous format: one Arrow IPC stream for the whole segment.
+        let legacy = root
+            .path()
+            .join("logs")
+            .join("00000000000000000000000000.wal");
+        let mut writer = StreamWriter::try_new(File::create(&legacy).unwrap(), &schema).unwrap();
+        writer.write(&test_batch(&schema, 0, 4)).unwrap();
+        writer.write(&test_batch(&schema, 4, 2)).unwrap();
+        writer.finish().unwrap();
+        drop(writer);
+
+        let rows: usize = wal
+            .read_segment(&legacy)
+            .unwrap()
+            .iter()
+            .map(RecordBatch::num_rows)
+            .sum();
+        assert_eq!(rows, 6);
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_header_is_treated_as_an_empty_segment() {
+        let root = tempfile::tempdir().unwrap();
+        let wal = Wal::open(root.path(), Signal::Logs, false).unwrap();
 
         let bogus = root
             .path()

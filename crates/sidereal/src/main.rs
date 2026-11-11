@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sidereal::{
+    attributes::AttributeRegistry,
     auth::{grpc_auth_interceptor, OidcValidator},
     buffer::{start_background_flush, FlushHandle, Ingester},
     catalogue::{start_background_refresh, CatalogueStore},
@@ -101,11 +102,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("Write-ahead log disabled — buffered telemetry is lost on crash");
     }
 
+    // Which attribute columns exist is read back from the files' own
+    // footers, before anything is served: a query planned without a column
+    // would silently see nulls for it.
+    let attributes = Arc::new(AttributeRegistry::new());
+    let files_read = attributes.load(&catalogue).await;
+    tracing::info!(
+        files_read,
+        trace_columns = attributes.len(Signal::Traces),
+        metric_columns = attributes.len(Signal::Metrics),
+        log_columns = attributes.len(Signal::Logs),
+        "Attribute columns loaded"
+    );
+
     let (trace_ingester, metrics_ingester, logs_ingester) = create_ingesters(
         store.clone(),
         &config.buffer,
         &config.parquet,
         config.wal.as_ref(),
+        &attributes,
     )?;
 
     for ingester in [&trace_ingester, &metrics_ingester, &logs_ingester] {
@@ -129,6 +144,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_timeout(Some(Duration::from_secs(config.query.timeout_secs)))
             .with_memory_limit(config.query.memory_limit_bytes)
             .with_cache_bytes(query_cache_bytes)
+            .with_metadata_cache_bytes(config.query.metadata_cache_bytes)
+            .with_attribute_registry(attributes.clone())
             .build()
             .await?,
     );
@@ -297,6 +314,7 @@ fn create_ingesters(
     buffer_config: &BufferConfig,
     parquet_config: &ParquetConfig,
     wal_config: Option<&WalConfig>,
+    attributes: &Arc<AttributeRegistry>,
 ) -> Result<(Arc<Ingester>, Arc<Ingester>, Arc<Ingester>), sidereal::TelemetryError> {
     let create = |signal: Signal,
                   schema: arrow::datatypes::SchemaRef|
@@ -307,9 +325,10 @@ fn create_ingesters(
             store.clone(),
             buffer_config.clone(),
             parquet_config.clone(),
-        );
+        )
+        .with_attribute_registry(attributes.clone());
         let ingester = match wal_config {
-            Some(wal) => ingester.with_wal(Wal::open(&wal.path, signal, schema, wal.fsync)?),
+            Some(wal) => ingester.with_wal(Wal::open(&wal.path, signal, wal.fsync)?),
             None => ingester,
         };
         Ok(Arc::new(ingester))

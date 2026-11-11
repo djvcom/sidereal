@@ -14,7 +14,9 @@ use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequ
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use sidereal::buffer::Ingester;
 use sidereal::config::{BufferConfig, ParquetConfig};
-use sidereal::ingest::{convert_logs_to_arrow, convert_metrics_to_arrow, convert_traces_to_arrow};
+use sidereal::ingest::{
+    convert_logs_to_arrow, convert_metrics_to_arrow, convert_traces_to_arrow, shred,
+};
 use sidereal::schema::logs::logs_storage_schema;
 use sidereal::schema::metrics::number_metrics_storage_schema;
 use sidereal::schema::traces::traces_storage_schema;
@@ -62,7 +64,11 @@ fn converted_metrics_match_the_storage_schema() {
     let batch = convert_metrics_to_arrow(&request, None)
         .expect("conversion should succeed")
         .batch;
-    assert_eq!(batch.schema(), number_metrics_storage_schema());
+    assert!(
+        shred::extends(&number_metrics_storage_schema(), &batch.schema()),
+        "storage columns first, then only attribute columns: {:?}",
+        batch.schema()
+    );
 }
 
 #[test]
@@ -72,7 +78,11 @@ fn converted_logs_match_the_storage_schema() {
     let batch = convert_logs_to_arrow(&request, None)
         .expect("conversion should succeed")
         .batch;
-    assert_eq!(batch.schema(), logs_storage_schema());
+    assert!(
+        shred::extends(&logs_storage_schema(), &batch.schema()),
+        "storage columns first, then only attribute columns: {:?}",
+        batch.schema()
+    );
 }
 
 #[test]
@@ -82,7 +92,11 @@ fn converted_traces_match_the_storage_schema() {
     let batch = convert_traces_to_arrow(&request, None)
         .expect("conversion should succeed")
         .batch;
-    assert_eq!(batch.schema(), traces_storage_schema());
+    assert!(
+        shred::extends(&traces_storage_schema(), &batch.schema()),
+        "storage columns first, then only attribute columns: {:?}",
+        batch.schema()
+    );
 }
 
 #[tokio::test]
