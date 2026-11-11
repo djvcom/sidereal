@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use sidereal::{
     attributes::AttributeRegistry,
-    auth::{grpc_auth_interceptor, OidcValidator},
+    auth::{grpc_auth_interceptor, oidc_auth_middleware, OidcValidator},
     buffer::{start_background_flush, FlushHandle, Ingester},
     catalogue::{start_background_refresh, CatalogueStore},
     compaction::{start_background_compaction, Compactor},
@@ -256,12 +256,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal("HTTP OTLP"));
 
+    // Everything that serves telemetry sits behind the same check as the
+    // query routes, not beside it.
+    let extra_routes = axum::Router::new()
+        .nest("/errors", error_router(error_state))
+        .nest("/deployments", deployment_router(deployment_state));
     let api_router = match oidc_validator {
-        Some(validator) => query_router_with_oidc(query_state, validator),
-        None => query_router(query_state),
-    }
-    .nest("/errors", error_router(error_state))
-    .nest("/deployments", deployment_router(deployment_state));
+        Some(validator) => {
+            let extra_routes = extra_routes.layer(axum::middleware::from_fn_with_state(
+                validator.clone(),
+                oidc_auth_middleware,
+            ));
+            query_router_with_oidc(query_state, validator).merge(extra_routes)
+        }
+        None => query_router(query_state).merge(extra_routes),
+    };
     let query_listener = tokio::net::TcpListener::bind(query_addr).await?;
     let query_server = axum::serve(query_listener, api_router)
         .with_graceful_shutdown(shutdown_signal("Query API"));
